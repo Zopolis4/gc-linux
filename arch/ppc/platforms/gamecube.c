@@ -2,7 +2,7 @@
  * arch/ppc/platforms/gamecube.c
  *
  * Nintendo GameCube board-specific support
- * Copyright (C) 2004 The GameCube Linux Team
+ * Copyright (C) 2004-2005 The GameCube Linux Team
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -105,11 +105,19 @@ static void flipper_unmask_irq(unsigned int irq)
 	set_bit(irq, FLIPPER_IMR);
 }
 
+static void flipper_end_irq(unsigned int irq)
+{
+	if (!(irq_desc[irq].status & (IRQ_DISABLED|IRQ_INPROGRESS))
+	    && irq_desc[irq].action)
+		flipper_unmask_irq(irq);
+}
+
 static struct hw_interrupt_type flipper_pic = {
 	.typename	= " FLIPPER-PIC ",
 	.enable		= flipper_unmask_irq,
 	.disable	= flipper_mask_irq,
 	.ack		= flipper_mask_and_ack_irq,
+	.end		= flipper_end_irq,
 };
 
 static void __init gamecube_init_IRQ(void)

@@ -2,7 +2,7 @@
  * arch/ppc/platforms/gamecube.h
  *
  * Nintendo GameCube board-specific definitions
- * Copyright (C) 2004 The GameCube Linux Team
+ * Copyright (C) 2004-2005 The GameCube Linux Team
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -25,13 +25,13 @@
  * asserting the corresponding bit in ICR.
  */
 #define FLIPPER_NR_IRQS		(14)
-#define FLIPPER_ICR		((volatile ulong *)0xcc003000)
-#define FLIPPER_IMR		((volatile ulong *)0xcc003004)
+#define FLIPPER_ICR		((void __iomem *)0xcc003000)
+#define FLIPPER_IMR		((void __iomem *)0xcc003004)
 
 /*
  * Anything written here automagically puts us through reset.
  */
-#define FLIPPER_RESET		((volatile ulong *)0xcc003024)
+#define FLIPPER_RESET		((void __iomem *)0xcc003024)
 
 /*
  * This is the current memory layout for the GameCube Linux port.
@@ -44,7 +44,7 @@
  *   .                              .
  *   .                              .
  *   +------------------------------+ GCN_XFB_START
- *   | GX Fifo reserved 256k        | GCN_GX_FIFO_END
+ *   | GX FIFO reserved 256k        | GCN_GX_FIFO_END
  *   .                              . 
  *   +------------------------------+ GCN_GX_FIFO_START
  *   | kexec reserved  4x4096 bytes | GCN_KXC_END
@@ -64,18 +64,44 @@
  */
 
 /*
- * Some useful sizes
+ * XXX
+ * It seems not a good idea to hot change the memory map by simply
+ * changing a video register.
+ * Be conservative here, and assume we're using (or will use) the bigger
+ * of the two framebuffer sizes supported.
  */
-#define GCN_VIDEO_REG   (*((volatile u16*)0xCC002002))
-#define GCN_VIDEO_LINES (((GCN_VIDEO_REG >> 8) & 3) ? 576 : 480)
-#define GCN_GX_FIFO_SIZE        (256*1024)
+//#define GCN_VIDEO_REG   (*((volatile u16*)0xCC002002))
+//#define GCN_VIDEO_LINES (((GCN_VIDEO_REG >> 8) & 3) ? 576 : 480)
+#define GCN_VIDEO_LINES 576
+
+/*
+ * Total amount of RAM found in the system
+ */
 #define GCN_RAM_SIZE            (24*1024*1024) /* 24 MB */
-#define GCN_XFB_SIZE            (640*GCN_VIDEO_LINES*4) /* framebuffer */
+
+/*
+ * Size of reserved memory for the video subsystem
+ */
+#ifdef CONFIG_FB_GAMECUBE
+  #define GCN_XFB_SIZE		(2*640*GCN_VIDEO_LINES*2) /* framebuffer */
+  #define GCN_GX_FIFO_SIZE	(256*1024)
+#else
+  #define GCN_XFB_SIZE		(0)
+  #define GCN_GX_FIFO_SIZE	(0)
+#endif
+
+/*
+ * Size of reserved memory for kexec compatibility with some homebrew DOLs
+ */
 #ifdef CONFIG_KEXEC
   #define GCN_KXC_SIZE          (4*4096) /* PAGE_ALIGN(GCN_PRESERVE_SIZE) */
 #else
   #define GCN_KXC_SIZE          (0)
 #endif
+
+/*
+ * Amount of useable memory
+ */
 #define GCN_MEM_SIZE            (GCN_MEM_END+1)
 
 /*
@@ -102,8 +128,8 @@
 /*
  * These registers control where the visible framebuffer is located.
  */
-#define GCN_VI_TFBL		0xcc00201c
-#define GCN_VI_BFBL		0xcc002024
+#define GCN_VI_TFBL		((void __iomem *)0xcc00201c)
+#define GCN_VI_BFBL		((void __iomem *)0xcc002024)
 
 
 /* arch/ppc/platforms/gcn-time.c */
