@@ -18,6 +18,16 @@
     Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.		     */
 /* ------------------------------------------------------------------------- */
 
+/*
+ * $Id: gc-net.c,v 1.16 2004/02/08 22:13:22 hamtitampti Exp $
+ *
+ * $Log: gc-net.c,v $
+ * Revision 1.16  2004/02/08 22:13:22  hamtitampti
+ * added log tag
+ *
+ *
+ */
+
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/types.h>
