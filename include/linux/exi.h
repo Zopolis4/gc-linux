@@ -40,4 +40,14 @@ extern struct bus_type exi_bus_type;
 extern int exi_driver_register(struct exi_driver *drv);
 extern void exi_driver_unregister(struct exi_driver *drv);
 
+static inline void *exi_get_drvdata(struct exi_dev *exi_dev)
+{
+	return dev_get_drvdata(&exi_dev->dev);
+}
+
+static inline void exi_set_drvdata(struct exi_dev *exi_dev, void *data)
+{
+	dev_set_drvdata(&exi_dev->dev, data);
+}
+
 #endif	/* !__EXI_H */
