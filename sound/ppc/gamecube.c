@@ -1,10 +1,14 @@
-
 /*
   sound driver for the gamecube audio interface
 
   2004/05/16 - groepaz
     - fixed most things needed to make it work, little bit of
       cleanup. still somewhat dirty but its a start.
+  2004/06/24 - isobel
+    - diplay debug messages only if compiled with DEBUG
+    - handle sound driver related interrupts only
+    - added some symbolic constants
+    - Lindent
 
 */
 
@@ -19,26 +23,49 @@
 #define SNDRV_GET_ID
 #include <sound/initval.h>
 
+//#define DEBUG
+
+#ifdef DEBUG
+#  define DPRINTK(fmt, args...) \
+          printk(KERN_ERR "%s: " fmt, __FUNCTION__ , ## args)
+#else
+#  define DPRINTK(fmt, args...)
+#endif
+
 #define DSP_IRQ 6
-//#define GAMECUBE_AUDIO_DEBUG
 
 #define AUDIO_DSP_CONTROL   *(volatile u_int16_t *)(0xCC00500a)
+#define  AI_CSR_RES         (1<<0)
+#define  AI_CSR_PIINT       (1<<1)
+#define  AI_CSR_HALT        (1<<2)
+#define  AI_CSR_AIDINT      (1<<3)
+#define  AI_CSR_AIDINTMASK  (1<<4)
+#define  AI_CSR_ARINT       (1<<5)
+#define  AI_CSR_ARINTMASK   (1<<6)
+#define  AI_CSR_DSPINT      (1<<7)
+#define  AI_CSR_DSPINTMASK  (1<<8)
+#define  AI_CSR_DSPDMA      (1<<9)
+#define  AI_CSR_RESETXXX    (1<<11)
 #define AUDIO_IRQ_CAUSE     *(volatile u_int16_t *)(0xCC005010)
 
 #define AUDIO_DMA_STARTH    *(volatile u_int16_t *)(0xCC005030)
 #define AUDIO_DMA_STARTL    *(volatile u_int16_t *)(0xCC005032)
+
 #define AUDIO_DMA_LENGTH    *(volatile u_int16_t *)(0xCC005036)
+#define  AI_DCL_PLAY        (1<<15)
+
 #define AUDIO_DMA_LEFT      *(volatile u_int16_t *)(0xCC00503a)
 #define AUDIO_STREAM_STATUS *(volatile u_int32_t *)(0xCC006C00)
+#define  AI_AICR_RATE       (1<<6)
 
-#define LoadSample(addr, len) AUDIO_DMA_STARTH = addr >> 16;       \
-                              AUDIO_DMA_STARTL = addr & 0xffff;    \
-                              AUDIO_DMA_LENGTH = (AUDIO_DMA_LENGTH & 0x8000) | (len >> 5)
-#define StartSample()  AUDIO_DMA_LENGTH |= 0x8000
-#define StopSample()   AUDIO_DMA_LENGTH &= 0x7fff
-#define SetFreq32KHz() AUDIO_STREAM_STATUS |= 0x40
-#define SetFreq48KHz() AUDIO_STREAM_STATUS &= 0xffffffbf
-
+#define LoadSample(addr, len) \
+	  AUDIO_DMA_STARTH = (addr >> 16) & 0xffff; \
+	  AUDIO_DMA_STARTL = addr & 0xffff; \
+	  AUDIO_DMA_LENGTH = (AUDIO_DMA_LENGTH & AI_DCL_PLAY) | (len >> 5)
+#define StartSample()  AUDIO_DMA_LENGTH |= AI_DCL_PLAY
+#define StopSample()   AUDIO_DMA_LENGTH &= ~AI_DCL_PLAY
+#define SetFreq32KHz() AUDIO_STREAM_STATUS |= AI_AICR_RATE
+#define SetFreq48KHz() AUDIO_STREAM_STATUS &= ~AI_AICR_RATE
 
 MODULE_AUTHOR("me!");
 MODULE_DESCRIPTION("GameCube sound stuff");
@@ -46,10 +73,8 @@ MODULE_LICENSE("GPL");
 
 #define chip_t gamecube_t
 
-static int index = SNDRV_DEFAULT_IDX1;		/* Index 0-MAX */
-static char *id = SNDRV_DEFAULT_STR1;		/* ID for this card */
-
-static unsigned long iobase;
+static int index = SNDRV_DEFAULT_IDX1;	/* Index 0-MAX */
+static char *id = SNDRV_DEFAULT_STR1;	/* ID for this card */
 
 typedef struct snd_gamecube {
 	snd_card_t *card;
@@ -68,37 +93,35 @@ typedef struct snd_gamecube {
 static gamecube_t *gamecube_audio = NULL;
 
 static snd_pcm_hardware_t snd_gamecube_playback = {
-	.info =		(SNDRV_PCM_INFO_MMAP | SNDRV_PCM_INFO_INTERLEAVED |
-			 SNDRV_PCM_INFO_BLOCK_TRANSFER |
-			 SNDRV_PCM_INFO_MMAP_VALID),
-	.formats =	SNDRV_PCM_FMTBIT_S16_BE,
-	.rates =	/* SNDRV_PCM_RATE_8000_48000, */
-			SNDRV_PCM_RATE_32000 | SNDRV_PCM_RATE_48000,
-	.rate_min =	32000,
-	.rate_max =	48000,
-	.channels_min =		2,
-	.channels_max =		2,
-	.buffer_bytes_max =	32768,
-	.period_bytes_min =	32,
-	.period_bytes_max =	32768,
-	.periods_min =		1,
-	.periods_max =		1024,
+	.info = (SNDRV_PCM_INFO_MMAP | SNDRV_PCM_INFO_INTERLEAVED |
+		 SNDRV_PCM_INFO_BLOCK_TRANSFER | SNDRV_PCM_INFO_MMAP_VALID),
+	.formats = SNDRV_PCM_FMTBIT_S16_BE,
+	.rates = SNDRV_PCM_RATE_32000 | SNDRV_PCM_RATE_48000,
+	.rate_min = 32000,
+	.rate_max = 48000,
+	.channels_min = 2,
+	.channels_max = 2,
+	.buffer_bytes_max = 32768,
+	.period_bytes_min = 32,
+	.period_bytes_max = 32768,
+	.periods_min = 1,
+	.periods_max = 1024,
 };
 
-static int snd_gamecube_open(snd_pcm_substream_t *substream)
+static int snd_gamecube_open(snd_pcm_substream_t * substream)
 {
 	gamecube_t *chip = snd_pcm_substream_chip(substream);
 	snd_pcm_runtime_t *runtime = substream->runtime;
 
-#ifdef GAMECUBE_AUDIO_DEBUG
-	printk(KERN_ALERT "pcm open\n");
-#endif
+	DPRINTK("pcm open\n");
 	chip->playback_substream = substream;
 	runtime->hw = snd_gamecube_playback;
 
 	/* align to 32 bytes */
-	snd_pcm_hw_constraint_step(runtime, 0, SNDRV_PCM_HW_PARAM_BUFFER_BYTES, 32);
-	snd_pcm_hw_constraint_step(runtime, 0, SNDRV_PCM_HW_PARAM_PERIOD_BYTES, 32);
+	snd_pcm_hw_constraint_step(runtime, 0, SNDRV_PCM_HW_PARAM_BUFFER_BYTES,
+				   32);
+	snd_pcm_hw_constraint_step(runtime, 0, SNDRV_PCM_HW_PARAM_PERIOD_BYTES,
+				   32);
 
 	return 0;
 }
@@ -107,50 +130,47 @@ static int snd_gamecube_close(snd_pcm_substream_t * substream)
 {
 	gamecube_t *chip = snd_pcm_substream_chip(substream);
 
-#ifdef GAMECUBE_AUDIO_DEBUG
-	printk(KERN_ALERT "pcm close\n");
-#endif
+	DPRINTK("pcm close\n");
 	chip->playback_substream = NULL;
 	return 0;
 }
 
 static int snd_gamecube_hw_params(snd_pcm_substream_t * substream,
-		snd_pcm_hw_params_t * hw_params)
+				  snd_pcm_hw_params_t * hw_params)
 {
-	/* printk(KERN_ALERT "snd_gamecube_hw_params\n"); */
-	return snd_pcm_lib_malloc_pages(substream, params_buffer_bytes(hw_params));
+	DPRINTK("snd_gamecube_hw_params\n");
+	return snd_pcm_lib_malloc_pages(substream,
+					params_buffer_bytes(hw_params));
 }
 
 static int snd_gamecube_hw_free(snd_pcm_substream_t * substream)
 {
-	/* printk(KERN_ALERT "snd_gamecube_hw_free\n"); */
+	DPRINTK("snd_gamecube_hw_free\n");
 	return snd_pcm_lib_free_pages(substream);
 }
 
 static int snd_gamecube_prepare(snd_pcm_substream_t * substream)
 {
-	gamecube_t *chip = snd_pcm_substream_chip(substream);
+	//gamecube_t *chip = snd_pcm_substream_chip(substream);
 	snd_pcm_runtime_t *runtime = substream->runtime;
 
-	/* printk(KERN_ALERT "snd_gamecube_prepare\n"); */
-#ifdef GAMECUBE_AUDIO_DEBUG
-	printk("prepare: rate=%i, channels=%i, sample_bits=%i\n",
-			runtime->rate, runtime->channels, runtime->sample_bits);
-	printk("prepare: format=%i, access=%i\n",
-			runtime->format, runtime->access);
-#endif
+	DPRINTK("snd_gamecube_prepare\n");
+	DPRINTK("prepare: rate=%i, channels=%i, sample_bits=%i\n",
+		runtime->rate, runtime->channels, runtime->sample_bits);
+	DPRINTK("prepare: format=%i, access=%i\n",
+		runtime->format, runtime->access);
 
 	/* set requested samplerate */
 	switch (runtime->rate) {
-		case 32000:
-			SetFreq32KHz();
-			break;
-		case 48000:
-			SetFreq48KHz();
-			break;
-		default:
-			printk("unsupported rate: %i!\n", runtime->rate);
-			return -EINVAL;
+	case 32000:
+		SetFreq32KHz();
+		break;
+	case 48000:
+		SetFreq48KHz();
+		break;
+	default:
+		DPRINTK("unsupported rate: %i!\n", runtime->rate);
+		return -EINVAL;
 	}
 
 	return 0;
@@ -161,13 +181,11 @@ static int snd_gamecube_trigger(snd_pcm_substream_t * substream, int cmd)
 	gamecube_t *chip = snd_pcm_substream_chip(substream);
 	snd_pcm_runtime_t *runtime = substream->runtime;
 
-	/* printk(KERN_ALERT "snd_gamecube_trigger\n"); */
+	DPRINTK("snd_gamecube_trigger\n");
 	switch (cmd) {
 	case SNDRV_PCM_TRIGGER_START:
 		/* do something to start the PCM engine */
-#ifdef GAMECUBE_AUDIO_DEBUG
-		printk(KERN_ALERT "PCM_TRIGGER_START\n");
-#endif
+		DPRINTK("PCM_TRIGGER_START\n");
 		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
 			chip->dma_size = snd_pcm_lib_buffer_bytes(substream);
 			chip->period_size = snd_pcm_lib_period_bytes(substream);
@@ -176,23 +194,23 @@ static int snd_gamecube_trigger(snd_pcm_substream_t * substream, int cmd)
 			chip->stop_play = 0;
 			chip->start_play = 1;
 
-#ifdef GAMECUBE_AUDIO_DEBUG
-			printk(KERN_ALERT "stream is PCM_PLAYBACK, dma_area=0x%p dma_size=%i\n",
+			DPRINTK("stream is PCM_PLAYBACK,"
+				" dma_area=0x%p dma_size=%i\n",
 				runtime->dma_area, chip->dma_size);
-			printk(KERN_ALERT "%i periods of %i bytes\n",
-				chip->nperiods, chip->period_size);
-#endif
+			DPRINTK("%i periods of %i bytes\n", chip->nperiods,
+				chip->period_size);
 
-			flush_dcache_range(runtime->dma_area, runtime->dma_area + chip->period_size);
-			LoadSample((u_int32_t) runtime->dma_area, chip->period_size);
+			flush_dcache_range((unsigned long)runtime->dma_area,
+					   (unsigned long)(runtime->dma_area +
+							   chip->period_size));
+			LoadSample((u_int32_t) runtime->dma_area,
+				   chip->period_size);
 			StartSample();
 		}
 		break;
 	case SNDRV_PCM_TRIGGER_STOP:
 		/* do something to stop the PCM engine */
-#ifdef GAMECUBE_AUDIO_DEBUG
-		printk(KERN_ALERT "PCM_TRIGGER_STOP\n");
-#endif
+		DPRINTK("PCM_TRIGGER_STOP\n");
 
 		chip->stop_play = 1;
 		/* StopSample(); */
@@ -210,43 +228,43 @@ static snd_pcm_uframes_t snd_gamecube_pointer(snd_pcm_substream_t * substream)
 	snd_pcm_runtime_t *runtime = substream->runtime;
 	int left, bytes;
 
-	/* printk(KERN_ALERT "snd_gamecube_pointer\n"); */
+	DPRINTK("snd_gamecube_pointer\n");
 	left = AUDIO_DMA_LEFT << 5;
 	bytes = chip->period_size * (chip->cur_period + 1);
 	/* bytes = snd_pcm_lib_buffer_bytes(substream); */
 
-#ifdef GAMECUBE_AUDIO_DEBUG
-	printk("pointer: %i of %i(%i) bytes left, period #%i\n", left, chip->period_size ,bytes, chip->cur_period);
-#endif
+	DPRINTK("pointer: %i of %i(%i) bytes left, period #%i\n", left,
+		chip->period_size, bytes, chip->cur_period);
+
 	return bytes_to_frames(runtime, bytes - left);
 }
 
-static irqreturn_t snd_gamecube_interrupt(int irq, void *dev, struct pt_regs *regs)
+static irqreturn_t snd_gamecube_interrupt(int irq, void *dev,
+					  struct pt_regs *regs)
 {
 	gamecube_t *chip = (gamecube_t *) dev;
-	unsigned long val = AUDIO_DSP_CONTROL;
+	unsigned short val = AUDIO_DSP_CONTROL;
 
-// fixme: we should only handle dma-finish irq here
-
-//	if (val & 0x100)
-    {
+	if (val & AI_CSR_AIDINT) {
 		u_int32_t addr;
 
-#ifdef GAMECUBE_AUDIO_DEBUG
-		printk("DSP interrupt! period #%i\n", chip->cur_period);
-#endif
+		DPRINTK("DSP interrupt! period #%i\n", chip->cur_period);
+
 		if (chip->start_play) {
 			chip->start_play = 0;
 		} else if (chip->stop_play) {
 			StopSample();
 		} else {
-			StopSample();
-
 			if (chip->cur_period < (chip->nperiods - 1)) {
 				chip->cur_period++;
-			} else chip->cur_period = 0;
+			} else
+				chip->cur_period = 0;
 
-			addr = (u_int32_t) chip->playback_substream->runtime->dma_area + (chip->cur_period * chip->period_size);
+			addr =
+			    (u_int32_t) chip->playback_substream->runtime->
+			    dma_area + (chip->cur_period * chip->period_size);
+
+			StopSample();
 
 			flush_dcache_range(addr, addr + chip->period_size);
 			LoadSample(addr, chip->period_size);
@@ -256,43 +274,45 @@ static irqreturn_t snd_gamecube_interrupt(int irq, void *dev, struct pt_regs *re
 
 			snd_pcm_period_elapsed(chip->playback_substream);
 		}
+		/* ack AI DMA interrupt */
+		AUDIO_DSP_CONTROL |= AI_CSR_AIDINT;
+		return IRQ_HANDLED;
 	}
+	//AUDIO_DSP_CONTROL |= (1<<5); // ARAM
+	//AUDIO_DSP_CONTROL |= (1<<7); // DSP
 
-        // This clears the dsp DMA interrupt flag.
-        AUDIO_DSP_CONTROL |= (1<<3); // AI
-//        AUDIO_DSP_CONTROL |= (1<<5); // ARAM
-//        AUDIO_DSP_CONTROL |= (1<<7); // DSP
-
-
-	return IRQ_HANDLED;
+	return IRQ_NONE;
 }
 
 static snd_pcm_ops_t snd_gamecube_playback_ops = {
-	.open			= snd_gamecube_open,
-	.close			= snd_gamecube_close,
-	.ioctl			= snd_pcm_lib_ioctl,
-	.hw_params	        = snd_gamecube_hw_params,
-	.hw_free	        = snd_gamecube_hw_free,
-	.prepare		= snd_gamecube_prepare,
-	.trigger		= snd_gamecube_trigger,
-	.pointer		= snd_gamecube_pointer,
+	.open = snd_gamecube_open,
+	.close = snd_gamecube_close,
+	.ioctl = snd_pcm_lib_ioctl,
+	.hw_params = snd_gamecube_hw_params,
+	.hw_free = snd_gamecube_hw_free,
+	.prepare = snd_gamecube_prepare,
+	.trigger = snd_gamecube_trigger,
+	.pointer = snd_gamecube_pointer,
 };
 
-static int __devinit snd_gamecube_new_pcm(gamecube_t *chip)
+static int __devinit snd_gamecube_new_pcm(gamecube_t * chip)
 {
 	snd_pcm_t *pcm;
 	int err;
 
-	if ((err = snd_pcm_new(chip->card, chip->card->shortname, 0, 1, 1, &pcm)) < 0)
+	if ((err =
+	     snd_pcm_new(chip->card, chip->card->shortname, 0, 1, 1, &pcm)) < 0)
 		return err;
 
-	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_PLAYBACK, &snd_gamecube_playback_ops);
+	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_PLAYBACK,
+			&snd_gamecube_playback_ops);
 	/* snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_CAPTURE, &snd_gamecube_capture_ops); */
 
 	/* preallocate 64k buffer */
 	snd_pcm_lib_preallocate_pages_for_all(pcm, SNDRV_DMA_TYPE_CONTINUOUS,
-			snd_dma_continuous_data(GFP_KERNEL),
-			64 * 1024, 64 * 1024);
+					      snd_dma_continuous_data
+					      (GFP_KERNEL), 64 * 1024,
+					      64 * 1024);
 
 	pcm->info_flags = 0;
 	pcm->private_data = chip;
@@ -316,7 +336,7 @@ static int __init alsa_card_gamecube_init(void)
 	if (card == NULL)
 		return -ENOMEM;
 
-	gamecube_audio = (gamecube_t *)card->private_data;
+	gamecube_audio = (gamecube_t *) card->private_data;
 	if (gamecube_audio == NULL)
 		return -ENOMEM;
 
@@ -328,30 +348,35 @@ static int __init alsa_card_gamecube_init(void)
 	strcpy(card->shortname, "GameCube audio");
 	sprintf(card->longname, "GameCube audio");
 
-	if (request_irq(DSP_IRQ, snd_gamecube_interrupt, 0, card->shortname, gamecube_audio)) {
-		snd_printk(KERN_ERR "%s: unable to grab IRQ %d\n", card->shortname, DSP_IRQ);
+	if (request_irq
+	    (DSP_IRQ, snd_gamecube_interrupt, SA_SHIRQ, card->shortname,
+	     gamecube_audio)) {
+		snd_printk(KERN_ERR "%s: unable to grab IRQ %d\n",
+			   card->shortname, DSP_IRQ);
 		return -EBUSY;
 	} else {
-		enable_irq(DSP_IRQ);
 
-        AUDIO_DSP_CONTROL |= (1<<4); // AI    enable dma finished irq
-//        AUDIO_DSP_CONTROL |= (1<<6); // ARAM
-//        AUDIO_DSP_CONTROL |= (1<<8); // DSP
+		/* enable AI DMA interrupt */
+		AUDIO_DSP_CONTROL |= AI_CSR_AIDINTMASK;
+		//AUDIO_DSP_CONTROL |= (1<<6); // ARAM
+		//AUDIO_DSP_CONTROL |= (1<<8); // DSP
 
-        AUDIO_DSP_CONTROL |= (1<<1); // enable any DSP irqs (?)
+		/* enable any DSP interrupts */
+		AUDIO_DSP_CONTROL |= AI_CSR_PIINT;
 
 	}
 
 #if 0
-	if (request_region(AUDIO_INTERFACE_ADDR, 0x200, card->shortname) == NULL) {
+	if (request_region(AUDIO_INTERFACE_ADDR, 0x200, card->shortname) ==
+	    NULL) {
 		printk("unable to grab memory region 0x%lx-0x%lx\n",
-				AUDIO_INTERFACE_ADDR, AUDIO_INTERFACE_ADDR + 0x200 - 1);
+		       AUDIO_INTERFACE_ADDR, AUDIO_INTERFACE_ADDR + 0x200 - 1);
 		return -EBUSY;
 	}
 
-	if ((iobase = (unsigned long) ioremap(AUDIO_INTERFACE_ADDR, 0x200)) == 0) {
+	if ((iobase = (unsigned long)ioremap(AUDIO_INTERFACE_ADDR, 0x200)) == 0) {
 		printk("unable to remap memory region 0x%lx-0x%lx\n",
-				AUDIO_INTERFACE_ADDR, AUDIO_INTERFACE_ADDR + 0x200 - 1);
+		       AUDIO_INTERFACE_ADDR, AUDIO_INTERFACE_ADDR + 0x200 - 1);
 		return -ENOMEM;
 	}
 
@@ -368,23 +393,22 @@ static int __init alsa_card_gamecube_init(void)
 		goto fail;
 
 	if ((err = snd_card_register(card)) == 0) {
-		printk( KERN_INFO "GameCube audio support initialized\n" );
+		printk(KERN_INFO "GameCube audio support initialized\n");
 		return 0;
 	}
 
-fail:
+      fail:
 	snd_card_free(card);
 	return err;
 }
 
 static void __exit alsa_card_gamecube_exit(void)
 {
-	printk(KERN_ALERT "Goodbye, cruel world\n");
+	DPRINTK("Goodbye, cruel world\n");
 
 	free_irq(DSP_IRQ, gamecube_audio);
 	snd_card_free(gamecube_audio->card);
 }
 
-module_init(alsa_card_gamecube_init)
-module_exit(alsa_card_gamecube_exit)
-
+module_init(alsa_card_gamecube_init);
+module_exit(alsa_card_gamecube_exit);
