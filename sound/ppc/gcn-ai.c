@@ -2,7 +2,7 @@
  * sound/ppc/gcn-ai.c
  *
  * Nintendo GameCube audio interface driver
- * Copyright (C) 2004 The GameCube Linux Team
+ * Copyright (C) 2004-2005 The GameCube Linux Team
  *
  * Based on work from mist, kirin, groepaz, Steve_-, isobel and others.
  *
@@ -39,7 +39,7 @@
 
 MODULE_DESCRIPTION(DRV_DESCRIPTION);
 MODULE_AUTHOR(DRV_AUTHOR);
-MODULE_LICENSE(GPL);
+MODULE_LICENSE("GPL");
 
 #define PFX DRV_MODULE_NAME ": "
 #define ai_printk(level, format, arg...) \
