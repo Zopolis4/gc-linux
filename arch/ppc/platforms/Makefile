@@ -48,6 +48,7 @@ obj-$(CONFIG_SPRUCE)		+= spruce_setup.o spruce_pci.o
 obj-$(CONFIG_GAMECUBE)		+= gamecube.o
 obj-$(CONFIG_GAMECUBE_CONSOLE)	+= console.o
 obj-$(CONFIG_GAMECUBE_RESET_SWITCH)	+= gc-rsw.o
+obj-$(CONFIG_GAMECUBE_DVD_COVER)	+= gc-dvdcover.o
 
 ifeq ($(CONFIG_SMP),y)
 obj-$(CONFIG_PPC_PMAC)		+= pmac_smp.o

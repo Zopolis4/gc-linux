@@ -37,6 +37,7 @@ typedef struct board_info {
 #define GAMECUBE_PIIC 0xcc003000 /* PI interrupt cause */
 #define GAMECUBE_PIIM 0xcc003004 /* PI interrupt mask */
 #define GAMECUBE_RESET 0xcc003024 /* RESET */
+#define GAMECUBE_DICVR 0xcc006004 /* DI Cover Register */
 
 #define GAMECUBE_IN(a) (*(u_int *)a)
 #define GAMECUBE_OUT(a,d) (*(u_int *)a = d)

@@ -564,7 +564,7 @@ config GAMECUBE
 endchoice
 
 config GAMECUBE_RESET_SWITCH
-        bool "RESETSWITCH"
+        bool "GameCube Reset button"
         default n
         ---help---
           If you say yes to this option, support will be included for the
@@ -572,6 +572,16 @@ config GAMECUBE_RESET_SWITCH
                                                                                 
           This driver can also be built as a module.  If so, the module
           will be called gc-rsw.
+
+config GAMECUBE_DVD_COVER
+        bool "GameCube DVD Cover"
+        default n
+        ---help---
+          If you say yes to this option, support will be included for the
+          reset switch of the GameCube.
+                                                                                
+          This driver can also be built as a module.  If so, the module
+          will be called gc-dvdcover.
 
 config TQM8xxL
 	bool
