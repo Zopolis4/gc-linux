@@ -349,7 +349,7 @@ static int __init exi_layer_init(void)
 
 	extern unsigned long exi_running;
 	if (!test_and_set_bit(1, &exi_running)) {
-		retval = exi_hw_init();
+		retval = exi_hw_init(DRV_MODULE_NAME);
 		if (retval)
 			goto err_hw_init;
 	}

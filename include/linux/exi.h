@@ -283,7 +283,7 @@ static inline int exi_lite_init(void)
 	int retval = 0;
 
 	if (!test_and_set_bit(1, &exi_running)) {
-		retval = exi_hw_init();
+		retval = exi_hw_init("exi-lite");
 	}
 	return retval;
 }

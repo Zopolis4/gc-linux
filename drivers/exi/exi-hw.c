@@ -435,6 +435,8 @@ static inline void exi_cmd_deselect(struct exi_command *cmd)
 {
 	struct exi_channel *exi_channel = cmd->exi_channel;
 
+	WARN_ON(!exi_is_selected(exi_channel));
+
 	DBG("channel=%d\n", exi_channel->channel);
 
 	exi_deselect_raw(exi_channel);
@@ -1086,7 +1088,7 @@ static void exi_quiesce_all_channels(u32 csr_mask)
 /*
  * Pseudo-Internal. Initialize basic channel structures and hardware.
  */
-int exi_hw_init(void)
+int exi_hw_init(char *module_name)
 {
 	struct exi_channel *exi_channel;
 	int channel;
@@ -1103,7 +1105,7 @@ int exi_hw_init(void)
 	exi_quiesce_all_channels(EXI_CSR_EXTINMASK);
 
 	/* register the exi interrupt handler */
-        retval = request_irq(EXI_IRQ, exi_irq_handler, 0, "exi", NULL);
+        retval = request_irq(EXI_IRQ, exi_irq_handler, 0, module_name, NULL);
         if (retval) {
 		exi_printk(KERN_ERR, "unable to register irq%d\n", EXI_IRQ);
         }

@@ -118,7 +118,7 @@ struct exi_channel {
 	struct exi_event_handler events[EXI_MAX_EVENTS];
 };
 
-extern int exi_hw_init(void);
+extern int exi_hw_init(char *);
 extern void exi_hw_exit(void);
 
 #define exi_is_selected(x) ((x)->flags & EXI_SELECTED)
