@@ -28,6 +28,11 @@ void exi_imm(int channel, void *data, int len, int mode, int zero)
 	volatile unsigned long *exi = (volatile unsigned long *)0xCC006800;
 	if (mode == EXI_WRITE)
 		exi[channel * 5 + 4] = *(unsigned long*)data;
+  else
+    /* even if we read, something is sent out. What should it be?
+       make it 0xffffffff. This makes sure the SD-card driver is happy */
+		exi[channel * 5 + 4] = (unsigned long) 0xffffffff;
+
 	exi[channel * 5 + 3] = ((len-1)<<4)|(mode<<2)|1;
 	if (mode == EXI_READ)
 	{
