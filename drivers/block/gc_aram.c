@@ -25,6 +25,10 @@
 #include <asm/bitops.h>
 #include <asm/pgtable.h>
 #include <asm/cacheflush.h>
+#include <linux/interrupt.h>
+
+#include <linux/fcntl.h>        /* O_ACCMODE */
+#include <linux/hdreg.h>  /* HDIO_GETGEO */
 
 #define ARAM_MAJOR Z2RAM_MAJOR
 
@@ -42,9 +46,9 @@
 	unsigned char *RAMDISKBuffer;
 	#define ARAM_BUFFERSIZE 10*1024
 #else
-	#define ARAM_BUFFERSIZE 15*1024*1024
-	//#define ARAM_BUFFERSIZE 10*1024
+	#define ARAM_BUFFERSIZE 14*1024*1024
 	#define ARAM_SOUNDMEMORYOFFSET	1024*1024
+	//#define ARAM_BLOCKSIZE 1024
 #endif
 
 
@@ -82,11 +86,9 @@ void ARAM_StartDMA (unsigned long mmAddr, unsigned long arAddr, unsigned long le
 	
 	AR_DMA_CNT_H = (type << 15) | (length >> 16);
 	AR_DMA_CNT_L = length & 0xFFFF;
-	
-	// Without the Break, the While loop loops endless
-	while (AI_DSP_STATUS & 0x200) {
-	};
 
+	// We wait, until DMA finished
+	while (AI_DSP_STATUS & 0x200);
 }
 /*
  	echo YUHUUhello1234567890hello12345678901234567890CCC > /dev/aram 
@@ -97,6 +99,7 @@ static void do_aram_request(request_queue_t *q)
 {
 	struct request *req;
 	blk_stop_queue(q);
+	spin_lock(&aram_lock);
 	
 	while ((req = elv_next_request(q)) != NULL) {
 		unsigned long start = req->sector << 9;
@@ -131,6 +134,7 @@ static void do_aram_request(request_queue_t *q)
 		end_request(req, 1);
 	}
 	
+	spin_unlock(&aram_lock);
 	blk_start_queue(q);
 
 }
@@ -167,11 +171,40 @@ err_out:
 
 }
 
+
+/*
+	mkfs.minix /dev/aram 
+	mount -t minix /dev/aram /mnt/
+
+
+	dd if=/dev/urandom bs=1M count=10 > /mnt/test.bin   
+	dd if=/dev/urandom bs=1M count=1 > /mnt/test1.bin
+
+	
+*/
 static int aram_ioctl(struct inode *inode, struct file *file,
 		     unsigned int cmd, unsigned long arg)
 {
 	ARAM_DBG("A-RAM IOCTL\n");
-	return 0;
+
+	if (cmd == HDIO_GETGEO) {
+		struct hd_geometry geo;
+		/*
+		 * get geometry: we have to fake one...  trim the size to a
+		 * multiple of 2048 (1M): tell we have 32 sectors, 64 heads,
+		 * whatever cylinders.
+		 */
+		geo.heads     = 64;
+		geo.sectors   = 32;
+		geo.start     = 0;
+		geo.cylinders = ARAM_BUFFERSIZE / (geo.heads * geo.sectors);
+
+		if (copy_to_user((void *) arg, &geo, sizeof(geo)))
+			return -EFAULT;
+		return 0;
+	}	
+	
+	return -EINVAL;
 }
 
 static int aram_release( struct inode *inode, struct file *filp )
@@ -182,16 +215,30 @@ static int aram_release( struct inode *inode, struct file *filp )
 	return 0;
 }
 
+
+static int aram_revalidate(struct gendisk *disk)
+{
+	set_capacity(disk,ARAM_BUFFERSIZE>>9);
+	return 0;
+}
+
 static struct block_device_operations aram_fops =
 {
-	.owner		= THIS_MODULE,
-	.open		= aram_open,
-	.release	= aram_release,
-	.ioctl 		= aram_ioctl,
+	.owner			= THIS_MODULE,
+	.open			= aram_open,
+	.release		= aram_release,
+	.revalidate_disk	= aram_revalidate,
+	.ioctl 			= aram_ioctl,
 };
 
 
 static struct request_queue *aram_queue;
+
+static irqreturn_t aram_interrupt(int irq, void *dev_id, struct pt_regs * regs)
+{
+	printk("interrupt received\n");
+	return 0;
+}
 
 int __init aram_init(void)
 {
@@ -217,9 +264,16 @@ int __init aram_init(void)
 	
 	aram_gendisk->queue = aram_queue;
 	set_capacity(aram_gendisk,ARAM_BUFFERSIZE>>9);
-	add_disk(aram_gendisk);
-//	spin_lock_init(aram_lock.queue_lock);
 	
+	add_disk(aram_gendisk);
+	spin_lock_init(&aram_lock);
+	
+	ret = request_irq(5, aram_interrupt, 0,aram_gendisk->disk_name, aram_gendisk);
+	if (ret) {
+		//BBA_DBG(KERN_ERR "%s: unable to get IRQ %d\n", dev->name, dev->irq);
+		return ret;
+	}
+		
 	#ifdef RAMDISK
 	RAMDISKBuffer = kmalloc(ARAM_BUFFERSIZE,GFP_KERNEL);
 	#endif
