@@ -411,7 +411,7 @@ static inline void exi_cmd_select(struct exi_command *cmd)
 	BUG_ON(cmd->data == NULL);
 	BUG_ON(exi_is_selected(exi_channel));
 
-	spin_lock(exi_channel->cmd_lock);
+	spin_lock(&exi_channel->cmd_lock);
 
 	/* cmd->data contains the device to select */
 	exi_device = cmd->data;
@@ -443,7 +443,7 @@ static inline void exi_cmd_deselect(struct exi_command *cmd)
 	exi_channel->flags &= ~EXI_SELECTED;
 	exi_channel->device_selected = NULL;
 
-	spin_unlock(exi_channel->cmd_lock);
+	spin_unlock(&exi_channel->cmd_lock);
 }
 
 /*
