@@ -4,4 +4,5 @@
 obj- := misc.o	# Dummy rule to force built-in.o to be made
 
 obj-$(CONFIG_IBM_ASM)	+= ibmasm/
-obj-$(CONFIG_GCN_GQR)   += gcn-gqr.o
+obj-$(CONFIG_GAMECUBE_GQR)	+= gcn-gqr.o
+obj-$(CONFIG_GAMECUBE_MI)	+= gcn-mi.o
