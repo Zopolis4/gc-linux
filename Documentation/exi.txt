@@ -8,8 +8,8 @@ Device drivers.
 ---------------
 
 When writing drivers for devices attached to the EXI bus, do not bother with
-device probing, removal, hotplug and PM events. The bus driver already takes
-care of this.
+device probing, removal and hotplug events. The bus driver already takes care
+of this.
 
 
 Registration:
@@ -24,12 +24,12 @@ should be short, unique, yet remain informative.
 `id_table' is a list of device IDs the driver claims to support. These
 should be taken from include/linux/exi_ids.h:
 
-	struct exi_device_id frob_id_table[] = {
+	static struct exi_device_id frob_id_table[] = {
 		{ EXI_ID_FROB0 },
 		{ EXI_ID_FROB1 },
 	};
 
-	struct exi_driver frob_driver = {
+	static struct exi_driver frob_driver = {
 		.name		= "frob",
 		.id_table	= frob_id_table,
 	};
