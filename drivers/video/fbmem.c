@@ -365,6 +365,10 @@ static struct {
 #ifdef CONFIG_FB_GAMECUBE
 	{ "gamecubefb", gamecubefb_init, gamecubefb_setup },
 #endif
+#ifdef CONFIG_FB_KYRO
+	{ "kyrofb", kyrofb_init, kyrofb_setup },
+#endif
+
 	/*
 	 * Generic drivers that don't use resource management (yet)
 	 */
