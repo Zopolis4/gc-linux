@@ -21,16 +21,96 @@ void __init
 gamecube_map_io(void)
 {
 	io_block_mapping(0xd0000000, 0, 0x02000000, _PAGE_IO);
+	io_block_mapping(0xcc000000, 0xcc000000, 0x00100000, _PAGE_IO); /* GC IO */
 }
+
+static void
+gamecube_unmask_irq(unsigned int irq)
+{
+	if (irq < GAMECUBE_IRQS) {
+		GAMECUBE_OUT(GAMECUBE_PIIM, GAMECUBE_IN(GAMECUBE_PIIM) | (1 << irq));
+	}
+}
+
+static void
+gamecube_mask_irq(unsigned int irq)
+{
+	if (irq < GAMECUBE_IRQS) {
+		GAMECUBE_OUT(GAMECUBE_PIIM, GAMECUBE_IN(GAMECUBE_PIIM) & ~(1 << irq)); /* mask */
+	}
+}
+
+static void
+gamecube_mask_and_ack_irq(unsigned int irq)
+{
+	if (irq < GAMECUBE_IRQS) {
+		GAMECUBE_OUT(GAMECUBE_PIIM, GAMECUBE_IN(GAMECUBE_PIIM) & ~(1 << irq)); /* mask */
+		GAMECUBE_OUT(GAMECUBE_PIIC, 1 << irq); /* ack */
+	}
+}
+
+static struct hw_interrupt_type gamecube_pic = {
+	"GameCube PIC",
+	NULL, /* startup */
+	NULL, /* shutdown */
+	gamecube_unmask_irq,
+	gamecube_mask_irq,
+	gamecube_mask_and_ack_irq,
+	NULL, /* end */
+	NULL /* set_affinity */
+};
 
 static void __init
 gamecube_init_IRQ(void)
 {
+	int i;
+
+	GAMECUBE_OUT(GAMECUBE_PIIM,0);		/* disable all irqs */
+	GAMECUBE_OUT(GAMECUBE_PIIC,0xffffffff);	/* ack all irqs */
+
+	for (i = 0; i < GAMECUBE_IRQS; i++) {
+		irq_desc[i].handler = &gamecube_pic;
+	}
 }
 
-int gamecube_get_irq(struct pt_regs* regs)
+/*
+ * Find the highest IRQ that generating an interrupt, if any.
+ */
+int
+gamecube_get_irq(struct pt_regs *regs)
 {
-	return -1;
+	int irq = 0;
+	u_int irq_status, irq_test = 1;
+
+	irq_status = GAMECUBE_IN(GAMECUBE_PIIC);
+
+	do
+	{
+		if (irq_status & irq_test)
+			break;
+		irq++;
+		irq_test <<= 1;
+	} while (irq < GAMECUBE_IRQS);
+
+	return irq;
+}
+
+static void
+gamecube_restart(char *cmd)
+{
+	GAMECUBE_OUT(GAMECUBE_RESET, 0);
+}
+
+static void
+gamecube_power_off(void)
+{
+	for(;;);
+}
+
+static void
+gamecube_halt(void)
+{
+	gamecube_restart(NULL);
 }
 
 void __init gamecube_calibrate_decr(void)
@@ -49,11 +129,15 @@ platform_init(unsigned long r3, unsigned long r4, unsigned long r5,
 	ppc_md.setup_arch = gamecube_setup_arch;
 	ppc_md.setup_io_mappings = gamecube_map_io;
 	ppc_md.find_end_of_memory = gamecube_find_end_of_memory;
-	
+
 	ppc_md.init_IRQ = gamecube_init_IRQ;
 	ppc_md.get_irq = gamecube_get_irq;
-	
+
+	ppc_md.restart = gamecube_restart;
+	ppc_md.power_off = gamecube_power_off;
+	ppc_md.halt = gamecube_halt;
+
 	ppc_md.calibrate_decr = gamecube_calibrate_decr;
-	
+
 //	console_do_init();
 }

@@ -34,5 +34,14 @@ typedef struct board_info {
 
 #define BASE_BAUD		(378000000 / 18 / 16)
 
-#endif /* __ASM_REDWOOD5_H__ */
+#define GAMECUBE_PIIC 0xcc003000 /* PI interrupt cause */
+#define GAMECUBE_PIIM 0xcc003004 /* PI interrupt mask */
+#define GAMECUBE_RESET 0xcc003024 /* RESET */
+
+#define GAMECUBE_IN(a) (*(u_int *)a)
+#define GAMECUBE_OUT(a,d) (*(u_int *)a = d)
+
+#define GAMECUBE_IRQS 14
+
+#endif /* __ASM_GAMECUBE_H__ */
 #endif /* __KERNEL__ */
