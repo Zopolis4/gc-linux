@@ -2,9 +2,9 @@
  * drivers/video/gcnfb.c
  *
  * Nintendo GameCube "Flipper" chipset frame buffer driver
- * Copyright (C) 2004 The GameCube Linux Team
+ * Copyright (C) 2004-2005 The GameCube Linux Team
  * Copyright (C) 2004 Michael Steil <mist@c64.org>
- * Copyright (C) 2004 Todd Jeffreys <todd@voidpointer.org>
+ * Copyright (C) 2004,2005 Todd Jeffreys <todd@voidpointer.org>
  *
  * Based on vesafb (c) 1998 Gerd Knorr <kraxel@goldbach.in-berlin.de>
  *
@@ -144,10 +144,10 @@ static struct vi_video_mode *gcnfb_current_video_mode = NULL;
 
 #define VI_IRQ	8
 
-#define VI_DI0			0xCC002030
-#define VI_DI1			0xCC002034
-#define VI_DI2			0xCC002038
-#define VI_DI3			0xCC00203C
+#define VI_DI0			((void __iomem *)0xcc002030)
+#define VI_DI1			((void __iomem *)0xcc002034)
+#define VI_DI2			((void __iomem *)0xcc002038)
+#define VI_DI3			((void __iomem *)0xcc00203C)
 
 #define VI_DI_INT		(1 << 31)
 #define VI_DI_ENB		(1 << 28)
@@ -156,10 +156,10 @@ static struct vi_video_mode *gcnfb_current_video_mode = NULL;
 #define VI_DI_HCT_SHIFT	0
 #define VI_DI_HCT_MASK		0x000003FF
 
-#define VI_VISEL		0xCC00206E
+#define VI_VISEL		((void __iomem *)0xcc00206e)
 #define VI_VISEL_PROGRESSIVE	(1 << 0)
 
-static volatile u32 *vi_regs = (volatile u32 *)0xCC002000;
+static volatile u32 *vi_regs = (volatile u32 __iomem *)0xcc002000;
 
 
 static u32 pseudo_palette[17];
@@ -780,8 +780,11 @@ static int __init gcnfb_init(void)
 		goto err_alloc_cmap;
 	}
 
-	/* setup the framebuffer address */
-	gcnfb_restorefb(&gcnfb_info);
+	if (request_irq
+	    (VI_IRQ, gcnfb_vi_irq_handler, SA_INTERRUPT, "VI Line", 0)) {
+		printk(KERN_ERR "Unable to register IRQ %u\n", VI_IRQ);
+		goto err_request_irq;
+	}
 
 	/* now register us */
 	if (register_framebuffer(&gcnfb_info) < 0) {
@@ -789,10 +792,8 @@ static int __init gcnfb_init(void)
 		goto err_register_framebuffer;
 	}
 
-	if (request_irq
-	    (VI_IRQ, gcnfb_vi_irq_handler, SA_INTERRUPT, "VI Line", 0)) {
-		printk(KERN_ERR "Unable to register IRQ %u\n", VI_IRQ);
-	}
+	/* setup the framebuffer address */
+	gcnfb_restorefb(&gcnfb_info);
 
 	if ((err = gcngx_init(&gcnfb_info))) {
 		goto err_gcngx_init;
@@ -804,9 +805,10 @@ static int __init gcnfb_init(void)
 	return 0;
 
 err_gcngx_init:
-	free_irq(VI_IRQ, 0);
 	unregister_framebuffer(&gcnfb_info);
 err_register_framebuffer:
+	free_irq(VI_IRQ, 0);
+err_request_irq:
 	fb_dealloc_cmap(&gcnfb_info.cmap);
 err_alloc_cmap:
 	iounmap(gcnfb_info.screen_base);
