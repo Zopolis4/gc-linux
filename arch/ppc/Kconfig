@@ -1007,7 +1007,7 @@ config MCA
 
 config PCI
 	bool "PCI support" if 40x || 8260
-	default y if !40x && !8260 && !8xx && !APUS
+	default y if !40x && !8260 && !8xx && !APUS && !GAMECUBE
 	default PCI_PERMEDIA if !4xx && !8260 && !8xx && APUS
 	default PCI_QSPAN if !4xx && !8260 && 8xx
 	help

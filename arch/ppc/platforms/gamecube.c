@@ -18,6 +18,13 @@
 #include "console.h"
 #include "gamecube.h"
 
+/*
+ * We happen to be ISA/PCI-free, hence the !CONFIG_PCI. These
+ * are here only to avoid the accompanying compile breakage.
+ */
+unsigned long isa_io_base = 0;
+unsigned long isa_mem_base = 0;
+unsigned long pci_dram_offset = 0;
 
 extern long gamecube_time_init(void) __init;
 extern unsigned long gamecube_get_rtc_time(void);

@@ -106,10 +106,7 @@ CONFIG_CMDLINE="root=/dev/ram0 video=gamecubefb ip=192.168.000.047"
 # Bus options
 #
 CONFIG_GENERIC_ISA_DMA=y
-CONFIG_PCI=y
-CONFIG_PCI_DOMAINS=y
-# CONFIG_PCI_LEGACY_PROC is not set
-# CONFIG_PCI_NAMES is not set
+# CONFIG_PCI_DOMAINS is not set
 CONFIG_EXI=y
 
 #
@@ -154,14 +151,9 @@ CONFIG_BOOT_LOAD=0x00800000
 # CONFIG_BLK_DEV_FD is not set
 # CONFIG_GAMECUBE_ARAM is not set
 # CONFIG_GAMECUBE_MEMCARD is not set
-# CONFIG_BLK_CPQ_DA is not set
-# CONFIG_BLK_CPQ_CISS_DA is not set
-# CONFIG_BLK_DEV_DAC960 is not set
-# CONFIG_BLK_DEV_UMEM is not set
 CONFIG_BLK_DEV_LOOP=y
 # CONFIG_BLK_DEV_CRYPTOLOOP is not set
 # CONFIG_BLK_DEV_NBD is not set
-# CONFIG_BLK_DEV_CARMEL is not set
 CONFIG_BLK_DEV_RAM=y
 CONFIG_BLK_DEV_RAM_SIZE=4096
 CONFIG_BLK_DEV_INITRD=y
@@ -194,7 +186,6 @@ CONFIG_LBD=y
 #
 # I2O device support
 #
-# CONFIG_I2O is not set
 
 #
 # Macintosh device drivers
@@ -269,51 +260,24 @@ CONFIG_NETDEVICES=y
 # CONFIG_TUN is not set
 
 #
-# ARCnet devices
-#
-# CONFIG_ARCNET is not set
-
-#
 # Ethernet (10 or 100Mbit)
 #
 CONFIG_NET_ETHERNET=y
 # CONFIG_MII is not set
 CONFIG_GAMECUBE_NET=y
 # CONFIG_OAKNET is not set
-# CONFIG_HAPPYMEAL is not set
-# CONFIG_SUNGEM is not set
-# CONFIG_NET_VENDOR_3COM is not set
-
-#
-# Tulip family network device support
-#
-# CONFIG_NET_TULIP is not set
-# CONFIG_HP100 is not set
-# CONFIG_NET_PCI is not set
 
 #
 # Ethernet (1000 Mbit)
 #
-# CONFIG_ACENIC is not set
-# CONFIG_DL2K is not set
-# CONFIG_E1000 is not set
-# CONFIG_NS83820 is not set
-# CONFIG_HAMACHI is not set
-# CONFIG_YELLOWFIN is not set
-# CONFIG_R8169 is not set
-# CONFIG_SK98LIN is not set
-# CONFIG_TIGON3 is not set
 
 #
 # Ethernet (10000 Mbit)
 #
-# CONFIG_IXGB is not set
-# CONFIG_S2IO is not set
 
 #
 # Token Ring devices
 #
-# CONFIG_TR is not set
 
 #
 # Wireless LAN (non-hamradio)
@@ -324,8 +288,6 @@ CONFIG_GAMECUBE_NET=y
 # Wan interfaces
 #
 # CONFIG_WAN is not set
-# CONFIG_FDDI is not set
-# CONFIG_HIPPI is not set
 # CONFIG_PPP is not set
 # CONFIG_SLIP is not set
 # CONFIG_SHAPER is not set
@@ -368,7 +330,6 @@ CONFIG_SERIO=y
 # CONFIG_SERIO_I8042 is not set
 # CONFIG_SERIO_SERPORT is not set
 # CONFIG_SERIO_CT82C710 is not set
-# CONFIG_SERIO_PCIPS2 is not set
 
 #
 # Input Device Drivers
@@ -452,25 +413,9 @@ CONFIG_GEN_RTC=y
 # Graphics support
 #
 CONFIG_FB=y
-# CONFIG_FB_PM2 is not set
-# CONFIG_FB_CYBER2000 is not set
 # CONFIG_FB_CT65550 is not set
-# CONFIG_FB_ASILIANT is not set
-# CONFIG_FB_IMSTT is not set
 # CONFIG_FB_S3TRIO is not set
 # CONFIG_FB_VGA16 is not set
-# CONFIG_FB_RIVA is not set
-# CONFIG_FB_MATROX is not set
-# CONFIG_FB_RADEON_OLD is not set
-# CONFIG_FB_RADEON is not set
-# CONFIG_FB_ATY128 is not set
-# CONFIG_FB_ATY is not set
-# CONFIG_FB_SIS is not set
-# CONFIG_FB_NEOMAGIC is not set
-# CONFIG_FB_KYRO is not set
-# CONFIG_FB_3DFX is not set
-# CONFIG_FB_VOODOO1 is not set
-# CONFIG_FB_TRIDENT is not set
 CONFIG_FB_GAMECUBE=y
 # CONFIG_FB_VIRTUAL is not set
 
@@ -521,44 +466,6 @@ CONFIG_SND_PCM_OSS=y
 # CONFIG_SND_MPU401 is not set
 
 #
-# PCI devices
-#
-# CONFIG_SND_ALI5451 is not set
-# CONFIG_SND_ATIIXP is not set
-# CONFIG_SND_AU8810 is not set
-# CONFIG_SND_AU8820 is not set
-# CONFIG_SND_AU8830 is not set
-# CONFIG_SND_AZT3328 is not set
-# CONFIG_SND_BT87X is not set
-# CONFIG_SND_CS46XX is not set
-# CONFIG_SND_CS4281 is not set
-# CONFIG_SND_EMU10K1 is not set
-# CONFIG_SND_KORG1212 is not set
-# CONFIG_SND_MIXART is not set
-# CONFIG_SND_NM256 is not set
-# CONFIG_SND_RME32 is not set
-# CONFIG_SND_RME96 is not set
-# CONFIG_SND_RME9652 is not set
-# CONFIG_SND_HDSP is not set
-# CONFIG_SND_TRIDENT is not set
-# CONFIG_SND_YMFPCI is not set
-# CONFIG_SND_ALS4000 is not set
-# CONFIG_SND_CMIPCI is not set
-# CONFIG_SND_ENS1370 is not set
-# CONFIG_SND_ENS1371 is not set
-# CONFIG_SND_ES1938 is not set
-# CONFIG_SND_ES1968 is not set
-# CONFIG_SND_MAESTRO3 is not set
-# CONFIG_SND_FM801 is not set
-# CONFIG_SND_ICE1712 is not set
-# CONFIG_SND_ICE1724 is not set
-# CONFIG_SND_INTEL8X0 is not set
-# CONFIG_SND_INTEL8X0M is not set
-# CONFIG_SND_SONICVIBES is not set
-# CONFIG_SND_VIA82XX is not set
-# CONFIG_SND_VX222 is not set
-
-#
 # ALSA PowerMac devices
 #
 # CONFIG_SND_POWERMAC is not set
@@ -572,7 +479,6 @@ CONFIG_SND_GAMECUBE=y
 #
 # USB support
 #
-# CONFIG_USB is not set
 
 #
 # USB Gadget Support
