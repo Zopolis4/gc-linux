@@ -107,6 +107,7 @@ static void            (*pmi_pal)(void);
 #define Crd 8388608 // 128.0
 #define Cre 32768 // 0.5
 
+#if 0
 unsigned long GC_Video_RGBToYCbCrFixed (unsigned char r, unsigned char g, unsigned char b)
 {
 	unsigned long Y, Cb, Cr;
@@ -115,6 +116,7 @@ unsigned long GC_Video_RGBToYCbCrFixed (unsigned char r, unsigned char g, unsign
 	Cb = ((Cba * r) + (Cbb * g) + (Cbc * b) + Cbd + Cre) >> 16;
 	Cr = ((Cra * r) + (Crb * g) + (Crc * b) + Crd + Cre) >> 16;
 
+    // clamping isnt really needed
     Y  = CLAMP(Y , 16, 235);
     Cb = CLAMP(Cb, 16, 240);
     Cr = CLAMP(Cr, 16, 240);
@@ -147,6 +149,53 @@ void gamecubefb_writel(unsigned long color, int *address)
         //        (((pa & 0x00FF0000) + (pb & 0x00FF0000)) >> 1) |
         //        (((pa & 0x000000FF) + (pb & 0x000000FF)) >> 1), address);
 }
+#endif
+
+/*
+
+    this one is a bit cleaner ... still some potential for optimizations left
+
+*/
+
+void gamecubefb_writel(register unsigned long color, register int *address)
+{
+        register unsigned char r1, g1, b1;
+        register unsigned char r2, g2, b2;
+        register unsigned char r, g, b;
+        register unsigned char Y1, Cb, Y2, Cr;
+
+        // mmh...arent we are loosing a bit much precision here? maybe
+        // a 5:6:5 format would be better ?
+        r1 = ((color >> 27) & 31) << 3;
+        g1 = ((color >> 22) & 31) << 3;
+        b1 = ((color >> 17) & 31) << 3;
+
+        r2 = ((color >> 11) & 31) << 3;
+        g2 = ((color >> 6) & 31) << 3;
+        b2 = ((color >> 1) & 31) << 3;
+
+        r=(((int)r1)+((int)r2))>>1;
+        g=(((int)g1)+((int)g2))>>1;
+        b=(((int)b1)+((int)b2))>>1;
+
+	Y1 = (((Ya * r1) + (Yb * g1) + (Yc * b1) + Yd + Ye) >> 16);
+	Y2 = (((Ya * r2) + (Yb * g2) + (Yc * b2) + Yd + Ye) >> 16);
+
+	Cb = (((Cba * r) + (Cbb * g) + (Cbc * b) + Cbd + Cre) >> 16);
+	Cr = (((Cra * r) + (Crb * g) + (Crc * b) + Crd + Cre) >> 16);
+
+    // clamping isnt really needed, so we omit it... previous calculations
+    // should be adjusted so we dont get out-of-gamut values
+/*
+    Y1 = CLAMP(Y , 16, 235);
+    Y2 = CLAMP(Y , 16, 235);
+    Cb = CLAMP(Cb, 16, 240);
+    Cr = CLAMP(Cr, 16, 240);
+*/
+    fb_writel_real(((((int)Y1)<<24)|(((int)Cb)<<16)|(((int)Y2)<<8)|(((int)Cr)<<0)),address);
+
+}
+
 
 /* --------------------------------------------------------------------- */
 
@@ -363,8 +412,14 @@ int __init gamecubefb_init(void)
 	for(i=0; i<32; i++) {
 		gamecube_video[i] = VIDEO_Mode[i];
 	}
-	gamecube_video[7] = 0x10000000 | (gamecubefb_fix.smem_start>>5);
-	gamecube_video[9] = 0x10000000 | ((gamecubefb_fix.smem_start+gamecubefb_fix.line_length)>>5);
+
+    gamecube_video[7] = 0x10000000 | (gamecubefb_fix.smem_start>>5);
+
+    // setting both fields to same source means half the resolution, but
+    // reduces flickering a lot ...mmmh maybe worth a try as a last resort :/
+    // gamecube_video[9] = 0x10000000 | (gamecubefb_fix.smem_start>>5);
+
+    gamecube_video[9] = 0x10000000 | ((gamecubefb_fix.smem_start+gamecubefb_fix.line_length)>>5);
 
 	printk(KERN_INFO "fb%d: %s frame buffer device\n",
 	       fb_info.node, fb_info.fix.id);
