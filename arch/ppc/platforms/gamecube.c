@@ -29,25 +29,17 @@ gamecube_map_io(void)
 static void
 gamecube_unmask_irq(unsigned int irq)
 {
-printk("U%x",irq);
-	if (irq == 3) {
-		printk("X");
-		while(1);
-	}
-	printk("\n");
-	printk("GAMECUBE_PIIM = %x\n", GAMECUBE_IN(GAMECUBE_PIIM));
-	printk("GAMECUBE_PIIC = %x\n", GAMECUBE_IN(GAMECUBE_PIIC));
-	printk("out |= %x\n", (1 << irq));
+	//printk("unmask(): %x, %x\n", GAMECUBE_IN(GAMECUBE_PIIM), GAMECUBE_IN(GAMECUBE_PIIC));
 	if (irq < GAMECUBE_IRQS) {
 		GAMECUBE_OUT(GAMECUBE_PIIM, GAMECUBE_IN(GAMECUBE_PIIM) | (1 << irq));
-	printk("GAMECUBE_PIIM = %x\n", GAMECUBE_IN(GAMECUBE_PIIM));
-	printk("GAMECUBE_PIIC = %x\n", GAMECUBE_IN(GAMECUBE_PIIC));
 	}
+	//printk("after unmask(): %x, %x\n", GAMECUBE_IN(GAMECUBE_PIIM), GAMECUBE_IN(GAMECUBE_PIIC));
 }
 
 static void
 gamecube_mask_irq(unsigned int irq)
 {
+	//printk("mask(): %x, %x\n", GAMECUBE_IN(GAMECUBE_PIIM), GAMECUBE_IN(GAMECUBE_PIIC));
 	if (irq < GAMECUBE_IRQS) {
 		GAMECUBE_OUT(GAMECUBE_PIIM, GAMECUBE_IN(GAMECUBE_PIIM) & ~(1 << irq)); /* mask */
 	}
@@ -56,11 +48,12 @@ gamecube_mask_irq(unsigned int irq)
 static void
 gamecube_mask_and_ack_irq(unsigned int irq)
 {
-printk("A%x\n", irq);
+	//printk("mask_and_ack(): %x, %x\n", GAMECUBE_IN(GAMECUBE_PIIM), GAMECUBE_IN(GAMECUBE_PIIC));
 	if (irq < GAMECUBE_IRQS) {
 		GAMECUBE_OUT(GAMECUBE_PIIM, GAMECUBE_IN(GAMECUBE_PIIM) & ~(1 << irq)); /* mask */
 		GAMECUBE_OUT(GAMECUBE_PIIC, 1 << irq); /* ack */
 	}
+	//printk("after mask_and_ack(): %x, %x\n", GAMECUBE_IN(GAMECUBE_PIIM), GAMECUBE_IN(GAMECUBE_PIIC));
 }
 
 static struct hw_interrupt_type gamecube_pic = {
@@ -96,14 +89,13 @@ gamecube_get_irq(struct pt_regs *regs)
 	int irq = 0;
 	u_int irq_status, irq_test = 1;
 
-	printk("GAMECUBE_PIIM = %x\n", GAMECUBE_IN(GAMECUBE_PIIM));
-	printk("GAMECUBE_PIIC = %x\n", GAMECUBE_IN(GAMECUBE_PIIC));
+	//printk("get_irq(): %x, %x\n", GAMECUBE_IN(GAMECUBE_PIIM), GAMECUBE_IN(GAMECUBE_PIIC));
 	irq_status = GAMECUBE_IN(GAMECUBE_PIIC) & GAMECUBE_IN(GAMECUBE_PIIM);
-	printk("irq_status = %x\n", irq_status);
 
 	if(irq_status==0) {
-		printk("\nPanic: IRQ for no reason!\n\n\n\n\n\n");
-		while(1);
+		return -1;
+		//printk("\nPanic: IRQ for no reason!\n\n\n\n\n\n");
+		//while(1);
 	}
 	do
 	{
@@ -113,7 +105,6 @@ gamecube_get_irq(struct pt_regs *regs)
 		irq_test <<= 1;
 	} while (irq < GAMECUBE_IRQS);
 
-printk("f%x: \"%x\"",irq,irq_status);
 	return irq;
 }
 

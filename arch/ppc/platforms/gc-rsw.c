@@ -29,11 +29,13 @@
 
 #include <asm/irq.h>
 
-#define RSW_IRQ 1
+#define RSW_IRQ 2
 
 static irqreturn_t gc_rsw_handler(int this_irq, void *dev_id, struct pt_regs *regs) {
 
-	printk(KERN_ERR "gc_rsw: reset switch pressed\n");
+	*(volatile int *)0xCC006004 |= 4;
+	printk(KERN_ERR "D");
+	//printk(KERN_ERR "gc_rsw: reset switch pressed\n");
 	return IRQ_HANDLED;
 }
 
@@ -45,6 +47,7 @@ static int gc_rsw_init(void)
 	} else {
 		enable_irq(RSW_IRQ);
 	}
+	*(volatile int *)0xCC006004 |= 2;
 	return 0;
 }
 
