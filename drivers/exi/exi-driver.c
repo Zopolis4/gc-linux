@@ -36,11 +36,8 @@ static int exi_device_remove(struct device *dev)
 	struct exi_dev *exi_dev = to_exi_dev(dev);
 	struct exi_driver *drv = to_exi_driver(dev->driver);
 
-	if (drv) {
-		if (drv->remove)
-			drv->remove(exi_dev);
-		exi_dev->dev.driver = NULL;
-	}
+	if (drv->remove)
+		drv->remove(exi_dev);
 
 	return 0;
 }
