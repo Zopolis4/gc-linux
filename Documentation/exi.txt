@@ -71,3 +71,11 @@ have to do is call exi_driver_unregister() in the driver's exit function:
 		exi_driver_unregister(&frob_driver);
 	}
 
+Device Private Data
+-------------------
+
+The functions exi_set_drvdata()/exi_get_drvdata() are available for the
+sole purpose of setting and getting driver private data for an EXI device.
+These are simply helpers around the driver-model functions that do the
+actual work. Use them. That way, you don't have to worry (or worry less)
+about changes to the driver-model API.
