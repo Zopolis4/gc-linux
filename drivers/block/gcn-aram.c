@@ -34,18 +34,20 @@
 #include <linux/hdreg.h>	/* HDIO_GETGEO */
 
 #include <asm/io.h>
+#include <asm/scatterlist.h>
 
 #define ARAM_MAJOR Z2RAM_MAJOR
 
 #define HARD_SECTOR_SIZE 512
 
+//#define ARAM_DEBUG
 //#define ARAM_DBG      printk
 #define ARAM_DBG(format, arg...); { }
 
 #define ARAM_SOUNDMEMORYOFFSET 0
 #define ARAM_BUFFERSIZE (16*1024*1024 - ARAM_SOUNDMEMORYOFFSET)
 
-#define AI_DSP_CSR          (void* __iomem)0xCC00500A
+#define AI_DSP_CSR          (void __iomem *)0xCC00500A
 #define  AI_CSR_RES         (1<<0)
 #define  AI_CSR_PIINT       (1<<1)
 #define  AI_CSR_HALT        (1<<2)
@@ -58,9 +60,17 @@
 #define  AI_CSR_DSPDMA      (1<<9)
 #define  AI_CSR_RESETXXX    (1<<11)
 
-#define AR_DMA_MMADDR        (void* __iomem)0xCC005020
-#define AR_DMA_ARADDR	     (void* __iomem)0xCC005024
-#define AR_DMA_CNT	     (void* __iomem)0xCC005028
+#define AR_SIZE              (void __iomem*)0xCC005012
+#define AR_MODE              (void __iomem*)0xCC005016
+#define   AR_MODE_ACCELERATOR  (1 << 0)
+
+#define AR_REFRESH           (void __iomem*)0xCC00501A
+
+#define AR_DMA_MMADDR        (void __iomem*)0xCC005020
+#define AR_DMA_ARADDR	     (void __iomem*)0xCC005024
+#define AR_DMA_CNT_H	     (void __iomem*)0xCC005028
+#define AR_DMA_CNT_L         (void __iomem*)0xCC00502A
+#define AR_DMA_CNT           AR_DMA_CNT_H
 
 #define ARAM_READ				(1 << 31)
 #define ARAM_WRITE				0
@@ -80,36 +90,51 @@ static u32 refCount;
 static inline void ARAM_StartDMA(void *mmAddr, unsigned long arAddr,
 				 unsigned long length, unsigned long type)
 {
+#ifdef ARAM_DEBUG
+	if ((readw(AI_DSP_CSR) & AI_CSR_DSPDMA) ||
+	    (readl(AR_DMA_CNT) & 0x7FFFFFFF)) {
+		printk("StartDMA called, but there is already an outstanding DMA request!\n");
+	}
+	else if (((u32)mmAddr & 0x1F) || (length & 0x1F)) {
+		printk("StartDMA called on unaligned data\n");
+	}
+#endif
+	/* process */
 	writel(virt_to_phys(mmAddr),AR_DMA_MMADDR);
 	writel(arAddr,AR_DMA_ARADDR);
+	/* writing the low-word kicks off the DMA */
 	writel(type | length,AR_DMA_CNT);
 }
 
 static irqreturn_t aram_irq(int irq,void *dev_id,struct pt_regs *regs)
 {
 	unsigned long flags;
-	unsigned long len;
 	u16 tmp;
 	struct request *req;
 
 	if (readw(AI_DSP_CSR) & AI_CSR_ARINT) {
+#ifdef ARAM_DEBUG
+		if (readw(AI_DSP_CSR) & AI_CSR_DSPDMA) {
+			flags = readl(AR_DMA_CNT);
+			do {
+				cpu_relax();
+			} while(readw(AI_DSP_CSR) & AI_CSR_DSPDMA);
+			printk("Received interrupt before completion, number of bytes remaining was %lu\n",flags);
+		}
+		else if ((flags = (readl(AR_DMA_CNT) & 0x7FFFFFFF))) {
+			printk("Received interrupt before completion, number of bytes remaining was %lu\n",flags);
+		}
+#endif
 		/* ack the int, but only ours */
 		local_irq_save(flags);
 		tmp = readw(AI_DSP_CSR);
-		tmp &= ~(AI_CSR_PIINT | AI_CSR_AIDINT | AI_CSR_DSPINT);
+		tmp &= ~(AI_CSR_AIDINT | AI_CSR_DSPINT);
 		writew(tmp,AI_DSP_CSR);
 		local_irq_restore(flags);
 		
 		/* now process */
-		spin_lock_irqsave(&aram_lock,flags);
+		spin_lock(&aram_lock);
 		if ((req = irq_request)) {
-			len = req->current_nr_sectors << 9;
-			/* invalidate cache on read */
-			if (rq_data_dir(req) == READ) {
-				invalidate_dcache_range(
-					(unsigned long)req->buffer,
-					(unsigned long)req->buffer + len);
-			}
 			/* complete request */
 			if (!end_that_request_first(req,1,
 						    req->current_nr_sectors)) {
@@ -126,7 +151,7 @@ static irqreturn_t aram_irq(int irq,void *dev_id,struct pt_regs *regs)
 		else {
 			printk(KERN_ERR DEVICE_NAME " received an interrupt but no irq_request set\n");
 		}
-		spin_unlock_irqrestore(&aram_lock,flags);
+		spin_unlock(&aram_lock);
 		/* return handled */
 		return IRQ_HANDLED;
 	}
@@ -140,7 +165,7 @@ static void do_aram_request(request_queue_t * q)
 	unsigned long start;
 	unsigned long len;
 	unsigned long flags;
-	/*unsigned long flags; */
+	
 	spin_lock_irqsave(&aram_lock,flags);
 	
 	while ((req = elv_next_request(q))) {
@@ -165,6 +190,9 @@ static void do_aram_request(request_queue_t * q)
 		irq_request = req;
 		/* schedule DMA */
 		if (rq_data_dir(req) == READ) {
+			invalidate_dcache_range((unsigned long)req->buffer,
+						(unsigned long)req->buffer + 
+						len);
 			ARAM_StartDMA(req->buffer,
 				      start + ARAM_SOUNDMEMORYOFFSET, len,
 				      ARAM_READ);
@@ -228,7 +256,7 @@ static int aram_ioctl(struct inode *inode, struct file *file,
 		return ioctl_by_bdev(inode->i_bdev,cmd,arg);
 	case HDIO_GETGEO:
 		/* fake the entries */
-		geo.heads = 32;
+		geo.heads = 16;
 		geo.sectors = 32;
 		geo.start = 0;
 		geo.cylinders = ARAM_BUFFERSIZE / (geo.heads * geo.sectors);
@@ -301,11 +329,14 @@ int __init aram_init(void)
 
 	/* lock this since audio driver might be using it */
 	local_irq_save(flags);
-	writew(readw(AI_DSP_CSR) | AI_CSR_ARINTMASK,AI_DSP_CSR);
+	writew(readw(AI_DSP_CSR) | AI_CSR_ARINTMASK | AI_CSR_PIINT,AI_DSP_CSR);
 	local_irq_restore(flags);
 
 	refCount = 0;
 
+	printk("ARAM info: Size = %u,Mode = 0x%x,Refresh = %u\n",
+	       readw(AR_SIZE),readw(AR_MODE),readl(AR_REFRESH));
+	
 	return 0;
 
  out_queue:
