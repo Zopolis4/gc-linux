@@ -563,7 +563,7 @@ config GAMECUBE
 
 endchoice
 
-config GC_RESETSWITCH
+config GAMECUBE_RESET_SWITCH
         bool "RESETSWITCH"
         default n
         ---help---
