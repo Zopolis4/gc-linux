@@ -737,18 +737,12 @@ static int bba_io_thread(void *param)
 {
 	struct bba_private *priv = param;
 
+	set_user_nice(current, -20);
 	current->flags |= PF_NOFREEZE;
 	set_current_state(TASK_RUNNING);
-	set_user_nice(current, -20);
 
-	for(;;) {
-#if 0
-		if (current->flags & PF_FREEZE) {
-			refrigerator(PF_FREEZE);
-		}
-#endif
-		if (kthread_should_stop())
-			break;
+	while(!kthread_should_stop()) {
+		//try_to_freeze(PF_FREEZE);
 		wait_event(priv->io_waitq, priv->rx_work || priv->tx_skb);
 		while (priv->rx_work || priv->tx_skb) {
 			if (priv->rx_work) {
