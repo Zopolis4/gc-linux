@@ -65,7 +65,6 @@ static struct resource resources = {
 
 
 typedef struct {
-	unsigned char key[3];
 	unsigned char old[3];
 } keyboardStatus;
 
@@ -177,10 +176,22 @@ static void setPolling (void) {
 
 
 
+static void setRumbling (unsigned char portNo, unsigned char rumble) {
+	if (rumble) {
+		writel (0x00400001, SICOUTBUF (portNo));
+		writel (0x80000000, SISR);
+	} else {
+		writel (0x00400000, SICOUTBUF (portNo));
+		writel (0x80000000, SISR);
+	}
+}
+
+
 
 static void gcSiTimer (unsigned long portNo) {
 	int i;
 	unsigned long raw[2];
+	unsigned char key[3];
 
 	raw[0] = readl (SICINBUFH (portNo));
 	raw[1] = readl (SICINBUFL (portNo));
@@ -228,28 +239,26 @@ static void gcSiTimer (unsigned long portNo) {
 			break;
 
 		case ID_KEYBOARD:
-			port[portNo].keyboard.key[0] = (raw[0] >> 12) & 0xFF;
-			port[portNo].keyboard.key[1] = (raw[0] >>  4) & 0xFF;
-			port[portNo].keyboard.key[2] = (raw[0] <<  4) & 0xFF;
-			port[portNo].keyboard.key[2]|= (raw[1] << 28) & 0xFF;
+			key[0] = (raw[0] >> 12) & 0xFF;
+			key[1] = (raw[0] >>  4) & 0xFF;
+			key[2] = (raw[0] <<  4) & 0xFF;
+			key[2]|= (raw[1] << 28) & 0xFF;
 
 			// check if anything was released
 			for (i = 0; i < 3; ++i) {
-				unsigned char key = port[portNo].keyboard.old[i];
-				if (key != port[portNo].keyboard.key[0] &&
-					key != port[portNo].keyboard.key[1] &&
-					key != port[portNo].keyboard.key[2])
-					input_report_key (&port[portNo].inputDev, gamecube_keymap[key], 0);
+				unsigned char oldKey = port[portNo].keyboard.old[i];
+				if (oldKey != key[0] &&
+					oldKey != key[1] &&
+					oldKey != key[2])
+					input_report_key (&port[portNo].inputDev, gamecube_keymap[oldKey], 0);
 			}
 
 			// reports keys
 			for (i = 0; i < 3; ++i) {
-				unsigned char key = port[portNo].keyboard.key[i];
+				if (key[i])
+					input_report_key (&port[portNo].inputDev, gamecube_keymap[key[i]], 1);
 
-				if (key)
-					input_report_key (&port[portNo].inputDev, gamecube_keymap[key], 1);
-
-				port[portNo].keyboard.old[i] = port[portNo].keyboard.key[i];
+				port[portNo].keyboard.old[i] = key[i];
 			}
 
 			break;
@@ -287,6 +296,18 @@ static void gcSiClose (struct input_dev *inputDev) {
 
 
 
+static int gcSiEvent (struct input_dev *dev, unsigned int type, unsigned int code, int value) {
+	int portNo = (int)dev->private;
+	
+	if (type == EV_FF)
+		if (code == FF_RUMBLE)
+			setRumbling (portNo, value);
+	
+	return value;
+}
+
+
+
 static int __init gcSiInit(void) {
 	int i;
 
@@ -319,7 +340,7 @@ static int __init gcSiInit(void) {
 		switch (port[i].id) {
 			case ID_PAD:
 				printk (KERN_WARNING "standard pad\n");
-
+				
 				sprintf (port[i].name, "Gamecube standard pad");
 				port[i].inputDev.name = port[i].name;
 
@@ -328,6 +349,7 @@ static int __init gcSiInit(void) {
 
 				set_bit (EV_KEY, port[i].inputDev.evbit);
 				set_bit (EV_ABS, port[i].inputDev.evbit);
+				set_bit (EV_FF,  port[i].inputDev.evbit);
 
 				set_bit (BTN_A, port[i].inputDev.keybit);
 				set_bit (BTN_B, port[i].inputDev.keybit);
@@ -386,6 +408,12 @@ static int __init gcSiInit(void) {
 				port[i].inputDev.absfuzz[ABS_BRAKE] = 16;
 				port[i].inputDev.absflat[ABS_BRAKE] = 16;
 				
+				// rumbling
+				set_bit (FF_RUMBLE, port[i].inputDev.ffbit);
+				port[i].inputDev.event = gcSiEvent;
+				
+				port[i].inputDev.ff_effects_max = 1;
+
 				input_register_device (&port[i].inputDev);
 
 				break;
