@@ -775,7 +775,7 @@ struct fb_info {
 #else
    extern unsigned int gcnfb_writel(unsigned int, void *);
 #  define fb_writel(b,addr) gcnfb_writel(b,addr)
-#  define fb_writel_real(b,addr) /* __raw_writel */ (*(volatile u32 *) (addr) = (b))
+#  define fb_writel_real(b,addr) /* __raw_writel */ (*(volatile u32 __iomem *) (addr) = (b))
 #endif
 #define fb_writeq __raw_writeq
 #define fb_memset memset_io
