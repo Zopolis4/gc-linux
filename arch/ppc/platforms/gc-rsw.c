@@ -40,17 +40,17 @@ static irqreturn_t gc_rsw_handler(int this_irq, void *dev_id, struct pt_regs *re
 
 static int gc_rsw_init(void)
 {
-	if (request_irq(RSW_IRQ, gc_rsw_handler, 0, "GameCube Reset Switch", 0) < 0) {
+	int err;
+
+	err = request_irq(RSW_IRQ, gc_rsw_handler, 0, "GameCube Reset Switch", 0);
+	if (err)
 		printk(KERN_ERR "gc_rsw: Request irq%d failed\n", RSW_IRQ);
-	} else {
-		enable_irq(RSW_IRQ);
-	}
-	return 0;
+
+	return err;
 }
 
 static void gc_rsw_exit(void)
 {
-	disable_irq(RSW_IRQ);
 	free_irq(RSW_IRQ, 0);
 }
 
