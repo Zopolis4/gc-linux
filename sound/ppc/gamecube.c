@@ -64,7 +64,7 @@ typedef struct snd_gamecube {
 	int dma_size;
 	int period_size;
 	int nperiods;
-	int cur_period;
+	volatile int cur_period;
 	volatile int start_play;
 	volatile int stop_play;
 } gamecube_t;
@@ -77,13 +77,13 @@ static snd_pcm_hardware_t snd_gamecube_playback = {
 			 SNDRV_PCM_INFO_MMAP_VALID),
 	.formats =	SNDRV_PCM_FMTBIT_S16_BE,
 	.rates =	/* SNDRV_PCM_RATE_8000_48000, */
-			SNDRV_PCM_RATE_32000,
-	.rate_min =	/* 8000 */ 32000,
-	.rate_max =	/* 48000 */ 32000,
+			SNDRV_PCM_RATE_32000 | SNDRV_PCM_RATE_48000,
+	.rate_min =	32000,
+	.rate_max =	48000,
 	.channels_min =		2,
 	.channels_max =		2,
 	.buffer_bytes_max =	32768,
-	.period_bytes_min =	4096,
+	.period_bytes_min =	32,
 	.period_bytes_max =	32768,
 	.periods_min =		1,
 	.periods_max =		1024,
@@ -97,6 +97,10 @@ static int snd_gamecube_open(snd_pcm_substream_t *substream)
 	printk(KERN_ALERT "pcm open\n");
 	chip->playback_substream = substream;
 	runtime->hw = snd_gamecube_playback;
+
+	/* align to 32 bytes */ 
+	snd_pcm_hw_constraint_step(runtime, 0, SNDRV_PCM_HW_PARAM_BUFFER_BYTES, 32);
+	snd_pcm_hw_constraint_step(runtime, 0, SNDRV_PCM_HW_PARAM_PERIOD_BYTES, 32);
 
 	return 0;
 }
@@ -113,13 +117,13 @@ static int snd_gamecube_close(snd_pcm_substream_t * substream)
 static int snd_gamecube_hw_params(snd_pcm_substream_t * substream,
 		snd_pcm_hw_params_t * hw_params)
 {
-	printk(KERN_ALERT "snd_gamecube_hw_params\n");
+	/* printk(KERN_ALERT "snd_gamecube_hw_params\n"); */
 	return snd_pcm_lib_malloc_pages(substream, params_buffer_bytes(hw_params));
 }
 
 static int snd_gamecube_hw_free(snd_pcm_substream_t * substream)
 {
-	printk(KERN_ALERT "snd_gamecube_hw_free\n");
+	/* printk(KERN_ALERT "snd_gamecube_hw_free\n"); */
 	return snd_pcm_lib_free_pages(substream);
 }
 
@@ -133,16 +137,20 @@ static int snd_gamecube_prepare(snd_pcm_substream_t * substream)
 			runtime->rate, runtime->channels, runtime->sample_bits);
 	printk("prepare: format=%i, access=%i\n",
 			runtime->format, runtime->access);
-	SetFreq32KHz();
-#if 0	
+
 	/* set requested samplerate */
+	switch (runtime->rate) {
+		case 32000:
+			SetFreq32KHz();
+			break;
+		case 48000:
+			SetFreq48KHz();
+			break;
+		default:
+			printk("unsupported rate: %i!\n", runtime->rate);
+			return -EINVAL;
+	}
 
-	/* set requestd format when available */
-	/* set FMT here !!! FIXME */
-
-	s->period = 0;
-	s->periods = 0;
-#endif        
 	return 0;
 }
 
@@ -200,7 +208,7 @@ static snd_pcm_uframes_t snd_gamecube_pointer(snd_pcm_substream_t * substream)
 	/* bytes = snd_pcm_lib_buffer_bytes(substream); */
 
 #ifdef GAMECUBE_AUDIO_DEBUG
-	printk("pointer: %i of %i bytes left, period #%i\n", left, bytes, chip->cur_period);
+	printk("pointer: %i of %i(%i) bytes left, period #%i\n", left, chip->period_size ,bytes, chip->cur_period);
 #endif
 	return bytes_to_frames(runtime, bytes - left);
 }
@@ -211,7 +219,6 @@ static irqreturn_t snd_gamecube_interrupt(int irq, void *dev, struct pt_regs *re
 	unsigned long val = AUDIO_DSP_CONTROL;
 
 	if (val & 0x100) {
-		int i;
 		u_int32_t addr;
 	
 #ifdef GAMECUBE_AUDIO_DEBUG
@@ -229,17 +236,15 @@ static irqreturn_t snd_gamecube_interrupt(int irq, void *dev, struct pt_regs *re
 			} else chip->cur_period = 0;
 
 			addr = (u_int32_t) chip->playback_substream->runtime->dma_area + (chip->cur_period * chip->period_size);
-			/* addr = (u_int32_t) sega + (chip->cur_period * chip->period_size); */
 
 			flush_dcache_range(addr, addr + chip->period_size);
 			LoadSample(addr, chip->period_size);
 
 			StartSample();
-			chip->start_play = 1;
+			/* chip->start_play = 1; */
 			
 			snd_pcm_period_elapsed(chip->playback_substream);
 		}
-		
 		AUDIO_DSP_CONTROL = (val | 0x100); /* clear DSP interrupt */
 	}
 
@@ -257,17 +262,6 @@ static snd_pcm_ops_t snd_gamecube_playback_ops = {
 	.pointer		= snd_gamecube_pointer,
 };
 
-static snd_pcm_ops_t snd_gamecube_capture_ops = {
-/*	.open			= snd_card_sa11xx_uda1341_open,
-	.close			= snd_card_sa11xx_uda1341_close,
-	.ioctl			= snd_pcm_lib_ioctl,
-	.hw_params	        = snd_sa11xx_uda1341_hw_params,
-	.hw_free	        = snd_sa11xx_uda1341_hw_free,
-	.prepare		= snd_sa11xx_uda1341_prepare,
-	.trigger		= snd_sa11xx_uda1341_trigger,
-	.pointer		= snd_sa11xx_uda1341_pointer,*/
-};
-
 static int __devinit snd_gamecube_new_pcm(gamecube_t *chip)
 {
 	snd_pcm_t *pcm;
@@ -277,7 +271,7 @@ static int __devinit snd_gamecube_new_pcm(gamecube_t *chip)
 		return err;
 
 	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_PLAYBACK, &snd_gamecube_playback_ops);
-	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_CAPTURE, &snd_gamecube_capture_ops);
+	/* snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_CAPTURE, &snd_gamecube_capture_ops); */
 	
 	/* preallocate 64k buffer */
 	snd_pcm_lib_preallocate_pages_for_all(pcm, 64 * 1024, 64 * 1024, GFP_KERNEL);
@@ -293,9 +287,8 @@ static int __devinit snd_gamecube_new_pcm(gamecube_t *chip)
 
 static int __init alsa_card_gamecube_init(void)
 {
-	int i, err;
+	int err;
 	snd_card_t *card;
-	unsigned char *buf1;
 
 /*	if (!is_gamecube())
 		return -ENODEV; */
@@ -361,7 +354,7 @@ static void __exit alsa_card_gamecube_exit(void)
 {
 	printk(KERN_ALERT "Goodbye, cruel world\n");
 
-	free_irq(DSP_IRQ, (void*) 0);
+	free_irq(DSP_IRQ, gamecube_audio);
 	snd_card_free(gamecube_audio->card);
 }
 
