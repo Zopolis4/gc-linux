@@ -113,6 +113,11 @@ zimageinitrd-$(CONFIG_SPRUCE)		:= zImage.initrd-TREE
   entrypoint-$(CONFIG_SPRUCE)		:= 0x00800000
         misc-$(CONFIG_SPRUCE)		+= misc-spruce.o
 
+      zimage-$(CONFIG_LITE5200)		:= zImage-STRIPELF
+zimageinitrd-$(CONFIG_LITE5200)		:= zImage.initrd-STRIPELF
+         end-$(CONFIG_LITE5200)		:= lite5200
+   cacheflag-$(CONFIG_LITE5200)		:= -include $(clear_L2_L3)
+
       zimage-$(CONFIG_GAMECUBE)		:= zImage-DOL
 zimageinitrd-$(CONFIG_GAMECUBE)		:= zImage.initrd-DOL
          end-$(CONFIG_GAMECUBE)		:= dol
@@ -144,11 +149,12 @@ boot-$(CONFIG_MBX)		+= iic.o pci.o qspan_pci.o
 boot-$(CONFIG_RPXCLASSIC)	+= iic.o pci.o qspan_pci.o
 boot-$(CONFIG_RPXLITE)		+= iic.o
 # Different boards need different serial implementations.
-ifeq ($(CONFIG_SERIAL_CONSOLE),y)
+ifeq ($(CONFIG_SERIAL_CPM_CONSOLE),y)
 boot-$(CONFIG_8xx)		+= m8xx_tty.o
 boot-$(CONFIG_8260)		+= m8260_tty.o
-boot-$(CONFIG_GT64260_CONSOLE)	+= gt64260_tty.o
 endif
+boot-$(CONFIG_SERIAL_MPC52xx_CONSOLE) += mpc52xx_tty.o
+boot-$(CONFIG_GT64260_CONSOLE)	+= gt64260_tty.o
 
 LIBS				:= $(common)/lib.a $(bootlib)/lib.a
 ifeq ($(CONFIG_PPC_PREP),y)

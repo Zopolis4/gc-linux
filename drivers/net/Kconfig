@@ -240,7 +240,7 @@ config BMAC
 
 config OAKNET
 	tristate "National DP83902AV (Oak ethernet) support"
-	depends on NET_ETHERNET && PPC
+	depends on NET_ETHERNET && PPC && BROKEN
 	select CRC32
 	help
 	  Say Y if your machine has this type of Ethernet network card.
@@ -672,7 +672,7 @@ config 3C515
 
 config ELMC
 	tristate "3c523 \"EtherLink/MC\" support"
-	depends on NET_VENDOR_3COM && MCA
+	depends on NET_VENDOR_3COM && MCA_LEGACY
 	help
 	  If you have a network (Ethernet) card of this type, say Y and read
 	  the Ethernet-HOWTO, available from
@@ -819,6 +819,24 @@ config ULTRA32
 	  <file:Documentation/networking/net-modules.txt>. The module
 	  will be called smc-ultra32.
 
+config SMC91X
+	tristate "SMC 91C9x/91C1xxx support"
+	select CRC32
+	select MII
+	depends on NET_ETHERNET && (ARM || REDWOOD_5 || REDWOOD_6)
+	help
+	  This is a driver for SMC's 91x series of Ethernet chipsets,
+	  including the SMC91C94 and the SMC91C111. Say Y if you want it
+	  compiled into the kernel, and read the file
+	  <file:Documentation/networking/smc9.txt>  and the Ethernet-HOWTO,
+	  available from  <http://www.linuxdoc.org/docs.html#howto>.
+
+	  This driver is also available as a module ( = code which can be
+	  inserted in and removed from the running kernel whenever you want).
+	  The module will be called smc91x.  If you want to compile it as a
+	  module, say M here and read <file:Documentation/modules.txt> as well
+	  as <file:Documentation/networking/net-modules.txt>.
+
 config SMC9194
 	tristate "SMC 9194 support"
 	depends on NET_VENDOR_SMC && (ISA || MAC && BROKEN)
@@ -889,7 +907,7 @@ source "drivers/net/tulip/Kconfig"
 
 config AT1700
 	tristate "AT1700/1720/RE1000Plus(C-Bus) support (EXPERIMENTAL)"
-	depends on NET_ETHERNET && (ISA || MCA) && EXPERIMENTAL
+	depends on NET_ETHERNET && (ISA || MCA_LEGACY) && EXPERIMENTAL
 	select CRC32
 	---help---
 	  If you have a network (Ethernet) card of this type, say Y and read
@@ -928,7 +946,7 @@ config HP100
 
 config NET_ISA
 	bool "Other ISA cards"
-	depends on NET_ETHERNET && ISA && !X86_PC9800
+	depends on NET_ETHERNET && ISA
 	---help---
 	  If your network (Ethernet) card hasn't been mentioned yet and its
 	  bus system (that's the way the cards talks to the other components
@@ -1111,56 +1129,6 @@ config SK_G16
 	  the Ethernet-HOWTO, available from
 	  <http://www.tldp.org/docs.html#howto>.
 
-config NET_CBUS
-	bool "NEC PC-9800 C-bus cards"
-	depends on NET_ETHERNET && ISA && X86_PC9800
-	---help---
-	  If your network (Ethernet) card hasn't been mentioned yet and its
-	  bus system (that's the way the cards talks to the other components
-	  of your computer) is NEC PC-9800 C-Bus, say Y.
-
-config NE2K_CBUS
-	tristate "Most NE2000-based Ethernet support"
-	depends on NET_CBUS
-	select CRC32
-
-config NE2K_CBUS_EGY98
-	bool "Melco EGY-98 support"
-	depends on NE2K_CBUS
-
-config NE2K_CBUS_LGY98
-	bool "Melco LGY-98 support"
-	depends on NE2K_CBUS
-
-config NE2K_CBUS_ICM
-	bool "ICM IF-27xxET support"
-	depends on NE2K_CBUS
-
-config NE2K_CBUS_IOLA98
-	bool "I-O DATA LA-98 support"
-	depends on NE2K_CBUS
-
-config NE2K_CBUS_CNET98EL
-	bool "Contec C-NET(98)E/L support"
-	depends on NE2K_CBUS
-
-config NE2K_CBUS_CNET98EL_IO_BASE
-	hex "C-NET(98)E/L I/O base address (0xaaed or 0x55ed)"
-	depends on NE2K_CBUS_CNET98EL
-	default "0xaaed"
-
-config NE2K_CBUS_ATLA98
-	bool "Allied Telesis LA-98 Support"
-	depends on NE2K_CBUS
-
-config NE2K_CBUS_BDN
-	bool "ELECOM Laneed LD-BDN[123]A Support"
-	depends on NE2K_CBUS
-
-config NE2K_CBUS_NEC108
-	bool "NEC PC-9801-108 Support"
-	depends on NE2K_CBUS
-
 config SKMC
 	tristate "SKnet MCA support"
 	depends on NET_ETHERNET && MCA && BROKEN
@@ -1178,7 +1146,7 @@ config SKMC
 
 config NE2_MCA
 	tristate "NE/2 (ne2000 MCA version) support"
-	depends on NET_ETHERNET && MCA
+	depends on NET_ETHERNET && MCA_LEGACY
 	select CRC32
 	help
 	  If you have a network (Ethernet) card of this type, say Y and read
@@ -1293,6 +1261,19 @@ config AMD8111_ETH
 config AMD8111E_NAPI
 	bool "Enable NAPI support"
 	depends on AMD8111_ETH
+	help
+	  NAPI is a new driver API designed to reduce CPU and interrupt load
+	  when the driver is receiving lots of packets from the card. It is
+	  still somewhat experimental and thus not yet enabled by default.
+
+	  If your estimated Rx load is 10kpps or more, or if the card will be
+	  deployed on potentially unfriendly networks (e.g. in a firewall),
+	  then say Y here.
+
+	  See <file:Documentation/networking/NAPI_HOWTO.txt> for more
+	  information.
+
+	  If in doubt, say N.
 
 config ADAPTEC_STARFIRE
 	tristate "Adaptec Starfire/DuraLAN support"
@@ -1319,6 +1300,11 @@ config ADAPTEC_STARFIRE_NAPI
 	  If your estimated Rx load is 10kpps or more, or if the card will be
 	  deployed on potentially unfriendly networks (e.g. in a firewall),
 	  then say Y here.
+
+	  See <file:Documentation/networking/NAPI_HOWTO.txt> for more
+	  information.
+
+	  If in doubt, say N.
 
 config AC3200
 	tristate "Ansel Communications EISA 3200 support (EXPERIMENTAL)"
@@ -1507,6 +1493,19 @@ config E100
 config E100_NAPI
 	bool "Use Rx Polling (NAPI)"
 	depends on E100
+	help
+	  NAPI is a new driver API designed to reduce CPU and interrupt load
+	  when the driver is receiving lots of packets from the card. It is
+	  still somewhat experimental and thus not yet enabled by default.
+
+	  If your estimated Rx load is 10kpps or more, or if the card will be
+	  deployed on potentially unfriendly networks (e.g. in a firewall),
+	  then say Y here.
+
+	  See <file:Documentation/networking/NAPI_HOWTO.txt> for more
+	  information.
+
+	  If in doubt, say N.
 
 config LNE390
 	tristate "Mylex EISA LNE390A/B support (EXPERIMENTAL)"
@@ -1611,9 +1610,7 @@ config 8139TOO
 	---help---
 	  This is a driver for the Fast Ethernet PCI network cards based on
 	  the RTL8139 chips. If you have one of those, say Y and read
-	  <file:Documentation/networking/8139too.txt> as well as the
-	  Ethernet-HOWTO, available from
-	  <http://www.tldp.org/docs.html#howto>.
+	  the Ethernet-HOWTO <http://www.tldp.org/docs.html#howto>.
 
 	  To compile this driver as a module, choose M here: the module
 	  will be called 8139too.  This is recommended.
@@ -1751,6 +1748,17 @@ config VIA_RHINE_MMIO
 
 	  If unsure, say Y.
 
+config VIA_VELOCITY
+	tristate "VIA Velocity support"
+	depends on NET_PCI && PCI
+	select CRC32
+	select MII
+	help
+	  If you have a VIA "Velocity" based network card say Y here.
+
+	  To compile this driver as a module, choose M here. The module
+	  will be called via-rhine.
+
 config LAN_SAA9730
 	bool "Philips SAA9730 Ethernet support (EXPERIMENTAL)"
 	depends on NET_PCI && EXPERIMENTAL && MIPS
@@ -1874,6 +1882,8 @@ config NE_H8300
 	  Say Y here if you want to use the NE2000 compatible
 	  controller on the Renesas H8/300 processor.
 
+source "drivers/net/fec_8xx/Kconfig"
+
 endmenu
 
 #
@@ -1969,6 +1979,19 @@ config E1000
 config E1000_NAPI
 	bool "Use Rx Polling (NAPI)"
 	depends on E1000
+	help
+	  NAPI is a new driver API designed to reduce CPU and interrupt load
+	  when the driver is receiving lots of packets from the card. It is
+	  still somewhat experimental and thus not yet enabled by default.
+
+	  If your estimated Rx load is 10kpps or more, or if the card will be
+	  deployed on potentially unfriendly networks (e.g. in a firewall),
+	  then say Y here.
+
+	  See <file:Documentation/networking/NAPI_HOWTO.txt> for more
+	  information.
+
+	  If in doubt, say N.
 
 config MYRI_SBUS
 	tristate "MyriCOM Gigabit Ethernet support"
@@ -2154,6 +2177,19 @@ config IXGB
 config IXGB_NAPI
 	bool "Use Rx Polling (NAPI) (EXPERIMENTAL)"
 	depends on IXGB && EXPERIMENTAL
+	help
+	  NAPI is a new driver API designed to reduce CPU and interrupt load
+	  when the driver is receiving lots of packets from the card. It is
+	  still somewhat experimental and thus not yet enabled by default.
+
+	  If your estimated Rx load is 10kpps or more, or if the card will be
+	  deployed on potentially unfriendly networks (e.g. in a firewall),
+	  then say Y here.
+
+	  See <file:Documentation/networking/NAPI_HOWTO.txt> for more
+	  information.
+
+	  If in doubt, say N.
 
 config S2IO
 	tristate "S2IO 10Gbe XFrame NIC"
@@ -2166,6 +2202,19 @@ config S2IO
 config S2IO_NAPI
 	bool "Use Rx Polling (NAPI) (EXPERIMENTAL)"
 	depends on S2IO && EXPERIMENTAL
+	help
+	  NAPI is a new driver API designed to reduce CPU and interrupt load
+	  when the driver is receiving lots of packets from the card. It is
+	  still somewhat experimental and thus not yet enabled by default.
+
+	  If your estimated Rx load is 10kpps or more, or if the card will be
+	  deployed on potentially unfriendly networks (e.g. in a firewall),
+	  then say Y here.
+
+	  See <file:Documentation/networking/NAPI_HOWTO.txt> for more
+	  information.
+
+	  If in doubt, say N.
 
 endmenu
 
@@ -2362,6 +2411,7 @@ config PPP_FILTER
 config PPP_ASYNC
 	tristate "PPP support for async serial ports"
 	depends on PPP
+	select CRC_CCITT
 	---help---
 	  Say Y (or M) here if you want to be able to use PPP over standard
 	  asynchronous serial ports, such as COM1 or COM2 on a PC.  If you use
@@ -2553,3 +2603,4 @@ config NETCONSOLE
 	---help---
 	If you want to log kernel messages over the network, enable this.
 	See Documentation/networking/netconsole.txt for details.
+
