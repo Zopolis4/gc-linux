@@ -159,12 +159,12 @@ static void __init gamecube_setup_arch(void)
 }
 
 #ifdef CONFIG_KEXEC
-void gamecube_shutdown(void)
+static void gamecube_shutdown(void)
 {
 	/* currently not used */
 }
 
-int gamecube_kexec_prepare(struct kimage *image)
+static int gamecube_kexec_prepare(struct kimage *image)
 {
 	int retval = 0;
 
