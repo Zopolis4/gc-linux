@@ -2,9 +2,9 @@
  * drivers/video/gcnfb.c
  *
  * Nintendo GameCube "Flipper" chipset frame buffer driver
+ * Copyright (C) 2004 The GameCube Linux Team
  * Copyright (C) 2004 Michael Steil <mist@c64.org>
  * Copyright (C) 2004 Todd Jeffreys <todd@voidpointer.org>
- * Copyright (C) 2004 The GameCube Linux Team
  *
  * Based on vesafb (c) 1998 Gerd Knorr <kraxel@goldbach.in-berlin.de>
  *
@@ -36,13 +36,33 @@
 
 #define DRV_MODULE_NAME   "gcnfb"
 #define DRV_DESCRIPTION   "Nintendo GameCube frame buffer driver"
-#define DRV_AUTHOR        "Michael Steil <mist@c64.org>, Todd Jeffreys <todd@voidpointer.org>"
+#define DRV_AUTHOR        "Michael Steil <mist@c64.org>, " \
+                          "Todd Jeffreys <todd@voidpointer.org>"
 
 MODULE_AUTHOR(DRV_AUTHOR);
 MODULE_DESCRIPTION(DRV_DESCRIPTION);
-MODULE_LICENSE(GPL);
+MODULE_LICENSE("GPL");
 
-static volatile u32 *gamecube_video = (volatile u32*)0xCC002000;
+/*
+ * Video mode handling
+ */
+
+#define VI_FMT_NTSC_480i  0x00000000
+#define VI_FMT_NTSC_480p  0x00000100
+#define VI_FMT_PAL50_576i 0x00000011
+#define VI_FMT_PAL60_480i 0x00000001
+#define VI_FMT_MPAL_480i  0x00000002
+
+#define VI_FMT_IS_NTSC(a) (((a)&0x001) == 0)
+#define VI_FMT_IS_PAL(a)  (((a)&0x003) != 0)
+
+struct vi_video_mode {
+	int format;
+	char *name;
+	const u32 *regs;
+	int width;
+	int height;
+};
 
 static const u32 VIDEO_Mode640X480NtscYUV16[32] = {
 	0x0F060001, 0x476901AD, 0x02EA5140, 0x00030018,
@@ -56,59 +76,97 @@ static const u32 VIDEO_Mode640X480NtscYUV16[32] = {
 };
 
 static const u32 VIDEO_Mode640x480NtscProgressiveYUV16[32] = {
-	0x1e0c0005,	0x476901ad,	0x2ea5140,	0x60030,
-	0x60030,	0x81d881d8,	0x81d881d8,	0x10000000,
-	0,	0,	0,	0x37702b6,
-	0x90010001,	0,	0,	0,
-	0,	0,	0x28280100,	0x1ae771f0,
-	0xdb4a574,	0xc1188e,	0xc4c0cbe2,	0xfcecdecf,
-	0x13130f08,	0x80c0f,	0xff0000,	0x10001,
-	0x2800000,	0xff,	0xff00ff,	0xff00ff,
+	0x1e0c0005, 0x476901ad, 0x02ea5140, 0x00060030,
+	0x00060030, 0x81d881d8, 0x81d881d8, 0x10000000,
+	0x00000000, 0x00000000, 0x00000000, 0x037702b6,
+	0x90010001, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x28280100, 0x1ae771f0,
+	0x0db4a574, 0x00c1188e, 0xc4c0cbe2, 0xfcecdecf,
+	0x13130f08, 0x00080c0f, 0x00ff0000, 0x00010001,
+	0x02800000, 0x000000ff, 0x00ff00ff, 0x00ff00ff,
 };
 
-static const u32 VIDEO_Mode640X480Pal50YUV16[32] = {
+static const u32 VIDEO_Mode640X576Pal50YUV16[32] = {
 	0x11F50101, 0x4B6A01B0, 0x02F85640, 0x00010023,
-	0x00000024, 0x4D2B4D6D, 0x4D8A4D4C, 0x00435A4E,
-	0x00000000, 0x00435A4E, 0x00000000, 0x013C0144,
-	0x113901B1, 0x10010001, 0x00010001, 0x00010001,
+	0x00000024, 0x4D2B4D6D, 0x4D8A4D4C, 0x0066D480,
+	0x00000000, 0x0066D980, 0x00000000, 0x00C901F3,
+	0x913901B1, 0x90010001, 0x00010001, 0x00010001,
 	0x00000000, 0x00000000, 0x28500100, 0x1AE771F0,
 	0x0DB4A574, 0x00C1188E, 0xC4C0CBE2, 0xFCECDECF,
 	0x13130F08, 0x00080C0F, 0x00FF0000, 0x00000000,
 	0x02800000, 0x000000FF, 0x00FF00FF, 0x00FF00FF
 };
 
-#define TV_ENC_DETECT 0
-#define TV_ENC_NTSC 1
-#define TV_ENC_PAL 2
+static const u32 VIDEO_Mode640X480Pal60YUV16[32] = {
+	0x0F060001, 0x476901AD, 0x02EA5140, 0x00030018,
+	0x00020019, 0x410C410C, 0x40ED40ED, 0x0066D480,
+	0x00000000, 0x0066D980, 0x00000000, 0x00C9010F,
+	0x910701AE, 0x90010001, 0x00010001, 0x00010001,
+	0x00000000, 0x00000000, 0x28500100, 0x1AE771F0,
+	0x0DB4A574, 0x00C1188E, 0xC4C0CBE2, 0xFCECDECF,
+	0x13130F08, 0x00080C0F, 0x00FF0000, 0x00000000,
+	0x02800000, 0x000000FF, 0x00FF00FF, 0x00FF00FF
+};
 
-#define IRQ_VIDEO 8
-#define VIDEO_IRQ_STATUS_1 0xCC002030
-#define VIDEO_IRQ_STATUS_2 0xCC002034
-#define VIDEO_IRQ_STATUS_3 0xCC002038
-#define VIDEO_IRQ_STATUS_4 0xCC00203C
-#define VIDEO_IRQ_SET      (1 << 31)
-#define VIDEO_IRQ_ENABLE   (1 << 28)
-#define VIDEO_IRQ_VCT_SHIFT 16
-#define VIDEO_IRQ_VCT_MASK  0x03FF0000
-#define VIDEO_IRQ_HCT_SHIFT 0
-#define VIDEO_IRQ_HCT_MASK  0x000003FF
+static struct vi_video_mode gcnfb_video_modes[] = {
+	{
+		.format = VI_FMT_NTSC_480i,
+		.name = "NTSC 480i",
+		.regs = VIDEO_Mode640X480NtscYUV16,
+		.width = 640,
+		.height = 480,
+	},
+	{
+		.format = VI_FMT_NTSC_480p,
+		.name = "NTSC 480p",
+		.regs = VIDEO_Mode640x480NtscProgressiveYUV16,
+		.width = 640,
+		.height = 480,
+	},
+	{
+		.format = VI_FMT_PAL50_576i,
+		.name = "PAL50 576i",
+		.regs = VIDEO_Mode640X576Pal50YUV16,
+		.width = 640,
+		.height = 576,
+	},
+	{
+		.format = VI_FMT_PAL60_480i,
+		.name = "PAL60 480i",
+		.regs = VIDEO_Mode640X480Pal60YUV16,
+		.width = 640,
+		.height = 480,
+	},
+	{ .format = -1 }
+};
 
-#define VIDEO_VISEL       *((volatile u16*)0xCC00206E)
-#define VIDEO_VISEL_SUPPORTS_PROGRESSIVE (1 << 0)
+static struct vi_video_mode *gcnfb_video_mode = NULL;
 
-#define IS_MODE_PROGRESSIVE(a) (((a) & FB_VMODE_MASK) == FB_VMODE_NONINTERLACED)
 
-#define ENABLE_RUMBLE() do \
-   { writel(0x00400001,0xCC006400); \
-     writel(0x80000000,0xCC006438); } \
-   while (0)
+#define VI_IRQ	8
 
-#define SUPPORTS_PROGRESSIVE() (VIDEO_VISEL & VIDEO_VISEL_SUPPORTS_PROGRESSIVE)
+#define VI_DI0			0xCC002030
+#define VI_DI1			0xCC002034
+#define VI_DI2			0xCC002038
+#define VI_DI3			0xCC00203C
 
-static int tv_encoding = TV_ENC_DETECT;
-static DECLARE_WAIT_QUEUE_HEAD(vtrace_wait_queue);
-static struct fb_info gcnfb_info =
-{
+#define VI_DI_INT		(1 << 31)
+#define VI_DI_ENB		(1 << 28)
+#define VI_DI_VCT_SHIFT	16
+#define VI_DI_VCT_MASK		0x03FF0000
+#define VI_DI_HCT_SHIFT	0
+#define VI_DI_HCT_MASK		0x000003FF
+
+#define VI_VISEL		0xCC00206E
+#define VI_VISEL_PROGRESSIVE	(1 << 0)
+
+static volatile u32 *vi_regs = (volatile u32 *)0xCC002000;
+
+
+static u32 pseudo_palette[17];
+static int ypan = 0;		/* 0..nothing, 1..ypan, 2..ywrap */
+
+static struct fb_info gcnfb_info = {
 	.var = {
 		.activate = FB_ACTIVATE_NOW,
 		.height = -1,
@@ -117,17 +175,31 @@ static struct fb_info gcnfb_info =
 		.upper_margin = 16,
 		.lower_margin = 4,
 		.vsync_len = 4,
-		.vmode = FB_VMODE_INTERLACED, 
-	},
+		.vmode = FB_VMODE_INTERLACED,
+		},
 	.fix = {
 		.id = "GameCube",
 		.type = FB_TYPE_PACKED_PIXELS,
 		.accel = FB_ACCEL_NONE,
-	}
+		}
 };
+static DECLARE_WAIT_QUEUE_HEAD(vtrace_wait_queue);
 
-static u32 pseudo_palette[17];
-static int ypan = 0;		/* 0..nothing, 1..ypan, 2..ywrap */
+
+int gcnfb_restorefb(struct fb_info *info);
+
+
+static inline int gcnfb_can_do_progressive(void)
+{
+	return readw(VI_VISEL) & VI_VISEL_PROGRESSIVE;
+}
+
+static inline int gcnfb_is_progressive(__u32 vmode)
+{
+	return (vmode & FB_VMODE_MASK) == FB_VMODE_NONINTERLACED;
+}
+
+
 /*
  * RGB to YCbYCr conversion support bits.
  * We are using here the ITU.BT-601 Y'CbCr standard.
@@ -156,43 +228,9 @@ static int ypan = 0;		/* 0..nothing, 1..ypan, 2..ywrap */
 
 #define clamp(x, y, z) ((z < x) ? x : ((z > y) ? y : z))
 
-int gcnfb_restorefb(struct fb_info *info);
-
-static irqreturn_t gcfb_vi_irq_handler(int irq,void *dev_id,struct pt_regs *regs)
-{
-	u32 val;
-	
-	if ((val=readl(VIDEO_IRQ_STATUS_1)) & VIDEO_IRQ_SET)
-	{
-		gcngx_vtrace();
-		wake_up_interruptible(&vtrace_wait_queue);
-		writel(val & ~VIDEO_IRQ_SET,VIDEO_IRQ_STATUS_1);
-		return IRQ_HANDLED;
-	}
-	if ((val=readl(VIDEO_IRQ_STATUS_2)) & VIDEO_IRQ_SET)
-	{
-		gcngx_vtrace();
-		wake_up_interruptible(&vtrace_wait_queue);
-		writel(val & ~VIDEO_IRQ_SET,VIDEO_IRQ_STATUS_2);
-		return IRQ_HANDLED;
-	}
-	if ((val=readl(VIDEO_IRQ_STATUS_3)) & VIDEO_IRQ_SET)
-	{
-		gcngx_vtrace();
-		wake_up_interruptible(&vtrace_wait_queue);
-		writel(val & ~VIDEO_IRQ_SET,VIDEO_IRQ_STATUS_3);
-		return IRQ_HANDLED;
-	}
-	if ((val=readl(VIDEO_IRQ_STATUS_4)) & VIDEO_IRQ_SET)
-	{
-		gcngx_vtrace();
-		wake_up_interruptible(&vtrace_wait_queue);
-		writel(val & ~VIDEO_IRQ_SET,VIDEO_IRQ_STATUS_4);
-		return IRQ_HANDLED;
-	}
-	return IRQ_NONE;
-}
-
+/*
+ *
+ */
 static inline uint32_t rgbrgb16toycbycr(uint16_t rgb1, uint16_t rgb2)
 {
 	register int Y1, Cb, Y2, Cr;
@@ -247,21 +285,65 @@ static inline uint32_t rgbrgb16toycbycr(uint16_t rgb1, uint16_t rgb2)
 		   + RGB2YUV_CHROMA);
 
 	return (((uint8_t) Y1) << 24) | (((uint8_t) Cb) << 16) |
-		(((uint8_t) Y2) << 8) | (((uint8_t) Cr) << 0);
+	    (((uint8_t) Y2) << 8) | (((uint8_t) Cr) << 0);
 }
 
+/**
+ *
+ */
 unsigned int gcnfb_writel(unsigned int rgbrgb, void *address)
 {
 	uint16_t *rgb = (uint16_t *) & rgbrgb;
 	return fb_writel_real(rgbrgb16toycbycr(rgb[0], rgb[1]), address);
 }
 
+/**
+ *
+ */
 static int gcnfb_pan_display(struct fb_var_screeninfo *var,
-				  struct fb_info *info)
+			     struct fb_info *info)
 {
 	return 0;
 }
 
+/**
+ *
+ */
+static irqreturn_t gcnfb_vi_irq_handler(int irq, void *dev_id,
+				       struct pt_regs *regs)
+{
+	u32 val;
+
+	if ((val = readl(VI_DI0)) & VI_DI_INT) {
+		gcngx_vtrace();
+		wake_up_interruptible(&vtrace_wait_queue);
+		writel(val & ~VI_DI_INT, VI_DI0);
+		return IRQ_HANDLED;
+	}
+	if ((val = readl(VI_DI1)) & VI_DI_INT) {
+		gcngx_vtrace();
+		wake_up_interruptible(&vtrace_wait_queue);
+		writel(val & ~VI_DI_INT, VI_DI1);
+		return IRQ_HANDLED;
+	}
+	if ((val = readl(VI_DI2)) & VI_DI_INT) {
+		gcngx_vtrace();
+		wake_up_interruptible(&vtrace_wait_queue);
+		writel(val & ~VI_DI_INT, VI_DI2);
+		return IRQ_HANDLED;
+	}
+	if ((val = readl(VI_DI3)) & VI_DI_INT) {
+		gcngx_vtrace();
+		wake_up_interruptible(&vtrace_wait_queue);
+		writel(val & ~VI_DI_INT, VI_DI3);
+		return IRQ_HANDLED;
+	}
+	return IRQ_NONE;
+}
+
+/**
+ *
+ */
 static u32 gcnfb_uvirt_to_phys(u32 virt)
 {
 	pgd_t *dir;
@@ -272,56 +354,59 @@ static u32 gcnfb_uvirt_to_phys(u32 virt)
 	u32 offset = virt & (PAGE_SIZE - 1);
 	virt &= PAGE_MASK;
 
-	if (!mm)
-	{
+	if (!mm) {
 		return 0;
 	}
 	down_read(&mm->mmap_sem);
 	/* convert to kernel address */
 	if ((dir = pgd_offset(mm, virt)) && pgd_present(*dir)) {
 		if ((pmd = pmd_offset(dir, virt)) && pmd_present(*pmd)) {
-			pte = pte_offset_kernel(pmd,virt);
+			pte = pte_offset_kernel(pmd, virt);
 			if (pte && pte_present(*pte)) {
-				ret = (u32)page_address(pte_page(*pte)) + offset;
+				ret =
+				    (u32) page_address(pte_page(*pte)) + offset;
 				/* ok now we have the kern addr, map to phys */
-				ret = virt_to_phys((void*)ret);
+				ret = virt_to_phys((void *)ret);
 			}
 		}
 	}
-	
+
 	up_read(&mm->mmap_sem);
 	mmput(mm);
 	return ret;
 }
 
-static int gcnfb_ioctl(struct inode *inode,struct file *file,
-			    unsigned int cmd,unsigned long arg,
-			    struct fb_info *info)
+/**
+ *
+ */
+static int gcnfb_ioctl(struct inode *inode, struct file *file,
+		       unsigned int cmd, unsigned long arg,
+		       struct fb_info *info)
 {
 	u32 phys;
 	void __user *argp;
-	
-	if (cmd == FBIOWAITRETRACE)
-	{
+
+	if (cmd == FBIOWAITRETRACE) {
 		interruptible_sleep_on(&vtrace_wait_queue);
 		return (signal_pending(current) ? -EINTR : 0);
-	}
-	else if (cmd == FBIOVIRTTOPHYS)
-	{
+	} else if (cmd == FBIOVIRTTOPHYS) {
 		argp = (void __user *)arg;
-		if (copy_from_user(&phys,argp,sizeof(void*)))
+		if (copy_from_user(&phys, argp, sizeof(void *)))
 			return -EFAULT;
 
 		phys = gcnfb_uvirt_to_phys(phys);
 
-		if (copy_to_user(argp,&phys,sizeof(void*)))
+		if (copy_to_user(argp, &phys, sizeof(void *)))
 			return -EFAULT;
-		return 0;		
+		return 0;
 	}
 	/* see if the GX module will handle it */
-	return gcngx_ioctl(inode,file,cmd,arg,info);
+	return gcngx_ioctl(inode, file, cmd, arg, info);
 }
 
+/**
+ *
+ */
 static int gcnfb_set_par(struct fb_info *info)
 {
 	/* update the video registers now */
@@ -329,30 +414,29 @@ static int gcnfb_set_par(struct fb_info *info)
 	return 0;
 }
 
-static int gcnfb_check_var(struct fb_var_screeninfo *var,
-				struct fb_info *info)
+/**
+ *
+ */
+static int gcnfb_check_var(struct fb_var_screeninfo *var, struct fb_info *info)
 {
 	/* check bpp */
 	if (var->bits_per_pixel != 16 || /* check bpp */
-	    var->xres_virtual != 640 || /* check for 640 x */
-	    var->xres != 640 ||
-	    var->yres_virtual != gcnfb_info.var.yres || /* check for y */
-	    var->yres != gcnfb_info.var.yres ||	
-	    (IS_MODE_PROGRESSIVE(var->vmode) && !SUPPORTS_PROGRESSIVE())) /* trying to set progressive? */
-	{
+	    var->xres_virtual != gcnfb_video_mode->width ||
+	    var->xres != gcnfb_video_mode->width ||
+	    /* XXX isobel, do not break old sdl */
+	    /* var->yres_virtual != gcnfb_info.var.yres || *//* check for y */
+	    /* var->yres != gcnfb_info.var.yres || */
+	    (gcnfb_is_progressive(var->vmode) && !gcnfb_can_do_progressive())) {	/* trying to set progressive? */
 		return -EINVAL;
 	}
 	return 0;
 }
 
-static void vesa_setpalette(int regno, unsigned red, unsigned green,
-			    unsigned blue)
-{
-}
-
+/**
+ *
+ */
 static int gcnfb_setcolreg(unsigned regno, unsigned red, unsigned green,
-				unsigned blue, unsigned transp,
-				struct fb_info *info)
+			   unsigned blue, unsigned transp, struct fb_info *info)
 {
 	/*
 	 *  Set a single color register. The values supplied are
@@ -366,7 +450,6 @@ static int gcnfb_setcolreg(unsigned regno, unsigned red, unsigned green,
 
 	switch (info->var.bits_per_pixel) {
 	case 8:
-		vesa_setpalette(regno, red, green, blue);
 		break;
 	case 15:
 	case 16:
@@ -374,13 +457,13 @@ static int gcnfb_setcolreg(unsigned regno, unsigned red, unsigned green,
 			/* XXX, not used currently */
 			/* 1:5:5:5 */
 			((u32 *) (info->pseudo_palette))[regno] =
-				((red & 0xf800) >> 1) |
-				((green & 0xf800) >> 6) | ((blue & 0xf800) >> 11);
+			    ((red & 0xf800) >> 1) |
+			    ((green & 0xf800) >> 6) | ((blue & 0xf800) >> 11);
 		} else {
 			/* 0:5:6:5 */
 			((u32 *) (info->pseudo_palette))[regno] =
-				((red & 0xf800)) |
-				((green & 0xfc00) >> 5) | ((blue & 0xf800) >> 11);
+			    ((red & 0xf800)) |
+			    ((green & 0xfc00) >> 5) | ((blue & 0xf800) >> 11);
 		}
 		break;
 	case 24:
@@ -390,35 +473,150 @@ static int gcnfb_setcolreg(unsigned regno, unsigned red, unsigned green,
 		green >>= 8;
 		blue >>= 8;
 		((u32 *) (info->pseudo_palette))[regno] =
-			(red << info->var.red.offset) |
-			(green << info->var.green.offset) |
-			(blue << info->var.blue.offset);
+		    (red << info->var.red.offset) |
+		    (green << info->var.green.offset) |
+		    (blue << info->var.blue.offset);
 		break;
 	}
 	return 0;
 }
 
+/**
+ *
+ */
+void gcnfb_enable_interrupts(int enable)
+{
+	u16 vtrap, htrap;
+
+	if (enable) {
+		/* XXX should we incorporate this in the video mode struct ? */
+		vtrap = gcnfb_video_mode->height / 2;
+		htrap = VI_FMT_IS_NTSC(gcnfb_video_mode->format) ? 430 : 433;
+
+		/* progressive interrupts at 526 */
+		if (gcnfb_is_progressive(gcnfb_info.var.vmode)
+		    && gcnfb_can_do_progressive()) {
+			vtrap *= 2;
+		}
+
+		/* interrupt on line 1 */
+		writel(VI_DI_INT | VI_DI_ENB |
+		       (1 << VI_DI_VCT_SHIFT) | (1 << VI_DI_HCT_SHIFT),
+		       VI_DI0);
+
+		writel(VI_DI_INT | VI_DI_ENB |
+		       (vtrap << VI_DI_VCT_SHIFT) | (htrap << VI_DI_HCT_SHIFT),
+		       VI_DI1);
+	} else {
+		writel(0, VI_DI0);
+		writel(0, VI_DI1);
+	}
+	writel(0, VI_DI2);
+	writel(0, VI_DI3);
+}
+
+/**
+ *
+ */
+void gcnfb_set_framebuffer(u32 addr)
+{
+	/* set top field */
+	vi_regs[7] = 0x10000000 | (addr >> 5);
+
+	/* set bottom field */
+	if (!gcnfb_is_progressive(gcnfb_info.var.vmode)) {
+		addr += gcnfb_info.fix.line_length;
+	}
+	vi_regs[9] = 0x10000000 | (addr >> 5);
+}
+
+/**
+ *
+ */
+int gcnfb_restorefb(struct fb_info *info)
+{
+	int i;
+
+	printk(KERN_INFO "Setting mode %s\n", gcnfb_video_mode->name);
+	gcnfb_set_framebuffer(info->fix.smem_start);
+
+	/* initialize video registers */
+	for (i = 0; i < 7; i++) {
+		vi_regs[i] = gcnfb_video_mode->regs[i];
+	}
+	vi_regs[8] = gcnfb_video_mode->regs[8];
+	vi_regs[10] = gcnfb_video_mode->regs[10];
+	vi_regs[11] = gcnfb_video_mode->regs[11];
+	for (i = 16; i < 32; i++) {
+		vi_regs[i] = gcnfb_video_mode->regs[i];
+	}
+	gcnfb_enable_interrupts(1);
+	return 0;
+}
+
+EXPORT_SYMBOL(gcnfb_restorefb);
+
 struct fb_ops gcnfb_ops = {
-	.owner          = THIS_MODULE,
-	.fb_setcolreg   = gcnfb_setcolreg,
+	.owner = THIS_MODULE,
+	.fb_setcolreg = gcnfb_setcolreg,
 	.fb_pan_display = gcnfb_pan_display,
-	.fb_ioctl       = gcnfb_ioctl,
-	.fb_mmap        = gcngx_mmap,
-	.fb_check_var   = gcnfb_check_var,
-	.fb_set_par     = gcnfb_set_par,
-	.fb_fillrect    = cfb_fillrect,
-	.fb_copyarea    = cfb_copyarea,
-	.fb_imageblit   = cfb_imageblit,
-	.fb_cursor      = soft_cursor,
+	.fb_ioctl = gcnfb_ioctl,
+	.fb_mmap = gcngx_mmap,
+	.fb_check_var = gcnfb_check_var,
+	.fb_set_par = gcnfb_set_par,
+	.fb_fillrect = cfb_fillrect,
+	.fb_copyarea = cfb_copyarea,
+	.fb_imageblit = cfb_imageblit,
+	.fb_cursor = soft_cursor,
 };
 
+/**
+ *
+ */
+struct vi_video_mode *gcnfb_lookup_video_mode(int format)
+{
+	struct vi_video_mode *mode = &gcnfb_video_modes[0];
+
+	while (mode->format != -1) {
+		if (mode->format == format)
+			break;
+		mode++;
+	}
+	return (mode->format == -1) ? NULL : mode;
+}
+
+/**
+ *
+ */
+void gcnfb_video_mode_select(void)
+{
+	if (gcnfb_video_mode == NULL) {
+		if (vi_regs[1] == 0x4B6A01B0) {
+			gcnfb_video_mode =
+			    gcnfb_lookup_video_mode(VI_FMT_PAL50_576i);
+		} else {
+			gcnfb_video_mode =
+			    gcnfb_lookup_video_mode(*(((u16*)vi_regs) + 2) & 3);
+		}
+	}
+
+	/* if we get here something wrong happened */
+	if (gcnfb_video_mode == NULL) {
+		printk(KERN_DEBUG "HEY! SOMETHING WEIRD HERE!\n");
+		gcnfb_video_mode = &gcnfb_video_modes[0];
+	}
+}
+
+/**
+ *
+ */
 int __init gcnfb_setup(char *options)
 {
 	char *this_opt;
 
-	printk("gcnfb: options = %s\n", options);
 	if (!options || !*options)
 		return 0;
+	printk("gcnfb: options = %s\n", options);
 
 	while ((this_opt = strsep(&options, ",")) != NULL) {
 		printk("this_opt = %s\n", this_opt);
@@ -435,136 +633,67 @@ int __init gcnfb_setup(char *options)
 			printk("detected \"tv=\"\n");
 			printk("cmd line: %s\n", this_opt);
 			if (!strncmp(this_opt + 3, "PAL", 3))
-				tv_encoding = TV_ENC_PAL;
+				gcnfb_video_mode =
+				    gcnfb_lookup_video_mode(VI_FMT_PAL50_576i);
 			else if (!strncmp(this_opt + 3, "NTSC", 4))
-				tv_encoding = TV_ENC_NTSC;
+				gcnfb_video_mode =
+				    gcnfb_lookup_video_mode(VI_FMT_NTSC_480i);
 		}
 	}
 	return 0;
 }
 
-void gcnfb_enable_interrupts(int enable)
-{
-	u16 vtrap = (tv_encoding == TV_ENC_NTSC) ? 263 : 313;
-	u16 htrap = (tv_encoding == TV_ENC_NTSC) ? 430 : 433;
-	if (enable)
-	{
-		/* interrupt on line 1 */
-		writel(VIDEO_IRQ_SET | VIDEO_IRQ_ENABLE | (1 << VIDEO_IRQ_VCT_SHIFT) | (1 << VIDEO_IRQ_HCT_SHIFT),VIDEO_IRQ_STATUS_1);
-		/* progressive interrupts at 526 */
-		if (IS_MODE_PROGRESSIVE(gcnfb_info.var.vmode) && SUPPORTS_PROGRESSIVE())
-		{
-			vtrap *= 2;
-		}
-		writel(VIDEO_IRQ_SET | VIDEO_IRQ_ENABLE | (vtrap << VIDEO_IRQ_VCT_SHIFT) | (htrap << VIDEO_IRQ_HCT_SHIFT),VIDEO_IRQ_STATUS_2);
-	}
-	else
-	{
-		writel(0,VIDEO_IRQ_STATUS_1);
-		writel(0,VIDEO_IRQ_STATUS_2);
-	}
-	writel(0,VIDEO_IRQ_STATUS_3);
-	writel(0,VIDEO_IRQ_STATUS_4);
-}
-
-void gcnfb_set_framebuffer(u32 addr)
-{
-	/* set top field */
-	gamecube_video[7] =  0x10000000 | (addr >> 5);
-	/* set bottom field */
-	if (IS_MODE_PROGRESSIVE(gcnfb_info.var.vmode) && SUPPORTS_PROGRESSIVE()) {
-		gamecube_video[9] =  0x10000000 | (addr >> 5);
-	}
-	else {    
-		gamecube_video[9] =  0x10000000 | ((addr + gcnfb_info.fix.line_length) >> 5);
-	}
-}
-
-int gcnfb_restorefb(struct fb_info *info)
-{
-	const u32 *VIDEO_Mode;
-	const char *msg;
-	int i;
-	/* skip for now? */
-	
-	if (tv_encoding == TV_ENC_NTSC)
-	{
-		if (IS_MODE_PROGRESSIVE(info->var.vmode) && SUPPORTS_PROGRESSIVE())
-		{
-			msg = "NTSC 480p";
-			VIDEO_Mode = VIDEO_Mode640x480NtscProgressiveYUV16;
-		}
-		else
-		{
-			msg = "NTSC 480i";
-			VIDEO_Mode = VIDEO_Mode640X480NtscYUV16;
-		}
-	}
-	else
-	{
-		msg = "PAL";
-		VIDEO_Mode = VIDEO_Mode640X480Pal50YUV16;
-	}
-	
-	printk(KERN_INFO "Setting mode %s\n",msg);
-
-	gcnfb_set_framebuffer(info->fix.smem_start);
-	
-	/* initialize video registers */
-	for (i = 0; i < 7; i++) {
-		gamecube_video[i] = VIDEO_Mode[i];
-	}
-	gamecube_video[8] = VIDEO_Mode[8];
-	gamecube_video[10] = VIDEO_Mode[10];
-	gamecube_video[11] = VIDEO_Mode[11];
-	gcnfb_enable_interrupts(1);
-	for (i = 16; i < 32; i++) {
-		gamecube_video[i] = VIDEO_Mode[i];
-	}	
-	return 0;
-}
-
-EXPORT_SYMBOL(gcnfb_restorefb);
-
+/**
+ *
+ */
 int __init gcnfb_init(void)
 {
 	int video_cmap_len;
-	int i;
 	int err = -EINVAL;
 	char *option = NULL;
-	
+
+#if 0
+	int i;
+	printk(KERN_INFO "vi_regs[] = {\n");
+	for (i = 0; i < 32; i += 4) {
+		printk(KERN_INFO "0x%08X, 0x%08X, 0x%08X, 0x%08X,\n",
+		       vi_regs[i],
+		       vi_regs[i + 1],
+		       vi_regs[i + 2], vi_regs[i + 3]);
+	}
+	printk(KERN_INFO "}\n");
+#endif
+
 	if (fb_get_options("gcnfb", &option)) {
 		if (fb_get_options("gamecubefb", &option))
 			return -ENODEV;
 	}
-	
 	gcnfb_setup(option);
-	// detect current video mode
-	if (tv_encoding == TV_ENC_DETECT) {
-		tv_encoding = ((gamecube_video[0] >> 8) & 3) + 1;
-	}
+
+	gcnfb_video_mode_select();
 
 	gcnfb_info.var.bits_per_pixel = 16;
-	gcnfb_info.var.xres = 640;
-	gcnfb_info.var.yres = (tv_encoding == TV_ENC_NTSC) ? 480 : 576;
+	gcnfb_info.var.xres = gcnfb_video_mode->width;
+	gcnfb_info.var.yres = gcnfb_video_mode->height;
 	/* enable non-interlaced if it supports progressive */
-	if (SUPPORTS_PROGRESSIVE())
-	{
+	if (gcnfb_can_do_progressive()) {
 		gcnfb_info.var.vmode = FB_VMODE_NONINTERLACED;
 	}
 
 	gcnfb_info.fix.line_length =
-		gcnfb_info.var.xres * (gcnfb_info.var.bits_per_pixel / 8);
-        /* add space for double-buffering */
-	gcnfb_info.fix.smem_len = 2 * gcnfb_info.fix.line_length * gcnfb_info.var.yres;
+	    gcnfb_info.var.xres * (gcnfb_info.var.bits_per_pixel / 8);
+	/* add space for double-buffering */
+	gcnfb_info.fix.smem_len =
+	    2 * gcnfb_info.fix.line_length * gcnfb_info.var.yres;
 	/* place XFB at end of RAM */
 	gcnfb_info.fix.smem_start = GCN_XFB_START;
 
 	gcnfb_info.fix.visual = (gcnfb_info.var.bits_per_pixel == 8) ?
-		FB_VISUAL_PSEUDOCOLOR : FB_VISUAL_TRUECOLOR;
-	
+	    FB_VISUAL_PSEUDOCOLOR : FB_VISUAL_TRUECOLOR;
+
 	if (!request_mem_region
-	    (gcnfb_info.fix.smem_start, gcnfb_info.fix.smem_len, "Framebuffer")) {
+	    (gcnfb_info.fix.smem_start, gcnfb_info.fix.smem_len,
+	     "Framebuffer")) {
 		printk(KERN_WARNING
 		       "gcnfb: abort, cannot reserve video memory at %p\n",
 		       (void *)gcnfb_info.fix.smem_start);
@@ -572,12 +701,14 @@ int __init gcnfb_init(void)
 		   spaces our resource handlers simply don't know about */
 	}
 
-	gcnfb_info.screen_base = ioremap(gcnfb_info.fix.smem_start, gcnfb_info.fix.smem_len);
+	gcnfb_info.screen_base =
+	    ioremap(gcnfb_info.fix.smem_start, gcnfb_info.fix.smem_len);
 	if (!gcnfb_info.screen_base) {
 		printk(KERN_ERR
 		       "gcnfb: abort, cannot ioremap video memory"
 		       " at %p (%dk)\n",
-		       (void *)gcnfb_info.fix.smem_start, gcnfb_info.fix.smem_len / 1024);
+		       (void *)gcnfb_info.fix.smem_start,
+		       gcnfb_info.fix.smem_len / 1024);
 		err = -EIO;
 		goto err_ioremap;
 	}
@@ -599,7 +730,7 @@ int __init gcnfb_init(void)
 	/* FIXME! Please, use here *real* values */
 	/* some dummy values for timing to make fbset happy */
 	gcnfb_info.var.pixclock =
-		10000000 / gcnfb_info.var.xres * 1000 / gcnfb_info.var.yres;
+	    10000000 / gcnfb_info.var.xres * 1000 / gcnfb_info.var.yres;
 	gcnfb_info.var.left_margin = (gcnfb_info.var.xres / 8) & 0xf8;
 	gcnfb_info.var.hsync_len = (gcnfb_info.var.xres / 8) & 0xf8;
 
@@ -641,49 +772,57 @@ int __init gcnfb_init(void)
 		err = -ENOMEM;
 		goto err_alloc_cmap;
 	}
-	
+
 	/* setup the framebuffer address */
 	gcnfb_restorefb(&gcnfb_info);
+
+	/* XXX isobel */
+#if 0
 	/* fill framebuffer memory with black color */
-	for (i=0;i<(gcnfb_info.var.xres * gcnfb_info.var.yres / 2);++i)
-	{
-		writel(0x00800080, ((u32*)gcnfb_info.screen_base)+i);
+	for (i = 0; i < (gcnfb_info.var.xres * gcnfb_info.var.yres / 2); ++i) {
+		writel(0x00800080, ((u32 *) gcnfb_info.screen_base) + i);
 	}
+#endif
+
 	/* now register us */
 	if (register_framebuffer(&gcnfb_info) < 0) {
 		err = -EINVAL;
 		goto err_register_framebuffer;
 	}
-	
-	if (request_irq(IRQ_VIDEO,gcfb_vi_irq_handler,SA_INTERRUPT,"VI Line",0)) {
-		printk(KERN_ERR "Unable to register IRQ %u\n",IRQ_VIDEO);
+
+	if (request_irq
+	    (VI_IRQ, gcnfb_vi_irq_handler, SA_INTERRUPT, "VI Line", 0)) {
+		printk(KERN_ERR "Unable to register IRQ %u\n", VI_IRQ);
 	}
-	
-	if ((err=gcngx_init(&gcnfb_info))) {
+
+	if ((err = gcngx_init(&gcnfb_info))) {
 		goto err_gcngx_init;
 	}
-	
+
 	printk(KERN_INFO "fb%d: %s frame buffer device\n",
 	       gcnfb_info.node, gcnfb_info.fix.id);
 
 	return 0;
-	
- err_gcngx_init:
-	free_irq(IRQ_VIDEO,0);
+
+      err_gcngx_init:
+	free_irq(VI_IRQ, 0);
 	unregister_framebuffer(&gcnfb_info);
- err_register_framebuffer:
+      err_register_framebuffer:
 	fb_dealloc_cmap(&gcnfb_info.cmap);
- err_alloc_cmap:
+      err_alloc_cmap:
 	iounmap(gcnfb_info.screen_base);
- err_ioremap:
+      err_ioremap:
 	release_mem_region(gcnfb_info.fix.smem_start, gcnfb_info.fix.smem_len);
 	return err;
 }
 
+/**
+ *
+ */
 static void __exit gcnfb_exit(void)
 {
 	gcngx_exit(&gcnfb_info);
-	free_irq(IRQ_VIDEO,0);
+	free_irq(VI_IRQ, 0);
 	unregister_framebuffer(&gcnfb_info);
 	fb_dealloc_cmap(&gcnfb_info.cmap);
 	iounmap(gcnfb_info.screen_base);
