@@ -108,7 +108,7 @@ static irqreturn_t mi_handler(int this_irq, void *data,
 	int region, cause, ack;
 	unsigned long address;
 
-	spin_lock_irqsave(priv->lock, flags);
+	spin_lock_irqsave(&priv->lock, flags);
 
 	address = readw(MI_ADDRLO) | (readw(MI_ADDRHI)<<16);
 
@@ -132,14 +132,14 @@ static irqreturn_t mi_handler(int this_irq, void *data,
 		if (address == priv->last_address) {
 			priv->last_address_faults++;
 		} else {
-#if 0
 			if (priv->last_address_faults > 0) {
+#if 0
 				mi_printk(KERN_INFO, "bad access"
 					  " at 0x%lx (%lu times)\n",
 					  priv->last_address,
 					  priv->last_address_faults);
-			}
 #endif
+			}
 			priv->last_address = address;
 			priv->last_address_faults = 1;
 		}
@@ -148,7 +148,7 @@ static irqreturn_t mi_handler(int this_irq, void *data,
 	writew(ack, MI_ICR); /* ack int */
 	writew(0, MI_0x4020); /* kind of ack */
 
-	spin_unlock_irqrestore(priv->lock, flags);
+	spin_unlock_irqrestore(&priv->lock, flags);
 
 	return IRQ_HANDLED;
 }

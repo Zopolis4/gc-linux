@@ -171,7 +171,7 @@ void exi_select(int channel, int device, int freq)
 {
 	struct exi_private *priv = exi_priv();
 
-	spin_lock_irqsave(priv->select_lock, priv->select_flags);
+	spin_lock_irqsave(&priv->select_lock, priv->select_flags);
 	__exi_select(channel, device, freq);
 }
 
@@ -183,7 +183,7 @@ void exi_deselect(int channel)
 	struct exi_private *priv = exi_priv();
 
 	__exi_deselect(channel);
-	spin_unlock_irqrestore(priv->select_lock, priv->select_flags);
+	spin_unlock_irqrestore(&priv->select_lock, priv->select_flags);
 }
 
 /**
@@ -348,8 +348,8 @@ int exi_lite_init()
 	struct exi_private *priv = exi_priv();
 	int err = 0;
 
-	spin_lock_init(priv->lock);
-	spin_lock_init(priv->select_lock);
+	spin_lock_init(&priv->lock);
+	spin_lock_init(&priv->select_lock);
 
 	err = request_irq(EXI_IRQ, exi_irq_handler, 0, "exi", NULL);
 	if (err) {

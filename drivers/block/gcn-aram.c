@@ -166,8 +166,6 @@ static void do_aram_request(request_queue_t * q)
 	unsigned long len;
 	unsigned long flags;
 	
-	spin_lock_irqsave(&aram_lock,flags);
-	
 	while ((req = elv_next_request(q))) {
 		/* get length */
 		start = req->sector << 9;
@@ -207,7 +205,6 @@ static void do_aram_request(request_queue_t * q)
 		goto exit_func;
 	}
  exit_func:
-	spin_unlock_irqrestore(&aram_lock,flags);
 }
 
 static int aram_open(struct inode *inode, struct file *filp)

@@ -100,7 +100,7 @@ static irqreturn_t gcn_rsw_handler(int this_irq, void *data,
 	struct gcn_rsw_private *priv = (struct gcn_rsw_private *)data;
 	unsigned long flags;
 
-	spin_lock_irqsave(priv->lock, flags);
+	spin_lock_irqsave(&priv->lock, flags);
 
 	/* someone pushed the reset button */
 	switch (priv->state) {
@@ -143,7 +143,7 @@ static irqreturn_t gcn_rsw_handler(int this_irq, void *data,
 	case EMERGENCY_RESET:
 		/* force a hard reset if the user insists ... */
 		if (++priv->pushes >= RSW_EMERGENCY_PUSHES) {
-			spin_unlock_irqrestore(priv->lock, flags);
+			spin_unlock_irqrestore(&priv->lock, flags);
 			gcn_rsw_emergency_reset();
 			return IRQ_HANDLED;
 		} else {
@@ -155,7 +155,7 @@ static irqreturn_t gcn_rsw_handler(int this_irq, void *data,
 		break;
 	}
 
-	spin_unlock_irqrestore(priv->lock, flags);
+	spin_unlock_irqrestore(&priv->lock, flags);
 
 	return IRQ_HANDLED;
 }
