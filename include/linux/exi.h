@@ -1,9 +1,9 @@
+#ifndef __EXI_H
+#define __EXI_H
+
 /*
  * include/linux/exi.h
  */
-
-#ifndef __EXI_H
-#define __EXI_H
 
 #include <linux/device.h>
 
@@ -24,6 +24,9 @@ struct exi_device_id {
 struct exi_driver {
 	char			*name;
 	struct exi_device_id	*id_table;
+
+	int	(*probe)	(struct exi_dev *dev);
+	void	(*remove)	(struct exi_dev *dev);
 
 	struct device_driver	driver;
 };

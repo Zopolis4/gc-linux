@@ -4,40 +4,55 @@ The Expansion Interface (EXI)
 [Introductory information goes here...]
 
 
-Device drivers.
----------------
+Device drivers
+--------------
 
-When writing drivers for devices attached to the EXI bus, do not bother with
-device probing, removal and hotplug events. The bus driver already takes care
-of this.
+Outlined below is the recommended practice when writing EXI device drivers.
+
+The bus driver already handles quite an amount of stuff, although some of
+it might have to be implemented by individual device drivers. If in doubt,
+see include/linux/exi.h.
 
 
-Registration:
--------------
+Registration
+------------
 
-Drivers should declare a struct exi_driver. They must initialize both the
-`name' and `id_table' fields.
+Declare a struct exi_driver. Initialize at least the name, id_table,
+probe and remove fields:
 
-`name' distinguishes the driver from others registered with the bus. It
-should be short, unique, yet remain informative.
 
-`id_table' is a list of device IDs the driver claims to support. These
-should be taken from include/linux/exi_ids.h:
-
-	static struct exi_device_id frob_id_table[] = {
-		{ EXI_ID_FROB0 },
-		{ EXI_ID_FROB1 },
+	static struct exi_device_id frob_id_tbl[] __devinitdata = {
+		{ .dev_id = EXI_ID_FROB0, },
+		{ .dev_id = EXI_ID_FROB1, },
+		{ .dev_id = EXI_ID_FROB2, },
 	};
 
 	static struct exi_driver frob_driver = {
 		.name		= "frob",
-		.id_table	= frob_id_table,
+		.id_table	= frob_id_tbl,
+		.probe		= frob_probe,
+		.remove		= __devexit_p(frob_remove),
 	};
 
 
+`name' distinguishes the driver from others registered with the bus.
+It should be short, unique, yet remain informative.
+
+`id_table' is a pointer to a table of device IDs the driver claims to
+support. These should be taken directly from include/linux/exi_ids.h.
+This table should be marked __devinitdata.
+
+`probe' is a pointer to a function that's called once the driver is bound
+to a device it claims to support. This should be marked __devinit.
+
+`remove' is a pointer to a function that's called when either the driver
+unregisters with the bus, or a device bound to that specific driver is
+physically unplugged from the bus. This should be marked __devexit and
+created with __devexit_p().
+
 From within the driver's initialization function, register the driver with
 the bus by calling exi_driver_register() with the driver structure declared
-previously, like so:
+previously:
 
 	static int __init frob_init(void)
 	{
@@ -45,8 +60,11 @@ previously, like so:
 	}
 
 
-If the driver may be compiled as a loadable kernel module,
-call exi_driver_unregister() in the driver's exit function:
+Deregistration
+--------------
+
+If the driver may be compiled as a loadable kernel module, then all you
+have to do is call exi_driver_unregister() in the driver's exit function:
 
 	static void __exit frob_exit(void)
 	{
