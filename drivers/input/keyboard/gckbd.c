@@ -98,7 +98,7 @@ struct gckbd {
 	unsigned long *portRegister;
 	struct input_dev dev;
 	struct timer_list timer;
-	unsigned char pressedKeys[3];
+	unsigned char lastPressed[3];
 };
 
 
@@ -165,7 +165,7 @@ static unsigned char gckbd_keycode[256] = {
 	/* 3a */ 0x28, /* '" */
 	/* 3b */ 0x1b, /* ]} */
 	/* 3c */ 0x33, /* ,< */
-	/* 3d */ 0x34, /* .> (or Numpad-,) */
+	/* 3d */ 0x34, /* .> (or Numpad-.) */
 	/* 3e */ 0x35, /* /? */
 	/* 3f */ 0x2b, /* \| */
 	/* 40 */ 0x3b, /* F1 */
@@ -205,7 +205,7 @@ static unsigned char gckbd_keycode[256] = {
 	/* 5e */ 103,  /* TODO: Up */
 	/* 5f */ 106,  /* TODO: Right */
 	/* 60 */ 0,
-	/* 61 */ 28,
+	/* 61 */ 28,   /* Enter */
 	/* 62 */ 0,
 	/* 63 */ 0,
 	/* 64 */ 39,
@@ -252,92 +252,45 @@ static void gckbd_timer(unsigned long private)
 	key2 = (*kbd->portRegister >> 16) & 0xFF;
 	key3 = (*kbd->portRegister >>  8) & 0xFF;
 
-//	printk("-%x %x %x - %x %x %x-\n", key1, key2, key3, kbd->pressedKeys[0],
-//			kbd->pressedKeys[1], kbd->pressedKeys[2]);
 
-#if 0
+//	printk("-%x %x %x - %x %x %x-\n", key1, key2, key3, kbd->lastPressed[0],
+//			kbd->lastPressed[1], kbd->lastPressed[2]);
+
+
 	// report released keys
-	for (i = 0; i < 3; i++)
-	{
-		if (kbd->pressedKeys[i] && kbd->pressedKeys[i] != key1 && kbd->pressedKeys[i] != key2 && kbd->pressedKeys[i] != key3) {
-			printk("released: %x\n", kbd->pressedKeys[i]);
-			input_report_key (&kbd->dev, gckbd_keycode[kbd->pressedKeys[i]], 0);
-		}
-	}
-#endif
-
-	if (kbd->pressedKeys[0]) {
-		if ((kbd->pressedKeys[0]) != key1 &&
-		    (kbd->pressedKeys[0]) != key2 &&
-		    (kbd->pressedKeys[0]) != key3) {
-//			printk("released1: %x\n", kbd->pressedKeys[0]);
-			input_report_key (&kbd->dev, gckbd_keycode[kbd->pressedKeys[0]], 0);
-		}
-	}
-	if (kbd->pressedKeys[1]) {
-		if ((kbd->pressedKeys[1]) != key1 &&
-		    (kbd->pressedKeys[1]) != key2 &&
-		    (kbd->pressedKeys[1]) != key3) {
-//			printk("released2: %x\n", kbd->pressedKeys[1]);
-			input_report_key (&kbd->dev, gckbd_keycode[kbd->pressedKeys[1]], 0);
-		}
-	}
-	if (kbd->pressedKeys[2]) {
-		if ((kbd->pressedKeys[2]) != key1 &&
-		    (kbd->pressedKeys[2]) != key2 &&
-		    (kbd->pressedKeys[2]) != key3) {
-//			printk("released3: %x\n", kbd->pressedKeys[2]);
-			input_report_key (&kbd->dev, gckbd_keycode[kbd->pressedKeys[2]], 0);
+	for (i = 0; i < 3; i++) {
+		if (kbd->lastPressed[i]) {
+			if (kbd->lastPressed[i] != key1 &&
+			    kbd->lastPressed[i] != key2 &&
+			    kbd->lastPressed[i] != key3) {
+//				printk("released%d: %x\n", i, kbd->lastPressed[i]);
+				input_report_key (&kbd->dev, gckbd_keycode[kbd->lastPressed[i]], 0);
+			}
 		}
 	}
 
-#if 0
+
 	// check if we should report anything
-	if (key1 && gckbd_keycode[key1]) {
-		printk("pressed1: %x\n", key1);
+	if (key1) {
+//		printk("pressed1: %x\n", key1);
 		input_report_key (&kbd->dev, gckbd_keycode[key1], 1);
 	}
-	if (key2 && gckbd_keycode[key2]) {
-		printk("pressed2: %x\n", key2);
+	if (key2) {
+//		printk("pressed2: %x\n", key2);
 		input_report_key (&kbd->dev, gckbd_keycode[key2], 1);
 	}
-	if (key3 && gckbd_keycode[key3]) {
-		printk("pressed3: %x\n", key3);
-		input_report_key (&kbd->dev, gckbd_keycode[key3], 1);
-	}
-#endif
-	if (key1) {
-		if ((key1 != kbd->pressedKeys[0]) &&
-		    (key1 != kbd->pressedKeys[1]) &&
-		    (key1 != kbd->pressedKeys[2])) {
-//			printk("pressed1: %x\n", key1);
-			input_report_key (&kbd->dev, gckbd_keycode[key1], 1);
-		}
-	}
-	if (key2) {
-		if ((key2 != kbd->pressedKeys[0]) &&
-		    (key2 != kbd->pressedKeys[1]) &&
-		    (key2 != kbd->pressedKeys[2])) {
-//			printk("pressed2: %x\n", key1);
-			input_report_key (&kbd->dev, gckbd_keycode[key2], 1);
-		}
-	}
 	if (key3) {
-		if ((key3 != kbd->pressedKeys[0]) &&
-		    (key3 != kbd->pressedKeys[1]) &&
-		    (key3 != kbd->pressedKeys[2])) {
-//			printk("pressed3: %x\n", key1);
-			input_report_key (&kbd->dev, gckbd_keycode[key3], 1);
-		}
+//		printk("pressed3: %x\n", key3);
+		input_report_key (&kbd->dev, gckbd_keycode[key3], 1);
 	}
 
 	input_sync (&kbd->dev);
 
 
 	// keep state of pressed keys
-	kbd->pressedKeys[0] = key1;
-	kbd->pressedKeys[1] = key2;
-	kbd->pressedKeys[2] = key3;
+	kbd->lastPressed[0] = key1;
+	kbd->lastPressed[1] = key2;
+	kbd->lastPressed[2] = key3;
 
 
 	mod_timer (&kbd->timer, jiffies + HZ/50);
@@ -351,7 +304,7 @@ static int gckbd_open(struct input_dev *dev)
 
 
 	init_timer (&kbd->timer);
-	kbd->timer.data = (void *)kbd;
+	kbd->timer.data = (unsigned int)kbd;
 	kbd->timer.function = gckbd_timer;
 	kbd->timer.expires = jiffies + HZ/50;
 	add_timer (&kbd->timer);
@@ -390,6 +343,7 @@ static int __init gckbd_init(void)
 
 	memset (kbd, 0, sizeof (struct gckbd));
 
+
 	// set some parameters/callbacks
 	kbd->portRegister = (unsigned long*)0xCC00642C;
 	kbd->dev.private = kbd;
@@ -397,6 +351,7 @@ static int __init gckbd_init(void)
 	kbd->dev.close = gckbd_close;
 
 	set_bit (EV_KEY, kbd->dev.evbit);
+	set_bit (EV_REP, kbd->dev.evbit);
 	for (i = 0; i < 255; i++)
 		set_bit (gckbd_keycode[i], kbd->dev.keybit);
 
