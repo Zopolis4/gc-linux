@@ -30,6 +30,14 @@
 #  define DPRINTK(fmt, args...)
 #endif
 
+/*
+ * Defining HACK_FORCE_KEYBOARD_PORT allows one to specify a port that
+ * will be identified as a keyboard port in case the port gets incorrectly
+ * identified.
+ */
+#define HACK_FORCE_KEYBOARD_PORT
+
+
 #define DRV_MODULE_NAME  "gcn-si"
 #define DRV_DESCRIPTION  "Nintendo GameCube Serial Interface driver"
 #define DRV_AUTHOR       "Steven Looman <steven@krx.nl>"
@@ -42,21 +50,23 @@ MODULE_LICENSE("GPL");
 #define si_printk(level, format, arg...) \
         printk(level PFX format , ## arg)
 
+
 /*
  * This keymap is for a datel adapter + normal US keyboard.
  */
 #include "gcn-keymap.h"
 
+
 #define REFRESH_TIME HZ/100
 
-#define SICOUTBUF(x)	(0xcc006400 + x * 12)
-#define SICINBUFH(x)	(0xcc006404 + x * 12)
-#define SICINBUFL(x)	(0xcc006408 + x * 12)
+#define SICOUTBUF(x)	((void __iomem *)(0xcc006400 + (x)*12))
+#define SICINBUFH(x)	((void __iomem *)(0xcc006404 + (x)*12))
+#define SICINBUFL(x)	((void __iomem *)(0xcc006408 + (x)*12))
 
-#define SIPOLL		0xcc006430
-#define SICOMCSR	0xcc006434
-#define SISR		0xcc006438
-#define SIEXILK		0xcc00643c
+#define SIPOLL		((void __iomem *)0xcc006430)
+#define SICOMCSR	((void __iomem *)0xcc006434)
+#define SISR		((void __iomem *)0xcc006438)
+#define SIEXILK		((void __iomem *)0xcc00643c)
 
 #define ID_PAD		0x0900
 #define ID_KEYBOARD	0x0820
@@ -76,8 +86,9 @@ MODULE_LICENSE("GPL");
 #define PAD_RIGHT	(1 << 17)
 #define PAD_LEFT	(1 << 16)
 
+
 static struct resource gcn_si_resources = {
-	"GCN SI",
+	DRV_MODULE_NAME,
 	0xcc006400,
 	0xcc006500,
 	IORESOURCE_MEM | IORESOURCE_BUSY
@@ -110,6 +121,28 @@ struct {
 	/* char phys[32]; */
 } port[4];
 
+
+#ifdef HACK_FORCE_KEYBOARD_PORT
+
+static int gcn_si_force_keyboard_port = -1;
+
+#ifdef MODULE
+module_param_named(force_keyboard_port, gcn_si_force_keyboard_port, int, 0644);
+MODULE_PARM_DESC(force_keyboard_port, "port n becomes a keyboard port if"
+		 " automatic identification fails");
+#else
+static int __init gcn_si_force_keyboard_port_setup(char *line)
+{
+        if (sscanf(line, "%d", &gcn_si_force_keyboard_port) != 1) {
+		gcn_si_force_keyboard_port = -1;
+	}
+        return 1;
+}
+__setup("force_keyboard_port=", gcn_si_force_keyboard_port_setup);
+#endif /* MODULE */
+
+#endif /* HACK_FORCE_KEYBOARD_PORT */
+
 /**
  *
  */
@@ -135,20 +168,20 @@ static void gcn_si_reset(void)
 	writel(0, SICOMCSR);
 	writel(0, SISR);
 
-	writel(0, 0xcc006480);
-	writel(0, 0xcc006484);
-	writel(0, 0xcc006488);
-	writel(0, 0xcc00648c);
+	writel(0, (void __iomem *)0xcc006480);
+	writel(0, (void __iomem *)0xcc006484);
+	writel(0, (void __iomem *)0xcc006488);
+	writel(0, (void __iomem *)0xcc00648c);
 
-	writel(0, 0xcc006490);
-	writel(0, 0xcc006494);
-	writel(0, 0xcc006498);
-	writel(0, 0xcc00649c);
+	writel(0, (void __iomem *)0xcc006490);
+	writel(0, (void __iomem *)0xcc006494);
+	writel(0, (void __iomem *)0xcc006498);
+	writel(0, (void __iomem *)0xcc00649c);
 
-	writel(0, 0xcc0064a0);
-	writel(0, 0xcc0064a4);
-	writel(0, 0xcc0064a8);
-	writel(0, 0xcc0064ac);
+	writel(0, (void __iomem *)0xcc0064a0);
+	writel(0, (void __iomem *)0xcc0064a4);
+	writel(0, (void __iomem *)0xcc0064a8);
+	writel(0, (void __iomem *)0xcc0064ac);
 }
 
 /**
@@ -162,7 +195,7 @@ static void gcn_si_wait_transfer_done(void)
 		transfer_done = readl(SICOMCSR) & (1 << 31);
 	} while (!transfer_done);
 
-	writel(readl(SICOMCSR) |= (1 << 31), SICOMCSR);	/* ack IRQ */
+	writel(readl(SICOMCSR) | (1 << 31), SICOMCSR);	/* ack IRQ */
 }
 
 /**
@@ -179,7 +212,7 @@ static unsigned long gcn_si_get_controller_id(int port)
 
 	gcn_si_wait_transfer_done();
 
-	return readl(0xcc006480);
+	return readl((void __iomem *)0xcc006480);
 }
 
 /**
@@ -398,14 +431,24 @@ static int __init gcn_si_init(void)
 			strcpy(port[i].name, "Keyboard");
 		} else {
 			port[i].id = CTL_UNKNOWN;
-			if (port[i].si_id)
+			if (port[i].si_id) {
 				sprintf(port[i].name, "Unknown (%x)", 
 					port[i].si_id);
-			else
+#ifdef HACK_FORCE_KEYBOARD_PORT
+				if (i+1 == gcn_si_force_keyboard_port) {
+					si_printk(KERN_WARNING,
+						  "port %d forced to"
+						  " keyboard mode\n", i+1);
+					port[i].si_id = ID_KEYBOARD;
+					port[i].id = CTL_KEYBOARD;
+					strcpy(port[i].name, "Keyboard"
+					       " (forced)");
+				}
+#endif /* HACK_FORCE_KEYBOARD_PORT */
+			} else {
 				strcpy(port[i].name, "Not Present");
+			}
 		}
-		
-		DPRINTK("port[%d] = 0x%x\n", i, id);
 		
 		init_input_dev(&port[i].idev);
 
@@ -502,7 +545,7 @@ static int __init gcn_si_init(void)
 			/* this is here to avoid compiler warnings */
 			break;
 		}
-		si_printk(KERN_INFO, "Port %d: %s\n", i, port[i].name);
+		si_printk(KERN_INFO, "Port %d: %s\n", i+1, port[i].name);
 	}
 
 	gcn_si_set_polling();
