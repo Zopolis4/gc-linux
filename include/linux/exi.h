@@ -1,11 +1,23 @@
+/*
+ * include/linux/exi.h
+ *
+ * Nintendo GameCube EXpansion Interface definitions
+ * Copyright (C) 2004 Arthur Othieno <a.othieno@bluewin.ch>
+ * Copyright (C) 2004 The GameCube Linux Team
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ */
 #ifndef __EXI_H
 #define __EXI_H
 
-/*
- * include/linux/exi.h
- */
-
 #include <linux/device.h>
+
+/* while the real framework gets finished, we'll use the lite version */
+#include <../drivers/exi/gcn-exi-lite.h>
 
 
 struct exi_dev {
