@@ -1,12 +1,14 @@
-// keymap for a Datel adapater + US keyboard (not the normal keyboard)
-// not mapped:
-// 	printscreen / sysreq
-//	scroll lcok
-//	pause / break
-//	numlock
-//	windows key 1
-//	windows key 2
-//	windows menu key
+/*
+ * keymap for a Datel adapater + US keyboard (not the normal keyboard)
+ * not mapped:
+ * 	printscreen / sysreq
+ *	scroll lcok
+ *	pause / break
+ *	numlock
+ *	windows key 1
+ *	windows key 2
+ *	windows menu key
+ */
 
 static unsigned char gamecube_keymap[] = {
 	/* 00 */ KEY_RESERVED,  KEY_RESERVED, KEY_RESERVED,   KEY_RESERVED,   KEY_RESERVED,  KEY_RESERVED,   KEY_HOME,      KEY_END,

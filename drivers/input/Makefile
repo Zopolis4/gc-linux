@@ -18,4 +18,4 @@ obj-$(CONFIG_INPUT_JOYSTICK)	+= joystick/
 obj-$(CONFIG_INPUT_TOUCHSCREEN)	+= touchscreen/
 obj-$(CONFIG_INPUT_MISC)	+= misc/
 
-obj-$(CONFIG_GAMECUBE_SI)       += gamecube_si.o
+obj-$(CONFIG_GAMECUBE_SI)       += gcn-si.o

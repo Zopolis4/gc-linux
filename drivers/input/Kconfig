@@ -137,7 +137,8 @@ config INPUT_EVBUG
 comment "Input I/O drivers"
 
 config GAMECUBE_SI
-	tristate "Gamecube SI driver"
+	tristate "Nintendo GameCube Serial Interface"
+	depends on GAMECUBE
 	---help---
 	  Say Y here if you want to use the standard pads as joysticks or
 	  want to use a keyboard. Everything is autodetected.
