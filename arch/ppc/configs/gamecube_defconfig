@@ -1,11 +1,12 @@
 #
 # Automatically generated make config: don't edit
-# Linux kernel version: 2.6.10
-# Tue Jan  4 22:33:25 2005
+# Linux kernel version: 2.6.11
+# Thu Mar  3 15:49:42 2005
 #
 CONFIG_MMU=y
 CONFIG_GENERIC_HARDIRQS=y
 CONFIG_RWSEM_XCHGADD_ALGORITHM=y
+CONFIG_GENERIC_CALIBRATE_DELAY=y
 CONFIG_HAVE_DEC_LOCK=y
 CONFIG_PPC=y
 CONFIG_PPC32=y
@@ -78,11 +79,14 @@ CONFIG_NOT_COHERENT_CACHE=y
 #
 # CONFIG_PPC_MULTIPLATFORM is not set
 # CONFIG_APUS is not set
+# CONFIG_KATANA is not set
 # CONFIG_WILLOW is not set
+# CONFIG_CPCI690 is not set
 # CONFIG_PCORE is not set
 # CONFIG_POWERPMC250 is not set
-# CONFIG_EV64260 is not set
+# CONFIG_CHESTNUT is not set
 # CONFIG_SPRUCE is not set
+# CONFIG_EV64260 is not set
 # CONFIG_LOPEC is not set
 # CONFIG_MCPN765 is not set
 # CONFIG_MVME5100 is not set
@@ -101,6 +105,7 @@ CONFIG_GAMECUBE=y
 # CONFIG_RPX8260 is not set
 # CONFIG_TQM8260 is not set
 # CONFIG_ADS8272 is not set
+# CONFIG_PQ2FADS is not set
 # CONFIG_LITE5200 is not set
 # CONFIG_GAMECUBE_CONSOLE is not set
 CONFIG_GAMECUBE_RESET=y
@@ -119,6 +124,15 @@ CONFIG_CMDLINE="root=/dev/ram0 video=gamecubefb ip=192.168.000.047"
 CONFIG_GENERIC_ISA_DMA=y
 # CONFIG_PCI_DOMAINS is not set
 CONFIG_EXI=y
+
+#
+# PCCARD (PCMCIA/CardBus) support
+#
+# CONFIG_PCCARD is not set
+
+#
+# PC-card bridges
+#
 
 #
 # Advanced setup
@@ -145,6 +159,7 @@ CONFIG_BOOT_LOAD=0x00800000
 #
 # CONFIG_STANDALONE is not set
 CONFIG_PREVENT_FIRMWARE_BUILD=y
+# CONFIG_FW_LOADER is not set
 
 #
 # Memory Technology Devices (MTD)
@@ -167,6 +182,7 @@ CONFIG_PREVENT_FIRMWARE_BUILD=y
 # CONFIG_GAMECUBE_ARAM is not set
 # CONFIG_GAMECUBE_MEMCARD is not set
 # CONFIG_GAMECUBE_SD is not set
+# CONFIG_BLK_DEV_COW_COMMON is not set
 CONFIG_BLK_DEV_LOOP=y
 # CONFIG_BLK_DEV_CRYPTOLOOP is not set
 # CONFIG_BLK_DEV_NBD is not set
@@ -185,6 +201,7 @@ CONFIG_IOSCHED_NOOP=y
 CONFIG_IOSCHED_AS=y
 CONFIG_IOSCHED_DEADLINE=y
 CONFIG_IOSCHED_CFQ=y
+# CONFIG_ATA_OVER_ETH is not set
 
 #
 # ATA/ATAPI/MFM/RLL support
@@ -428,7 +445,8 @@ CONFIG_GEN_RTC=y
 #
 # Misc devices
 #
-CONFIG_GCN_GQR=m
+CONFIG_GAMECUBE_GQR=m
+# CONFIG_GAMECUBE_MI is not set
 
 #
 # Multimedia devices
@@ -469,6 +487,7 @@ CONFIG_LOGO=y
 # CONFIG_LOGO_LINUX_VGA16 is not set
 # CONFIG_LOGO_LINUX_CLUT224 is not set
 CONFIG_LOGO_GAMECUBE_CLUT224=y
+# CONFIG_BACKLIGHT_LCD_SUPPORT is not set
 
 #
 # Sound
@@ -531,6 +550,11 @@ CONFIG_SND_GAMECUBE=y
 # CONFIG_MMC is not set
 
 #
+# InfiniBand support
+#
+# CONFIG_INFINIBAND is not set
+
+#
 # File systems
 #
 CONFIG_EXT2_FS=y
@@ -539,6 +563,10 @@ CONFIG_EXT2_FS=y
 # CONFIG_JBD is not set
 # CONFIG_REISERFS_FS is not set
 # CONFIG_JFS_FS is not set
+
+#
+# XFS support
+#
 # CONFIG_XFS_FS is not set
 # CONFIG_MINIX_FS is not set
 # CONFIG_ROMFS_FS is not set
@@ -598,7 +626,6 @@ CONFIG_RAMFS=y
 #
 # CONFIG_NFS_FS is not set
 # CONFIG_NFSD is not set
-# CONFIG_EXPORTFS is not set
 # CONFIG_SMB_FS is not set
 # CONFIG_CIFS is not set
 # CONFIG_NCP_FS is not set
@@ -682,3 +709,7 @@ CONFIG_CRC32=y
 # Cryptographic options
 #
 # CONFIG_CRYPTO is not set
+
+#
+# Hardware crypto devices
+#
