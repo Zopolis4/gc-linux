@@ -1,4 +1,17 @@
-
+/*
+ * drivers/block/gcn-memcard.c
+ *
+ * Nintendo GameCube Memory Card block driver
+ * Copyright (C) 2004 The GameCube Linux Team
+ *
+ * Based on work from Torben Nielsen.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ */
 #define DEVICE_NAME "memcard"
 
 #include <linux/major.h>
@@ -8,16 +21,16 @@
 #include <linux/moduleparam.h>
 #include <linux/blkdev.h>
 #include <linux/delay.h>
+#include <linux/interrupt.h>
+#include <linux/fcntl.h>	/* O_ACCMODE */
+#include <linux/hdreg.h>	/* HDIO_GETGEO */
+
+#include <linux/exi.h>
 
 #include <asm/setup.h>
 #include <asm/bitops.h>
 #include <asm/pgtable.h>
 #include <asm/cacheflush.h>
-#include <linux/interrupt.h>
-
-#include <linux/fcntl.h>	/* O_ACCMODE */
-#include <linux/hdreg.h>	/* HDIO_GETGEO */
-
 
 #define MEMCARD_MAX_UNITS 2
 
@@ -72,12 +85,6 @@ static unsigned char *card_sector_buffer[MEMCARD_MAX_UNITS];
 #define EXI_CONTROL_DMA              2
 #define EXI_CONTROL_ENABLE           1
 
-
-extern void exi_select(int channel, int device, int freq);
-extern void exi_deselect(int channel);
-extern void exi_imm(int channel, void *data, int len, int mode, int zero);
-extern void exi_sync(int channel);
-
 static int exi_probe(unsigned long channel)
 {
 	if (*(unsigned long *) (&EXI_STATUS0 + (channel * 5)) & 0x1000)
@@ -98,13 +105,9 @@ static unsigned long exi_retrieve_id(unsigned long channel,
 
 		/* Send the EXI ID command (0x0000) */
 		tID = 0;
-		exi_imm(channel, (unsigned char *) &tID, 2,
-			EXI_CONTROL_TYPE_WRITE, 0);
-		exi_sync(channel);
+		exi_write(channel, (unsigned char *) &tID, 2);
 		/* Read the actual ID data (4 bytes) */
-		exi_imm(channel, (unsigned char *) &tID, 4,
-			EXI_CONTROL_TYPE_READ, 0);
-		exi_sync(channel);
+		exi_read(channel, (unsigned char *) &tID, 4);
 		/* Deselect the selected EXI device. */
 		exi_deselect(channel);
 
@@ -168,11 +171,9 @@ static unsigned char card_read_status(unsigned long channel)
 	/* Send the EXI ID command (0x83xx) */
 	cbuf[0] = 0x83;		/* Command Byte */
 	cbuf[1] = 0x00;
-	exi_imm(channel, cbuf, 2, EXI_CONTROL_TYPE_WRITE, 0);
-	exi_sync(channel);
+	exi_write(channel, cbuf, 2);
 	/* Read the actual ID data (2 bytes) */
-	exi_imm(channel, cbuf, 1, EXI_CONTROL_TYPE_READ, 0);
-	exi_sync(channel);
+	exi_read(channel, cbuf, 1);
 
 	/* Deselect the selected EXI device. */
 	exi_deselect(channel);
@@ -200,19 +201,16 @@ static void card_read_array(unsigned long channel, unsigned char *abuf,
 		cbuf[1] = (address >> 17) & 0x3F;
 		cbuf[2] = (address >> 9) & 0xFF;
 		cbuf[3] = (address >> 7) & 3;
-		exi_imm(channel, cbuf, 4, EXI_CONTROL_TYPE_WRITE, 0);
-		exi_sync(channel);
+		exi_write(channel, cbuf, 4);
 
 		cbuf[0] = address & 0x7F;
-		exi_imm(channel, cbuf, 1, EXI_CONTROL_TYPE_WRITE, 0);
-		exi_sync(channel);
+		exi_write(channel, cbuf, 1);
 
 		cbuf[0] = 0;
 		cbuf[1] = 0;
 		cbuf[2] = 0;
 		cbuf[3] = 0;
-		exi_imm(channel, cbuf, 4, EXI_CONTROL_TYPE_WRITE, 0);
-		exi_sync(channel);
+		exi_write(channel, cbuf, 4);
 
 		exi_dma(channel, bbuf, CARD_READSIZE,
 			EXI_CONTROL_TYPE_READ);
@@ -239,8 +237,7 @@ static void card_sector_erase(unsigned long channel, unsigned long sector)
 	cbuf[0] = 0xF1;		// Command Byte
 	cbuf[1] = (sector >> 17) & 0x7F;
 	cbuf[2] = (sector >> 9) & 0xFF;
-	exi_imm(channel, cbuf, 3, EXI_CONTROL_TYPE_WRITE, 0);
-	exi_sync(channel);
+	exi_write(channel, cbuf, 3);
 
 	/* Deselect the selected EXI device. */
 	exi_deselect(channel);
@@ -269,12 +266,10 @@ static void card_sector_program(unsigned long channel, unsigned char *abuf,
 		cbuf[1] = (address >> 17) & 0x3F;
 		cbuf[2] = (address >> 9) & 0xFF;
 		cbuf[3] = (address >> 7) & 3;
-		exi_imm(channel, cbuf, 4, EXI_CONTROL_TYPE_WRITE, 0);
-		exi_sync(channel);
+		exi_write(channel, cbuf, 4);
 
 		cbuf[0] = address & 0x7F;
-		exi_imm(channel, cbuf, 1, EXI_CONTROL_TYPE_WRITE, 0);
-		exi_sync(channel);
+		exi_write(channel, cbuf, 1);
 
 		exi_dma(channel, bbuf, CARD_WRITESIZE,
 			EXI_CONTROL_TYPE_WRITE);

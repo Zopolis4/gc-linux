@@ -62,22 +62,26 @@ config AMIGA_Z2RAM
 	  module will be called z2ram.
 
 config GAMECUBE_ARAM
-	tristate "GameCube ARAM ramdisk support"
+	tristate "Nintendo GameCube ARAM"
 	depends on GAMECUBE
 	help
-	  This enables support for using the GameCube's 16 MB of ARAM as a
-	  ramdisk or as a swap partition. Say Y if you want to include this
-	  driver in the kernel.
-
+	  This enables support for using the 16MB of ARAM found in the
+	  Nintendo GameCube as a ramdisk or as a swap partition.
+	  Say Y if you want to include this driver in the kernel.
+	  
 	  To compile this driver as a module, choose M here: the
-	  module will be called gc_aram.
+	  module will be called gcn-aram.
 
 config GAMECUBE_MEMCARD
-	bool "GameCube memory card support"
-	depends on GAMECUBE
+	tristate "Nintendo GameCube memory card (EXPERIMENTAL)"
+	depends on GAMECUBE && EXI && EXPERIMENTAL
 	help
-	 This enables support for using the GameCube's memory cards. 
-	 Say Y if you want to include this driver in the kernel.
+	  This enables support for using memory cards compatible with the
+	  Nintendo GameCube.
+	  Say Y if you want to include this driver in the kernel.
+	  
+	  To compile this driver as a module, choose M here: the
+	  module will be called gcn-memcard.
 
 config ATARI_ACSI
 	tristate "Atari ACSI support"
