@@ -19,9 +19,12 @@
 /* ------------------------------------------------------------------------- */
 
 /*
- * $Id: gc-net.c,v 1.21 2004/03/01 09:05:17 hamtitampti Exp $
+ * $Id: gc-net.c,v 1.22 2004/03/02 15:48:53 hamtitampti Exp $
  *
  * $Log: gc-net.c,v $
+ * Revision 1.22  2004/03/02 15:48:53  hamtitampti
+ * modifications everywhere
+ *
  * Revision 1.21  2004/03/01 09:05:17  hamtitampti
  * added timeout for TX lock
  *
@@ -142,7 +145,6 @@
 #define BBA_DBG(format, arg...); { }
 //#define BBA_DBG(format, arg...) printk(f,## arg)
 
-#define BBA_IRQ 4
 #define IRQ_EXI 4
 //#define PKT_BUF_SZ		1536	/* Size of each temporary Rx buffer. */
 
@@ -163,7 +165,7 @@ struct gc_private {
 
 
 
-void gcif_irq_handler(int channel, int event, void *ct);
+void exi_irq_handler(int channel, int event, void *ct);
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 // must be MOVED LATER
@@ -393,6 +395,8 @@ void eth_outb(int reg, unsigned char byte)
 	exi_deselect(0);
 }
 
+
+
 void eth_exi_outb(int reg, unsigned char byte)
 {
 	unsigned short val;
@@ -483,7 +487,7 @@ void eth_outs(int reg, void *res, int len)
 #define GBA_RX_RRP	0x1
 #define GBA_RX_RHBP	0xf
 
-static irqreturn_t gc_bba_interrupt(int irq, void *dev_id, struct pt_regs * regs);
+static irqreturn_t gc_exi_interrupt(int irq, void *dev_id, struct pt_regs * regs);
 static int	adapter_init(struct net_device *dev);
 
 
@@ -501,7 +505,7 @@ static int gc_bba_open(struct net_device *dev)
 	struct gc_private *priv = (struct gc_private *)dev->priv;
 	BBA_DBG("gc_bba_open\n");
 
-	int ret = request_irq(dev->irq, gc_bba_interrupt, 0, dev->name, dev);
+	int ret = request_irq(dev->irq, gc_exi_interrupt, 0, dev->name, dev);
 	if (ret) {
 		BBA_DBG(KERN_ERR "%s: unable to get IRQ %d\n", dev->name, dev->irq);
 		return ret;
@@ -764,7 +768,7 @@ static void gc_input(struct net_device *dev)
 #define BBA_IRQ_RBFI	0x80
 
 
-static void inline gcif_service(struct net_device *dev)
+static void inline exi_service(struct net_device *dev)
 {
 
 	struct gc_private *priv = (struct gc_private *)dev->priv;
@@ -774,7 +778,7 @@ static void inline gcif_service(struct net_device *dev)
 
 	int status = inb9 & inb8;
 
-	BBA_DBG("gcif_service: %08x %08x status %08x\n", inb8, inb9, status);
+	BBA_DBG("exi_service: %08x %08x status %08x\n", inb8, inb9, status);
 	
 	if (!status) {
 		eth_outb(9, 0xff);
@@ -864,7 +868,7 @@ static void inline gcif_service(struct net_device *dev)
  * Handle the network interface interrupts.
  */
 
-static irqreturn_t gc_bba_interrupt(int irq, void *dev_id, struct pt_regs * regs)
+static irqreturn_t gc_exi_interrupt(int irq, void *dev_id, struct pt_regs * regs)
 {
 	
 	struct net_device *dev  = (struct net_device *)dev_id;
@@ -1001,7 +1005,7 @@ int __init gc_bba_probe(struct net_device *dev)
 
 	dev->priv = (struct gc_private *)kmalloc(sizeof(struct net_device_stats), GFP_KERNEL);
 	priv = (struct gc_private *)dev->priv;
-	dev->irq = BBA_IRQ;
+	dev->irq = IRQ_EXI;
 	
 	
 	dev->get_stats = gc_stats;
@@ -1099,8 +1103,6 @@ static int adapter_init(struct net_device *dev)
 	dev->name[IFNAMSIZ-1]= 0;
 	*/
 	
-        exi_request_irq(2, EXI_EVENT_IRQ, gcif_irq_handler, NULL);
-
 	eth_exi_outb(0x2, 0xFF);
 	eth_exi_outb(0x3, 0xFF);
 
@@ -1115,30 +1117,7 @@ static int adapter_init(struct net_device *dev)
 	return 0; /* OK */
 }
 
-static struct net_device gc_bba_dev;
-
-static int __init gc_bba_init(void)
-{
-	memset(&gc_bba_dev,0,sizeof(struct net_device));
-	
-	
-	BBA_DBG("gc_bba_init\n");
-
-//	exi_init();
-
-	gc_bba_dev.init = gc_bba_probe;
-	if (register_netdev(&gc_bba_dev) != 0)
-		return -EIO;
-	return 0;
-}
-
-static void __exit gc_bba_exit(void)
-{
-	BBA_DBG("gc_bba_exit\n");
-	unregister_netdev(&gc_bba_dev);
-}
-
-void gcif_irq_handler(int channel, int event, void *ct)
+void exi_irq_handler(int channel, int event, void *ct)
 {
 //	struct netif *netif = (struct netif*)ct;
 	int s;
@@ -1184,7 +1163,7 @@ void gcif_irq_handler(int channel, int event, void *ct)
 	{
 		BBA_DBG("GC_IRQ service.\n");
 		eth_exi_outb(3, 0x80);
-		gcif_service(dev);
+		exi_service(dev);
 		eth_exi_outb(2, 0xF8);
 		return;
 	}
@@ -1192,6 +1171,34 @@ void gcif_irq_handler(int channel, int event, void *ct)
 //	printk("GCIF - EXI - ?? %02x\n", s);
 	eth_exi_outb(2, 0xF8);
 }
+
+
+static struct net_device *gc_bba_dev;
+
+static int __init gc_bba_init(void)
+{
+	gc_bba_dev = alloc_etherdev(sizeof(struct net_device));
+	memset(gc_bba_dev,0,sizeof(struct net_device));
+	
+	BBA_DBG("gc_bba_init\n");
+
+//	exi_init();
+
+	gc_bba_dev->init = gc_bba_probe;
+	if (register_netdev(gc_bba_dev) != 0)
+		return -EIO;
+	
+	exi_request_irq(2, EXI_EVENT_IRQ, exi_irq_handler, NULL);
+	
+	return 0;
+}
+
+static void __exit gc_bba_exit(void)
+{
+	BBA_DBG("gc_bba_exit\n");
+	unregister_netdev(gc_bba_dev);
+}
+
 
 
 module_init(gc_bba_init);
