@@ -31,6 +31,7 @@ struct exi_driver {
 #define to_exi_driver(drv)	container_of(drv, struct exi_driver, driver)
 
 
+extern struct device exi_bus_dev;
 extern struct bus_type exi_bus_type;
 
 extern int exi_driver_register(struct exi_driver *drv);

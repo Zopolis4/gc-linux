@@ -70,6 +70,10 @@ static int exi_bus_match(struct device *dev, struct device_driver *drv)
 }
 
 
+struct device exi_bus_dev = {
+	.bus_id		= "exi0",
+};
+
 struct bus_type exi_bus_type = {
 	.name		= "exi",
 	.match		= exi_bus_match,
@@ -77,11 +81,19 @@ struct bus_type exi_bus_type = {
 
 static int __init exi_driver_init(void)
 {
-	return bus_register(&exi_bus_type);
+	int err;
+
+	if ((err = device_register(&exi_bus_dev)))
+		goto out;
+	if ((err = bus_register(&exi_bus_type)))
+		goto out;
+out:
+	return err;
 }
 
 postcore_initcall(exi_driver_init);
 
+EXPORT_SYMBOL(exi_bus_dev);
 EXPORT_SYMBOL(exi_bus_type);
 EXPORT_SYMBOL(exi_driver_register);
 EXPORT_SYMBOL(exi_driver_unregister);
