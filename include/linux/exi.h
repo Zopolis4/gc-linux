@@ -9,15 +9,23 @@
 
 
 struct exi_dev {
-	struct device dev;
+	unsigned long		id;
+
+	struct device		dev;
 };
 
 #define to_exi_dev(n)		container_of(n, struct exi_dev, dev)
 
-struct exi_driver {
-	char *name;
 
-	struct device_driver driver;
+struct exi_device_id {
+	unsigned long		dev_id;
+};
+
+struct exi_driver {
+	char			*name;
+	struct exi_device_id	*id_table;
+
+	struct device_driver	driver;
 };
 
 #define to_exi_driver(drv)	container_of(drv, struct exi_driver, driver)
