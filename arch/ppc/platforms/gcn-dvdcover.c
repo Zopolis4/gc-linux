@@ -2,8 +2,9 @@
  * arch/ppc/platforms/gcn-dvdcover.c
  *
  * Nintendo GameCube DVD cover driver
+ * Copyright (C) 2004-2005 The GameCube Linux Team
  * Copyright (C) 2004 Stefan Esser
- * Copyright (C) 2004 The GameCube Linux Team
+ * Copyright (C) 2004,2005 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -21,7 +22,8 @@
 
 #define DVD_IRQ		     2
 
-#define DI_DISR              0xcc006000	/* DI Status Register */
+/* DI Status Register */
+#define DI_DISR              ((void __iomem *)0xcc006000)
 #define  DI_DISR_BRKINT      (1<<6)
 #define  DI_DISR_BRKINTMASK  (1<<5)
 #define  DI_DISR_TCINT       (1<<4)
@@ -30,14 +32,17 @@
 #define  DI_DISR_DEINTMASK   (1<<1)
 #define  DI_DISR_BRK         (1<<0)
 
-#define DI_DICVR             0xcc006004	/* DI Cover Register */
+/* DI Cover Register */
+#define DI_DICVR             ((void __iomem *)0xcc006004)
 #define  DI_DICVR_CVRINT     (1<<2)
 #define  DI_DICVR_CVRINTMASK (1<<1)
 #define  DI_DICVR_CVR        (1<<0)
 
-#define DI_DICMDBUF0         0xcc006008	/* DI Command Buffer 0 */
+/* DI Command Buffer 0 */
+#define DI_DICMDBUF0         ((void __iomem *)0xcc006008)
 
-#define DI_DICR              0xcc00601c	/* DI Control Register */
+/* DI Control Register */
+#define DI_DICR              ((void __iomem *)0xcc00601c)
 #define  DI_DICR_RW          (1<<2)
 #define  DI_DICR_DMA         (1<<1)
 #define  DI_DICR_TSTART      (1<<0)
@@ -51,12 +56,19 @@
 
 MODULE_DESCRIPTION(DRV_DESCRIPTION);
 MODULE_AUTHOR(DRV_AUTHOR);
-MODULE_LICENSE(GPL);
+MODULE_LICENSE("GPL");
 
 #define PFX DRV_MODULE_NAME ": "
 #define di_printk(level, format, arg...) \
 	printk(level PFX format , ## arg)
 
+typedef enum {
+        OPENED = 0,
+        CLOSED,
+        UNKNOWN,
+} gcn_dvdcover_state_t;
+
+gcn_dvdcover_state_t gcn_dvdcover_state = UNKNOWN;
 
 /**
  *
@@ -66,12 +78,16 @@ static irqreturn_t gcn_dvdcover_handler(int this_irq, void *dev_id,
 {
 	unsigned long reason = readl(DI_DICVR);
 
+	gcn_dvdcover_state = (readl(DI_DICVR) & DI_DICVR_CVR)?
+			     OPENED:CLOSED;
+
+	di_printk(KERN_INFO, "DVD cover was %s.\n",
+		  (gcn_dvdcover_state == OPENED) ?
+		  "opened" : "closed");
+
 	/* handle only DVD cover interrupts here */
 	if (reason & DI_DICVR_CVRINT) {
 		writel(reason | DI_DICVR_CVRINT, DI_DICVR);
-		di_printk(KERN_INFO, "DVD cover was %s.\n",
-			  (reason & DI_DICVR_CVR) ? "opened" : "closed");
-
 		return IRQ_HANDLED;
 	}
 	return IRQ_NONE;
