@@ -47,17 +47,10 @@ MODULE_LICENSE("GPL");
  * Video mode handling
  */
 
-#define VI_FMT_NTSC_480i  0x00000000
-#define VI_FMT_NTSC_480p  0x00000100
-#define VI_FMT_PAL50_576i 0x00000011
-#define VI_FMT_PAL60_480i 0x00000001
-#define VI_FMT_MPAL_480i  0x00000002
-
-#define VI_FMT_IS_NTSC(a) (((a)&0x001) == 0)
-#define VI_FMT_IS_PAL(a)  (((a)&0x003) != 0)
+#define VI_FMT_IS_NTSC(a) (((((u16*)vi_regs)[1] >> 8) & 3) == 0)
+#define VI_FMT_IS_PAL(a)  (((((u16*)vi_regs)[1] >> 8) & 3) == 1)
 
 struct vi_video_mode {
-	int format;
 	char *name;
 	const u32 *regs;
 	int width;
@@ -111,7 +104,6 @@ static const u32 VIDEO_Mode640X480Pal60YUV16[32] = {
 
 static struct vi_video_mode gcnfb_video_modes[] = {
 	{
-		.format = VI_FMT_NTSC_480i,
 		.name = "NTSC 480i",
 		.regs = VIDEO_Mode640X480NtscYUV16,
 		.width = 640,
@@ -119,7 +111,6 @@ static struct vi_video_mode gcnfb_video_modes[] = {
 		.lines = 525,
 	},
 	{
-		.format = VI_FMT_NTSC_480p,
 		.name = "NTSC 480p",
 		.regs = VIDEO_Mode640x480NtscProgressiveYUV16,
 		.width = 640,
@@ -127,7 +118,6 @@ static struct vi_video_mode gcnfb_video_modes[] = {
 		.lines = 525,
 	},
 	{
-		.format = VI_FMT_PAL50_576i,
 		.name = "PAL50 576i",
 		.regs = VIDEO_Mode640X576Pal50YUV16,
 		.width = 640,
@@ -135,17 +125,20 @@ static struct vi_video_mode gcnfb_video_modes[] = {
 		.lines = 625,
 	},
 	{
-		.format = VI_FMT_PAL60_480i,
 		.name = "PAL60 480i",
 		.regs = VIDEO_Mode640X480Pal60YUV16,
 		.width = 640,
 		.height = 480,
 		.lines = 525,
 	},
-	{ .format = -1 }
 };
 
-static struct vi_video_mode *gcnfb_video_mode = NULL;
+#define GCNFB_VM_NTSC                0
+#define GCNFB_VM_NTSC_PROGRESSIVE    1
+#define GCNFB_VM_PAL50               2
+#define GCNFB_VM_PAL60               3
+
+static struct vi_video_mode *gcnfb_current_video_mode = NULL;
 
 
 #define VI_IRQ	8
@@ -426,8 +419,8 @@ static int gcnfb_check_var(struct fb_var_screeninfo *var, struct fb_info *info)
 {
 	/* check bpp */
 	if (var->bits_per_pixel != 16 || /* check bpp */
-	    var->xres_virtual != gcnfb_video_mode->width ||
-	    var->xres != gcnfb_video_mode->width ||
+	    var->xres_virtual != gcnfb_current_video_mode->width ||
+	    var->xres != gcnfb_current_video_mode->width ||
 	    /* XXX isobel, do not break old sdl */
 	    /* var->yres_virtual != gcnfb_info.var.yres || *//* check for y */
 	    /* var->yres != gcnfb_info.var.yres || */
@@ -495,8 +488,8 @@ void gcnfb_enable_interrupts(int enable)
 
 	if (enable) {
 		/* XXX should we incorporate this in the video mode struct ? */
-		vtrap = gcnfb_video_mode->lines / 2;
-		htrap = VI_FMT_IS_NTSC(gcnfb_video_mode->format) ? 430 : 433;
+		vtrap = gcnfb_current_video_mode->lines / 2;
+		htrap = VI_FMT_IS_NTSC() ? 430 : 433;
 
 		/* progressive interrupts at 526 */
 		if (gcnfb_is_progressive(gcnfb_info.var.vmode)
@@ -542,18 +535,18 @@ int gcnfb_restorefb(struct fb_info *info)
 {
 	int i;
 
-	printk(KERN_INFO "Setting mode %s\n", gcnfb_video_mode->name);
+	printk(KERN_INFO "Setting mode %s\n", gcnfb_current_video_mode->name);
 	gcnfb_set_framebuffer(info->fix.smem_start);
 
 	/* initialize video registers */
 	for (i = 0; i < 7; i++) {
-		vi_regs[i] = gcnfb_video_mode->regs[i];
+		vi_regs[i] = gcnfb_current_video_mode->regs[i];
 	}
-	vi_regs[8] = gcnfb_video_mode->regs[8];
-	vi_regs[10] = gcnfb_video_mode->regs[10];
-	vi_regs[11] = gcnfb_video_mode->regs[11];
+	vi_regs[8] = gcnfb_current_video_mode->regs[8];
+	vi_regs[10] = gcnfb_current_video_mode->regs[10];
+	vi_regs[11] = gcnfb_current_video_mode->regs[11];
 	for (i = 16; i < 32; i++) {
-		vi_regs[i] = gcnfb_video_mode->regs[i];
+		vi_regs[i] = gcnfb_current_video_mode->regs[i];
 	}
 	gcnfb_enable_interrupts(1);
 	return 0;
@@ -578,37 +571,41 @@ struct fb_ops gcnfb_ops = {
 /**
  *
  */
-struct vi_video_mode *gcnfb_lookup_video_mode(int format)
-{
-	struct vi_video_mode *mode = &gcnfb_video_modes[0];
-
-	while (mode->format != -1) {
-		if (mode->format == format)
-			break;
-		mode++;
-	}
-	return (mode->format == -1) ? NULL : mode;
-}
-
-/**
- *
- */
 void gcnfb_video_mode_select(void)
 {
-	if (gcnfb_video_mode == NULL) {
+	u16 mode;
+	
+	if (gcnfb_current_video_mode == NULL) {
+		/* auto detection */
 		if (vi_regs[1] == 0x4B6A01B0) {
-			gcnfb_video_mode =
-			    gcnfb_lookup_video_mode(VI_FMT_PAL50_576i);
+			gcnfb_current_video_mode = 
+				gcnfb_video_modes + GCNFB_VM_PAL50;
 		} else {
-			gcnfb_video_mode =
-			    gcnfb_lookup_video_mode(*(((u16*)vi_regs) + 2) & 3);
+			mode = (((u16*)vi_regs)[1] >> 8) & 3;
+			switch (mode)
+			{
+			case 0:	/* NTSC */
+				/* check if we can support progressive */
+				gcnfb_current_video_mode = 
+					gcnfb_video_modes + 
+					(gcnfb_can_do_progressive() ? 
+					 GCNFB_VM_NTSC_PROGRESSIVE : 
+					 GCNFB_VM_NTSC);
+				break;
+			case 1:	/* PAL60 */
+				gcnfb_current_video_mode = 
+					gcnfb_video_modes + GCNFB_VM_PAL60;
+				break;
+			default: /* MPAL or DEBUG, we don't support */
+				break;
+			}
 		}
 	}
-
+	
 	/* if we get here something wrong happened */
-	if (gcnfb_video_mode == NULL) {
+	if (gcnfb_current_video_mode == NULL) {
 		printk(KERN_DEBUG "HEY! SOMETHING WEIRD HERE!\n");
-		gcnfb_video_mode = &gcnfb_video_modes[0];
+		gcnfb_current_video_mode = gcnfb_video_modes + GCNFB_VM_NTSC;
 	}
 }
 
@@ -621,6 +618,7 @@ int __init gcnfb_setup(char *options)
 
 	if (!options || !*options)
 		return 0;
+	
 	printk("gcnfb: options = %s\n", options);
 
 	while ((this_opt = strsep(&options, ",")) != NULL) {
@@ -638,11 +636,11 @@ int __init gcnfb_setup(char *options)
 			printk("detected \"tv=\"\n");
 			printk("cmd line: %s\n", this_opt);
 			if (!strncmp(this_opt + 3, "PAL", 3))
-				gcnfb_video_mode =
-				    gcnfb_lookup_video_mode(VI_FMT_PAL50_576i);
+				gcnfb_current_video_mode = 
+					gcnfb_video_modes + GCNFB_VM_PAL50;
 			else if (!strncmp(this_opt + 3, "NTSC", 4))
-				gcnfb_video_mode =
-				    gcnfb_lookup_video_mode(VI_FMT_NTSC_480i);
+				gcnfb_current_video_mode = 
+					gcnfb_video_modes + GCNFB_VM_NTSC;
 		}
 	}
 	return 0;
@@ -651,7 +649,7 @@ int __init gcnfb_setup(char *options)
 /**
  *
  */
-int __init gcnfb_init(void)
+static int __init gcnfb_init(void)
 {
 	int video_cmap_len;
 	int err = -EINVAL;
@@ -678,8 +676,8 @@ int __init gcnfb_init(void)
 	gcnfb_video_mode_select();
 
 	gcnfb_info.var.bits_per_pixel = 16;
-	gcnfb_info.var.xres = gcnfb_video_mode->width;
-	gcnfb_info.var.yres = gcnfb_video_mode->height;
+	gcnfb_info.var.xres = gcnfb_current_video_mode->width;
+	gcnfb_info.var.yres = gcnfb_current_video_mode->height;
 	/* enable non-interlaced if it supports progressive */
 	if (gcnfb_can_do_progressive()) {
 		gcnfb_info.var.vmode = FB_VMODE_NONINTERLACED;
