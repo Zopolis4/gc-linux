@@ -55,7 +55,6 @@ extern int acornfb_init(void);
 extern int acornfb_setup(char*);
 extern int amifb_init(void);
 extern int amifb_setup(char*);
-extern int anakinfb_init(void);
 extern int atafb_init(void);
 extern int atafb_setup(char*);
 extern int macfb_init(void);
@@ -181,9 +180,6 @@ static struct {
 #endif
 #ifdef CONFIG_FB_AMIGA
 	{ "amifb", amifb_init, amifb_setup },
-#endif
-#ifdef CONFIG_FB_ANAKIN
-	{ "anakinfb", anakinfb_init, NULL },
 #endif
 #ifdef CONFIG_FB_CLPS711X
 	{ "clps711xfb", clps711xfb_init, NULL },
@@ -1186,11 +1182,9 @@ fb_mmap(struct file *file, struct vm_area_struct * vma)
 #elif defined(__mips__)
 	pgprot_val(vma->vm_page_prot) &= ~_CACHE_MASK;
 	pgprot_val(vma->vm_page_prot) |= _CACHE_UNCACHED;
-#elif defined(__sh__)
-	pgprot_val(vma->vm_page_prot) &= ~_PAGE_CACHABLE;
 #elif defined(__hppa__)
 	pgprot_val(vma->vm_page_prot) |= _PAGE_NO_CACHE;
-#elif defined(__ia64__) || defined(__arm__)
+#elif defined(__ia64__) || defined(__arm__) || defined(__sh__)
 	vma->vm_page_prot = pgprot_writecombine(vma->vm_page_prot);
 #else
 #warning What do we have to do here??

@@ -274,7 +274,9 @@ static int __devinit snd_gamecube_new_pcm(gamecube_t *chip)
 	/* snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_CAPTURE, &snd_gamecube_capture_ops); */
 	
 	/* preallocate 64k buffer */
-	snd_pcm_lib_preallocate_pages_for_all(pcm, 64 * 1024, 64 * 1024, GFP_KERNEL);
+	snd_pcm_lib_preallocate_pages_for_all(pcm, SNDRV_DMA_TYPE_CONTINUOUS,
+			snd_dma_continuous_data(GFP_KERNEL),
+			64 * 1024, 64 * 1024);
 
 	pcm->info_flags = 0;
 	pcm->private_data = chip;
