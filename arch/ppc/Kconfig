@@ -520,9 +520,8 @@ config SANDPOINT
 config GAMECUBE
 	bool "Nintendo-GameCube"
 	help
-	   Select GAMECUBE if configuring for the Nintendo GameCube.
-	   More information is available at:
-	   <http://gc-linux.sourceforge.net/>.
+	  Select GameCube if configuring for the Nintendo GameCube.
+	  More information at: <http://gc-linux.sourceforge.net/>
 
 config ADIR
 	bool "SBS-Adirondack"
@@ -1012,8 +1011,10 @@ config EXI
 	depends on GAMECUBE && EXPERIMENTAL
 	default y
 	help
-	  This adds support for the Expansion Interface (bus) as found in
-	  the Nintendo GameCube.
+	  This adds support for the Expansion Interface as found in
+	  the Nintendo GameCube. On the Expansion Interface sit the
+	  memory card slots, serial ports I & II, the Mask ROM, RTC,
+	  SRAM and UART.
 
 	  Say Y.
 
