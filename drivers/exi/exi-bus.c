@@ -132,6 +132,10 @@ static int exi_match(struct device *dev,struct device_driver *drv) {
 	return 0;
 }
 
+static void exi_release(struct device *dev)
+{
+}
+
 static void exi_bus_scan(void)
 {
 	unsigned int channel;
@@ -160,10 +164,11 @@ static void exi_bus_scan(void)
 			exi_devices[channel][device].dev.bus = &exi_bus_type;
 			exi_devices[channel][device].dev.platform_data = 
 				&exi_data[channel];
+			exi_devices[channel][device].dev.release = exi_release;
 			/* now ID the device */
 			exi_devices[channel][device].eid.id = 
 				exi_synchronous_id(channel,device);
-			if (exi_devices[channel][device].eid.id != EXI_INVALID_ID) {
+			if (exi_devices[channel][device].eid.id != EXI_INVALID_ID || ((device == 0) && (readl(EXI_CSR(channel)) & EXI_CSR_EXT))) {
 				printk(KERN_INFO "%s:%s: %x\n",
 				       exi_parent[channel].bus_id,
 				       exi_devices[channel][device].dev.bus_id,
@@ -177,27 +182,22 @@ static void exi_bus_scan(void)
 
 void exi_bus_insert(unsigned int channel,unsigned int bInsert)
 {
-	/* 
-	   this is all wrong, just skip this function, no hot-plug support
-	   for now 
-	*/
-	/*u32 device;
-	u32 id;
-
-	if (bInsert)
-	{
-		for (device=0;device<EXI_DEVICES_PER_CHANNEL;++device) {
-			id = exi_synchronous_id(channel,device);
-			if (id != EXI_INVALID_ID) {
-				device_register(&exi_devices[channel][device].dev);
-			}
-		}
+	u32 device;
+	/* channel 2 is really the BBA */
+	if (channel == 2) {
+		channel = 0;
+		device = 2;
 	}
 	else {
-		device_register(&exi_devices[channel][0].dev);
-		device_register(&exi_devices[channel][1].dev);
-		device_register(&exi_devices[channel][2].dev);
-		}*/
+		device = 0;
+	}
+	
+	if (bInsert) {
+		device_register(&exi_devices[channel][device].dev);
+	}
+	else {
+		device_unregister(&exi_devices[channel][device].dev);
+	}
 }
 
 static int __init exi_init(void)

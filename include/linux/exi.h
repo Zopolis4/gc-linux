@@ -22,6 +22,8 @@
 #define EXI_CMD_READ   (0x00000000)
 #define EXI_CMD_WRITE  (0x00000005)
 
+#define EXI_INVALID_ID 0xFFFFFFFF
+
 
 /* ----------------------
    exi_command flags 

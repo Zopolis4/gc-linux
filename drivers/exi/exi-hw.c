@@ -140,7 +140,7 @@ static void exi_dma_transfer(struct exi_command *subcmd,
 	u32 val;
 	/* flush the cache when writing */
 	if (subcmd->flags & EXI_CMD_WRITE) {
-		flush_dcache_range((u32)subcmd->data,
+		clean_dcache_range((u32)subcmd->data,
 				   (u32)subcmd->data + subcmd->len);
 	}
 	/* convert to physical */

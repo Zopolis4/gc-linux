@@ -42,8 +42,6 @@
 #define EXI_MAX_CHANNELS 3
 #define EXI_DEVICES_PER_CHANNEL 3
 
-#define EXI_INVALID_ID 0xFFFFFFFF
-
 #define EXI_READ  0
 #define EXI_WRITE 1
 #define EXI_CSR_BASE      (void* __iomem)0xCC006800 

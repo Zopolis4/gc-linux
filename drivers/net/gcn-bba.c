@@ -29,6 +29,7 @@
 #include <linux/delay.h>
 #include <linux/wait.h>
 #include <linux/inet.h>
+#include <linux/sched.h>
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
 #include <linux/skbuff.h>
@@ -1200,10 +1201,18 @@ out:
 
 static int int_kthread(void *param)
 {
+	unsigned long flags;
 	struct bba_private *priv = (struct bba_private *)param;
 	/* set my priority through the roof */
-	//set_user_nice(current,-20);
+	daemonize("knetexi");
 	current->flags |= PF_NOFREEZE;
+        /* this next section is copied from __setscheduler, it's static so
+	   we can't use it here */
+	/*local_irq_save(flags);
+        current->policy = SCHED_FIFO;
+        current->rt_priority = MAX_RT_PRIO - 1;
+	current->prio = MAX_USER_RT_PRIO - 1 - current->rt_priority;
+	local_irq_restore(flags); */
 	/* go into running state */
 	__set_current_state(TASK_RUNNING);
 	do {

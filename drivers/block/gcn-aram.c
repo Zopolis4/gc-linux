@@ -46,12 +46,17 @@
 #define ARAM_BUFFERSIZE (16*1024*1024 - ARAM_SOUNDMEMORYOFFSET)
 
 #define AI_DSP_CSR          (void* __iomem)0xCC00500A
+#define  AI_CSR_RES         (1<<0)
 #define  AI_CSR_PIINT       (1<<1)
+#define  AI_CSR_HALT        (1<<2)
+#define  AI_CSR_AIDINT      (1<<3)
+#define  AI_CSR_AIDINTMASK  (1<<4)
 #define  AI_CSR_ARINT       (1<<5)
 #define  AI_CSR_ARINTMASK   (1<<6)
 #define  AI_CSR_DSPINT      (1<<7)
 #define  AI_CSR_DSPINTMASK  (1<<8)
-#define  AI_CSR_DMA_STATUS  (1<<9)
+#define  AI_CSR_DSPDMA      (1<<9)
+#define  AI_CSR_RESETXXX    (1<<11)
 
 #define AR_DMA_MMADDR        (void* __iomem)0xCC005020
 #define AR_DMA_ARADDR	     (void* __iomem)0xCC005024
@@ -72,10 +77,10 @@ static struct request_queue *aram_queue;
 static struct request * volatile irq_request;
 static u32 refCount;
 
-static inline void ARAM_StartDMA(unsigned long mmAddr, unsigned long arAddr,
+static inline void ARAM_StartDMA(void *mmAddr, unsigned long arAddr,
 				 unsigned long length, unsigned long type)
 {
-	writel(mmAddr,AR_DMA_MMADDR);
+	writel(virt_to_phys(mmAddr),AR_DMA_MMADDR);
 	writel(arAddr,AR_DMA_ARADDR);
 	writel(type | length,AR_DMA_CNT);
 }
@@ -84,12 +89,15 @@ static irqreturn_t aram_irq(int irq,void *dev_id,struct pt_regs *regs)
 {
 	unsigned long flags;
 	unsigned long len;
+	u16 tmp;
 	struct request *req;
 
 	if (readw(AI_DSP_CSR) & AI_CSR_ARINT) {
-		/* ack the int */
+		/* ack the int, but only ours */
 		local_irq_save(flags);
-		writew(readw(AI_DSP_CSR) | AI_CSR_ARINT,AI_DSP_CSR);
+		tmp = readw(AI_DSP_CSR);
+		tmp &= ~(AI_CSR_PIINT | AI_CSR_AIDINT | AI_CSR_DSPINT);
+		writew(tmp,AI_DSP_CSR);
 		local_irq_restore(flags);
 		
 		/* now process */
@@ -99,8 +107,8 @@ static irqreturn_t aram_irq(int irq,void *dev_id,struct pt_regs *regs)
 			/* invalidate cache on read */
 			if (rq_data_dir(req) == READ) {
 				invalidate_dcache_range(
-					(u32)req->buffer,
-					(u32)req->buffer + len);
+					(unsigned long)req->buffer,
+					(unsigned long)req->buffer + len);
 			}
 			/* complete request */
 			if (!end_that_request_first(req,1,
@@ -122,7 +130,6 @@ static irqreturn_t aram_irq(int irq,void *dev_id,struct pt_regs *regs)
 		/* return handled */
 		return IRQ_HANDLED;
 	}
-
 	return IRQ_NONE;
 }
 
@@ -132,8 +139,9 @@ static void do_aram_request(request_queue_t * q)
 	struct request *req;
 	unsigned long start;
 	unsigned long len;
-	
+	unsigned long flags;
 	/*unsigned long flags; */
+	spin_lock_irqsave(&aram_lock,flags);
 	
 	while ((req = elv_next_request(q))) {
 		/* get length */
@@ -149,7 +157,7 @@ static void do_aram_request(request_queue_t * q)
 		}
 		else if (irq_request) {	/* already scheduled? */
 			blk_stop_queue(q);
-			return;
+			goto exit_func;
 		}
 		/* dequeue */
 		blkdev_dequeue_request(req);
@@ -157,19 +165,21 @@ static void do_aram_request(request_queue_t * q)
 		irq_request = req;
 		/* schedule DMA */
 		if (rq_data_dir(req) == READ) {
-			ARAM_StartDMA((unsigned long)req->buffer,
+			ARAM_StartDMA(req->buffer,
 				      start + ARAM_SOUNDMEMORYOFFSET, len,
 				      ARAM_READ);
 		} 
 		else {
-			flush_dcache_range((unsigned long)req->buffer,
+			clean_dcache_range((unsigned long)req->buffer,
 					   (unsigned long)req->buffer + len);
-			ARAM_StartDMA((unsigned long)req->buffer,
+			ARAM_StartDMA(req->buffer,
 				      start + ARAM_SOUNDMEMORYOFFSET, len,
 				      ARAM_WRITE);
 		}
-		return;
+		goto exit_func;
 	}
+ exit_func:
+	spin_unlock_irqrestore(&aram_lock,flags);
 }
 
 static int aram_open(struct inode *inode, struct file *filp)
@@ -252,7 +262,8 @@ int __init aram_init(void)
 	unsigned long flags;
 
 	/* get the irq */
-	if ((ret=request_irq(ARAM_IRQ,aram_irq,SA_SHIRQ,"ARAM",IRQ_PARAM)))
+	if ((ret=request_irq(ARAM_IRQ,aram_irq,SA_INTERRUPT | SA_SHIRQ,"ARAM",
+			     IRQ_PARAM)))
 		goto out_irq;
 	
 	if ((ret=register_blkdev(ARAM_MAJOR, DEVICE_NAME)))

@@ -253,6 +253,7 @@ static irqreturn_t snd_gcn_interrupt(int irq, void *dev, struct pt_regs *regs)
 {
 	snd_gcn_t *chip = (snd_gcn_t *) dev;
 	unsigned long flags;
+	u16 tmp;
 
 	if (readw(AI_DSP_CSR) & AI_CSR_AIDINT) {
 		u_int32_t addr;
@@ -283,9 +284,12 @@ static irqreturn_t snd_gcn_interrupt(int irq, void *dev, struct pt_regs *regs)
 
 			snd_pcm_period_elapsed(chip->playback_substream);
 		}
-		/* ack AI DMA interrupt */
+		/* ack AI DMA interrupt, go through lengths to only ack
+		   the audio part */
 		local_irq_save(flags);
-		writew(readw(AI_DSP_CSR) | AI_CSR_AIDINT,AI_DSP_CSR);
+		tmp = readw(AI_DSP_CSR);
+		tmp &= ~(AI_CSR_PIINT | AI_CSR_ARINT | AI_CSR_DSPINT);
+		writew(tmp,AI_DSP_CSR);
 		local_irq_restore(flags);
 		
 		return IRQ_HANDLED;
@@ -358,9 +362,8 @@ static int __init alsa_card_gcn_init(void)
 	strcpy(card->shortname, card->driver);
 	sprintf(card->longname, "Nintendo GameCube Audio Interface");
 
-	if (request_irq
-	    (DSP_IRQ, snd_gcn_interrupt, SA_SHIRQ, card->shortname,
-	     gcn_audio)) {
+	if (request_irq(DSP_IRQ, snd_gcn_interrupt, SA_INTERRUPT | SA_SHIRQ, 
+			card->shortname,gcn_audio)) {
 		snd_printk(KERN_ERR "%s: unable to grab IRQ %d\n",
 			   card->shortname, DSP_IRQ);
 		return -EBUSY;
