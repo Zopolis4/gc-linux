@@ -158,6 +158,20 @@ static void __init gamecube_setup_arch(void)
 #endif
 }
 
+#ifdef CONFIG_KEXEC
+void gamecube_shutdown(void)
+{
+	/* currently not used */
+}
+
+int gamecube_kexec_prepare(struct kimage *image)
+{
+	int retval = 0;
+
+	return retval;
+}
+#endif /* CONFIG_KEXEC */
+
 void __init
 platform_init(unsigned long r3, unsigned long r4, unsigned long r5,
 	      unsigned long r6, unsigned long r7)
@@ -190,4 +204,11 @@ platform_init(unsigned long r3, unsigned long r4, unsigned long r5,
 	ppc_md.time_init = gcn_time_init;
 	ppc_md.set_rtc_time = gcn_set_rtc_time;
 	ppc_md.get_rtc_time = gcn_get_rtc_time;
+
+#ifdef CONFIG_KEXEC
+	ppc_md.machine_shutdown = gamecube_shutdown;
+	ppc_md.machine_kexec_prepare = gamecube_kexec_prepare;
+	ppc_md.machine_kexec = machine_kexec_simple;
+#endif /* CONFIG_KEXEC */
+
 }
