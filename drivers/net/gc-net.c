@@ -154,13 +154,13 @@ void exi_interrupt_handler(int irq, void *c)
 	{
 		unsigned long v = (*(unsigned long*)(0xcc006800 + ch * 0x14)); //  & 0xC0F;
 		v &= v<<1;
+		*(unsigned long*)(0xcc006800 + ch * 0x14) |= v;
 		if (v & 0x800)
 			have_irq(ch * 3 + EXI_EVENT_INSERT);
 		if (v & 8)
 			have_irq(ch * 3 + EXI_EVENT_TC);
 		if (v & 2)
 			have_irq(ch * 3 + EXI_EVENT_IRQ);
-		*(unsigned long*)(0xcc006800 + ch * 0x14) |= v;
 	}
 }
 
@@ -482,6 +482,8 @@ static int gc_bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	u8	*buffer = skb->data;
 	int	i;
 
+	printk("xmit\n");
+
 	if (free_tx_pages <= 0) {	/* Do timeouts, to avoid hangs. */
 		tickssofar = jiffies - dev->trans_start;
 		if (tickssofar < 5)
@@ -497,6 +499,8 @@ static int gc_bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
 		spin_unlock_irqrestore(&gc_bba_lock, flags);
 	}
 
+//	netif_stop_queue(dev);
+
 	/* Start real output */
 	printk("gc_bba_start_xmit:len=%d, page %d/%d\n", skb->len, tx_fifo_in, free_tx_pages);
 
@@ -504,6 +508,8 @@ static int gc_bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
 		len = RUNT;
 
 	spin_lock_irqsave(&gc_bba_lock, flags);
+	
+	dev->trans_start = jiffies;
 
 	unsigned int val=0xC0004800;	// register 0x48 is the output queue
 	
@@ -514,8 +520,17 @@ static int gc_bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	exi_sync(0);
 	
 	exi_imm_ex(0, buffer, skb->len, EXI_WRITE);
+	
+	char buf0[1024];
+	memset(buf0, 0, 1024);
+	
+	if (len != skb->len)
+	    exi_imm_ex(0, buf0, len-skb->len, EXI_WRITE);
 
 	exi_deselect(0);
+	
+//	netif_start_queue(dev);
+
 
 	val = eth_inb(0);
 	if (val & 4)
@@ -530,7 +545,8 @@ static int gc_bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	
 //	printk("DEBUG: waiting for tx done!\n");
 
-	while (!(eth_inb(9)&0x14));
+/*	int counter = 1000;
+	while ((!(eth_inb(9)&0x14)) && counter--);
 	
 	if (eth_inb(9) & 0x10)
 	{
@@ -540,10 +556,13 @@ static int gc_bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	
 	if (eth_inb(9) & 0x4)
 		eth_outb(9, 0x4);
+*/
+
+//	while (!(eth_inb(0)&0x02));
 	
-	int s = eth_inb(4);
-	if (s)
-		printk("tx error %02x\n", s);
+//	int s = eth_inb(4);
+//	if (s)
+//		printk("tx error %02x\n", s);
 	
 
 	spin_unlock_irqrestore(&gc_bba_lock, flags);
@@ -664,13 +683,27 @@ static void inline gcif_service(struct net_device *dev)
 	
 	unsigned short  p_read, p_write;
 
+	int inb9 = eth_inb(9);
+	int inb8 = eth_inb(8);
 	
-	int status = eth_inb(9) & eth_inb(8);
+	int status = inb9 & inb8;
 	
-	printk("gcif_service: status %08x\n", status);
+	printk("gcif_service: %08x %08x status %08x\n", inb8, inb9, status);
 	
-	if (!status)
+	if (!status) {
 		printk("?? GC irq but no irq ??\n");
+//		eth_outb(9, 0xff);
+	}
+	
+	if (status & 4) 
+	{
+//		eth_outb(9, status);
+	    int s = eth_inb(4);
+		if (s)
+		printk("tx error %02x\n", s);
+
+
+	}
 	
 	if (status & 2)
 	{
@@ -688,18 +721,19 @@ static void inline gcif_service(struct net_device *dev)
 printk("Break\n");
 			break;
 		}
-		eth_outb(9, 2);
+//		eth_outb(9, status);
 	}
 	if (status & 8)
 	{
 		printk("receive error :(\n");
-		eth_outb(9, 8);
+//		eth_outb(9, 8);
 	}
 	if (status & ~(8|2))
 	{
 		printk("status %02x\n", status);
-		eth_outb(9, ~(8|2));
+//		eth_outb(9, ~(8|2));
 	}
+	eth_outb(9, status);
 }
 
 
@@ -729,6 +763,7 @@ static irqreturn_t gc_bba_interrupt(int irq, void *dev_id, struct pt_regs * regs
 	{
 		unsigned long v = (*(unsigned long*)(0xcc006800 + ch * 0x14)); //  & 0xC0F;
 		v &= v<<1;
+//		*(unsigned long*)(0xcc006800 + ch * 0x14) |= v;
 		exi_handler_context[ch * 3 + EXI_EVENT_IRQ] = dev;
 		if (v & 0x800)
 			have_irq(ch * 3 + EXI_EVENT_INSERT);
@@ -744,56 +779,6 @@ static irqreturn_t gc_bba_interrupt(int irq, void *dev_id, struct pt_regs * regs
 	spin_unlock(&gc_bba_lock);
 	return IRQ_HANDLED;
 
-
-
-//	struct netif *netif = (struct netif*)ct;
-	int s;
-	
-	eth_exi_outb(2, 0);
-	s = eth_exi_inb(3);
-	
-	if (s & 0x80)
-	{
-		eth_exi_outb(3, 0x80);
-		gcif_service(dev);
-		eth_exi_outb(2, 0xF8);
-		return;
-	}
-	if (s & 0x40)
-	{
-		printk("GCIF - EXI - 0x40!\n");
-		eth_exi_outb(3, 0x40);
-		eth_exi_outb(2, 0xF8);
-		return;
-	}
-	if (s & 0x20)
-	{
-		printk("GCIF - EXI - CMDERR!\n");
-		eth_exi_outb(3, 0x20);
-		eth_exi_outb(2, 0xF8);
-		return;
-	}
-	if (s & 0x10)
-	{
-		printk("GCIF - EXI - patchtru!\n");
-		eth_exi_outb(3, 0x10);
-		eth_exi_outb(2, 0xF8);
-		return;
-	}
-	if (s & 0x08)
-	{
-		printk("GCIF - EXI - HASH function\n");
-		eth_exi_outb(3, 0x08);
-		eth_exi_outb(2, 0xF8);
-		return;
-	}
-	printk("GCIF - EXI - ?? %02x\n", s);
-	eth_exi_outb(2, 0xF8);
-	
-	if (retrig)
-		trigger_interrupt(dev);
-	spin_unlock(&gc_bba_lock);
-	return IRQ_HANDLED;
 }
 
 
@@ -978,7 +963,7 @@ static int adapter_init(struct net_device *dev)
 
 	printk("after all: irq mask %x %x\n", eth_inb(8), eth_inb(9));
 
-	netif_start_queue(dev);
+//	netif_start_queue(dev);
 
 	return 0; /* OK */
 }
@@ -989,6 +974,9 @@ static int __init gc_bba_init(void)
 {
 	printk("gc_bba_init\n");
 	spin_lock_init(&gc_bba_lock);
+	
+//	exi_init();
+	
 	gc_bba_dev.init = gc_bba_probe;
 	if (register_netdev(&gc_bba_dev) != 0)
 		return -EIO;
