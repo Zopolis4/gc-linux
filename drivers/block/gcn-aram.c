@@ -455,12 +455,16 @@ static void aram_exit_blk_dev(struct aram_device *adev)
 static void aram_quiesce(struct aram_device *adev)
 {
 	u16 __iomem *csr_reg = adev->io_base + DSP_CSR;
+	u16 csr;
 	unsigned long flags;
 
-	/* disable ARAM interrupts */
+	/*
+	 * Disable ARAM interrupts, but do not accidentally ack non-ARAM ones.
+	 */
 	spin_lock_irqsave(&adev->io_lock, flags);
-	writew(readw(csr_reg) & ~DSP_CSR_ARINTMASK,
-	       csr_reg);
+	csr = readw(csr_reg);
+	csr &= ~(DSP_CSR_AIDINT | DSP_CSR_DSPINT | DSP_CSR_ARINTMASK);
+	writew(csr, csr_reg);
 	spin_unlock_irqrestore(&adev->io_lock, flags);
 
 	/* wait until pending transfers are finished */
@@ -474,6 +478,7 @@ static void aram_quiesce(struct aram_device *adev)
 static int aram_init_irq(struct aram_device *adev)
 {
 	u16 __iomem *csr_reg = adev->io_base + DSP_CSR;
+	u16 csr;
 	unsigned long flags;
 	int retval;
 
@@ -486,9 +491,15 @@ static int aram_init_irq(struct aram_device *adev)
 		goto out;
 	}
 
-	/* enable ARAM interrupts, and route them to the processor */
+	/*
+	 * Enable ARAM interrupts, and route them to the processor.
+	 * As in the other cases, preserve the AI and DSP interrupts.
+	 */
 	spin_lock_irqsave(&adev->io_lock, flags);
-	writew(readw(csr_reg) | DSP_CSR_ARINTMASK | DSP_CSR_PIINT, csr_reg);
+	csr = readw(csr_reg);
+	csr |= (DSP_CSR_ARINT | DSP_CSR_ARINTMASK | DSP_CSR_PIINT);
+	csr &= ~(DSP_CSR_AIDINT | DSP_CSR_DSPINT);
+	writew(csr, csr_reg);
 	spin_unlock_irqrestore(&adev->io_lock, flags);
 
 out:
