@@ -6,6 +6,7 @@
 #include <linux/config.h>
 #include <linux/console.h>
 #include <linux/initrd.h>
+#include <linux/seq_file.h>
 
 #include <asm/machdep.h>
 #include <asm/bootinfo.h>
@@ -64,6 +65,15 @@ void __init gamecube_calibrate_decr(void)
 	tb_to_us = mulhwu_scale_factor(freq/divisor, 1000000);
 }
 
+static int
+gamecube_show_cpuinfo(struct seq_file *m)
+{
+	seq_printf(m, "vendor\t\t: IBM\n");
+	seq_printf(m, "machine\t\t: Nintendo GameCube\n");
+
+	return 0;
+}
+
 void __init
 platform_init(unsigned long r3, unsigned long r4, unsigned long r5,
 	      unsigned long r6, unsigned long r7)
@@ -79,8 +89,7 @@ platform_init(unsigned long r3, unsigned long r4, unsigned long r5,
 #endif
 
 	ppc_md.setup_arch = gamecube_setup_arch;
-	ppc_md.setup_io_mappings = gamecube_map_io;
-	ppc_md.find_end_of_memory = gamecube_find_end_of_memory;
+	ppc_md.show_cpuinfo = gamecube_show_cpuinfo;
 
 	ppc_md.init_IRQ = gamecube_init_IRQ;
 	ppc_md.get_irq = gamecube_get_irq;
@@ -90,6 +99,9 @@ platform_init(unsigned long r3, unsigned long r4, unsigned long r5,
 	ppc_md.halt = gamecube_halt;
 
 	ppc_md.calibrate_decr = gamecube_calibrate_decr;
+
+	ppc_md.find_end_of_memory = gamecube_find_end_of_memory;
+	ppc_md.setup_io_mappings = gamecube_map_io;
 
 #ifdef CONFIG_DUMMY_CONSOLE
 	conswitchp = &dummy_con;
