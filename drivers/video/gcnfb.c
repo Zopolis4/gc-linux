@@ -398,12 +398,6 @@ int __init gcnfb_init(void)
 		goto err_register_framebuffer;
 	}
 
-	/* fill framebuffer memory with black color */
-	int c = gcnfb_defined.xres * gcnfb_defined.yres / 2;
-	volatile unsigned long *p = (unsigned long *)gcnfb_info.screen_base;
-	while (c--)
-		writel(0x00800080, p++);
-
 	unsigned int *VIDEO_Mode;
 
 	if (tv_encoding == TV_ENC_NTSC)
