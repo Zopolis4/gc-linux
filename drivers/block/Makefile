@@ -28,6 +28,7 @@ obj-$(CONFIG_ATARI_ACSI)	+= acsi.o
 obj-$(CONFIG_ATARI_SLM)		+= acsi_slm.o
 obj-$(CONFIG_AMIGA_Z2RAM)	+= z2ram.o
 obj-$(CONFIG_GAMECUBE_ARAM)	+= gc_aram.o
+obj-$(CONFIG_GAMECUBE_MEMCARD)	+= gc_memcard.o
 obj-$(CONFIG_BLK_DEV_RAM)	+= rd.o
 obj-$(CONFIG_BLK_DEV_LOOP)	+= loop.o
 obj-$(CONFIG_BLK_DEV_PS2)	+= ps2esdi.o
