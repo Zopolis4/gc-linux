@@ -140,9 +140,6 @@ gamecube_show_cpuinfo(struct seq_file *m)
 static void __init
 gamecube_setup_arch(void)
 {
-#ifdef CONFIG_DUMMY_CONSOLE
-	conswitchp = &dummy_con;
-#endif
 }
 
 void __init
