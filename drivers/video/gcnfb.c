@@ -62,6 +62,7 @@ struct vi_video_mode {
 	const u32 *regs;
 	int width;
 	int height;
+	int lines;
 };
 
 static const u32 VIDEO_Mode640X480NtscYUV16[32] = {
@@ -115,6 +116,7 @@ static struct vi_video_mode gcnfb_video_modes[] = {
 		.regs = VIDEO_Mode640X480NtscYUV16,
 		.width = 640,
 		.height = 480,
+		.lines = 525,
 	},
 	{
 		.format = VI_FMT_NTSC_480p,
@@ -122,6 +124,7 @@ static struct vi_video_mode gcnfb_video_modes[] = {
 		.regs = VIDEO_Mode640x480NtscProgressiveYUV16,
 		.width = 640,
 		.height = 480,
+		.lines = 525,
 	},
 	{
 		.format = VI_FMT_PAL50_576i,
@@ -129,6 +132,7 @@ static struct vi_video_mode gcnfb_video_modes[] = {
 		.regs = VIDEO_Mode640X576Pal50YUV16,
 		.width = 640,
 		.height = 576,
+		.lines = 625,
 	},
 	{
 		.format = VI_FMT_PAL60_480i,
@@ -136,6 +140,7 @@ static struct vi_video_mode gcnfb_video_modes[] = {
 		.regs = VIDEO_Mode640X480Pal60YUV16,
 		.width = 640,
 		.height = 480,
+		.lines = 525,
 	},
 	{ .format = -1 }
 };
@@ -490,7 +495,7 @@ void gcnfb_enable_interrupts(int enable)
 
 	if (enable) {
 		/* XXX should we incorporate this in the video mode struct ? */
-		vtrap = gcnfb_video_mode->height / 2;
+		vtrap = gcnfb_video_mode->lines / 2;
 		htrap = VI_FMT_IS_NTSC(gcnfb_video_mode->format) ? 430 : 433;
 
 		/* progressive interrupts at 526 */
