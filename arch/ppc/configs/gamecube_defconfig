@@ -86,6 +86,7 @@ CONFIG_GAMECUBE=y
 # CONFIG_PAL4 is not set
 # CONFIG_GEMINI is not set
 # CONFIG_EST8260 is not set
+# CONFIG_SBC82xx is not set
 # CONFIG_SBS8260 is not set
 # CONFIG_RPX6 is not set
 # CONFIG_TQM8260 is not set
@@ -184,7 +185,6 @@ CONFIG_LBD=y
 #
 # Fusion MPT device support
 #
-# CONFIG_FUSION is not set
 
 #
 # IEEE 1394 (FireWire) support
@@ -328,7 +328,6 @@ CONFIG_GAMECUBE_NET=y
 # CONFIG_HIPPI is not set
 # CONFIG_PPP is not set
 # CONFIG_SLIP is not set
-# CONFIG_RCPCI is not set
 # CONFIG_SHAPER is not set
 # CONFIG_NETCONSOLE is not set
 
@@ -456,6 +455,7 @@ CONFIG_FB=y
 # CONFIG_FB_PM2 is not set
 # CONFIG_FB_CYBER2000 is not set
 # CONFIG_FB_CT65550 is not set
+# CONFIG_FB_ASILIANT is not set
 # CONFIG_FB_IMSTT is not set
 # CONFIG_FB_S3TRIO is not set
 # CONFIG_FB_VGA16 is not set
@@ -648,7 +648,6 @@ CONFIG_RAMFS=y
 # CONFIG_CIFS is not set
 # CONFIG_NCP_FS is not set
 # CONFIG_CODA_FS is not set
-# CONFIG_INTERMEZZO_FS is not set
 # CONFIG_AFS_FS is not set
 
 #
