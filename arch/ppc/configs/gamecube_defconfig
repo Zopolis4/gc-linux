@@ -24,6 +24,7 @@ CONFIG_SYSVIPC=y
 # CONFIG_BSD_PROCESS_ACCT is not set
 CONFIG_SYSCTL=y
 CONFIG_LOG_BUF_SHIFT=14
+# CONFIG_HOTPLUG is not set
 CONFIG_IKCONFIG=y
 CONFIG_IKCONFIG_PROC=y
 # CONFIG_EMBEDDED is not set
@@ -113,7 +114,7 @@ CONFIG_PCI=y
 CONFIG_PCI_DOMAINS=y
 # CONFIG_PCI_LEGACY_PROC is not set
 # CONFIG_PCI_NAMES is not set
-# CONFIG_HOTPLUG is not set
+CONFIG_EXI=y
 
 #
 # Advanced setup
@@ -155,6 +156,7 @@ CONFIG_BOOT_LOAD=0x400000
 # Block devices
 #
 # CONFIG_BLK_DEV_FD is not set
+# CONFIG_GAMECUBE_ARAM is not set
 # CONFIG_BLK_CPQ_DA is not set
 # CONFIG_BLK_CPQ_CISS_DA is not set
 # CONFIG_BLK_DEV_DAC960 is not set
@@ -187,7 +189,7 @@ CONFIG_LBD=y
 #
 
 #
-# IEEE 1394 (FireWire) support (EXPERIMENTAL)
+# IEEE 1394 (FireWire) support
 #
 # CONFIG_IEEE1394 is not set
 
@@ -346,7 +348,7 @@ CONFIG_GAMECUBE_NET=y
 #
 # ISDN subsystem
 #
-# CONFIG_ISDN_BOOL is not set
+# CONFIG_ISDN is not set
 
 #
 # Telephony Support
@@ -412,7 +414,8 @@ CONFIG_HW_CONSOLE=y
 # Non-8250 serial port support
 #
 CONFIG_UNIX98_PTYS=y
-CONFIG_UNIX98_PTY_COUNT=256
+CONFIG_LEGACY_PTYS=y
+CONFIG_LEGACY_PTY_COUNT=256
 
 #
 # Mice
@@ -450,6 +453,10 @@ CONFIG_GEN_RTC=y
 # CONFIG_I2C is not set
 
 #
+# Misc devices
+#
+
+#
 # Multimedia devices
 #
 # CONFIG_VIDEO_DEV is not set
@@ -463,6 +470,7 @@ CONFIG_GEN_RTC=y
 # Graphics support
 #
 CONFIG_FB=y
+# CONFIG_FB_PM2 is not set
 # CONFIG_FB_CYBER2000 is not set
 # CONFIG_FB_CT65550 is not set
 # CONFIG_FB_IMSTT is not set
@@ -560,7 +568,7 @@ CONFIG_SND_PCM_OSS=y
 # CONFIG_SND_VX222 is not set
 
 #
-# ALSA PPC devices
+# ALSA PowerMac devices
 #
 # CONFIG_SND_POWERMAC is not set
 CONFIG_SND_GAMECUBE=y
@@ -620,7 +628,6 @@ CONFIG_PROC_KCORE=y
 CONFIG_DEVFS_FS=y
 # CONFIG_DEVFS_MOUNT is not set
 # CONFIG_DEVFS_DEBUG is not set
-CONFIG_DEVPTS_FS=y
 # CONFIG_DEVPTS_FS_XATTR is not set
 CONFIG_TMPFS=y
 # CONFIG_HUGETLB_PAGE is not set
@@ -632,6 +639,7 @@ CONFIG_RAMFS=y
 # CONFIG_ADFS_FS is not set
 # CONFIG_AFFS_FS is not set
 CONFIG_HFS_FS=m
+# CONFIG_HFSPLUS_FS is not set
 # CONFIG_BEFS_FS is not set
 # CONFIG_BFS_FS is not set
 # CONFIG_EFS_FS is not set
@@ -652,7 +660,6 @@ CONFIG_HFS_FS=m
 # CONFIG_CIFS is not set
 # CONFIG_NCP_FS is not set
 # CONFIG_CODA_FS is not set
-# CONFIG_INTERMEZZO_FS is not set
 # CONFIG_AFS_FS is not set
 
 #
