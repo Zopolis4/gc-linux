@@ -16,7 +16,7 @@ gamecube_setup_arch(void)
 
 unsigned long gamecube_find_end_of_memory(void)
 {
-	return 8*1024*1024;
+	return 24*1024*1024 - (640*576*2); /* 24 MB minus max. framebuffer */
 }
 
 void __init
