@@ -30,7 +30,6 @@
 #include <linux/interrupt.h>
 
 #include <asm/io.h>
-#include <asm/irq.h>
 
 #define DVD_IRQ			2
 
@@ -60,28 +59,27 @@ static irqreturn_t gc_dvdcover_handler(int this_irq, void *dev_id, struct pt_reg
 
 static int gc_dvdcover_init(void)
 {
-        unsigned long outval;
+	unsigned long outval;
+	int err;
                                                                                 
-        /* clear pending DI interrupts and mask new ones */
-        /* this prevents an annoying bug while we lack a complete DVD driver */
-        outval = GC_DI_DISR_BRKINT | GC_DI_DISR_TCINT |
-                        GC_DI_DISR_DEINT;
-        outval &= ~(GC_DI_DISR_BRKINTMASK | GC_DI_DISR_TCINTMASK |
-                        GC_DI_DISR_DEINTMASK);
-        writel(outval, GC_DI_DISR);
+	/* clear pending DI interrupts and mask new ones */
+	/* this prevents an annoying bug while we lack a complete DVD driver */
+	outval = GC_DI_DISR_BRKINT | GC_DI_DISR_TCINT |	GC_DI_DISR_DEINT;
+	outval &= ~(GC_DI_DISR_BRKINTMASK | GC_DI_DISR_TCINTMASK |
+			GC_DI_DISR_DEINTMASK);
+	writel(outval, GC_DI_DISR);
 
-	if (request_irq(DVD_IRQ, gc_dvdcover_handler, 0, "GameCube DVD Cover", 0) < 0) {
-		printk(KERN_ERR "gc_dvdcover: Request irq%d failed\n", DVD_IRQ);
-	} else {
-		enable_irq(DVD_IRQ);
-		writel(readl(GAMECUBE_DICVR) | 2, GAMECUBE_DICVR);
-	}
+	err = request_irq(DVD_IRQ, gc_dvdcover_handler, 0, "GameCube DVD Cover", 0);
+	if (err)
+		return err;
+
+	writel(readl(GAMECUBE_DICVR) | 2, GAMECUBE_DICVR);
+
 	return 0;
 }
 
 static void gc_dvdcover_exit(void)
 {
-	disable_irq(DVD_IRQ);
 	free_irq(DVD_IRQ, 0);
 }
 
