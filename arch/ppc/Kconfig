@@ -549,7 +549,7 @@ config SANDPOINT
 config GAMECUBE
 	bool "Nintendo-GameCube"
 	help
-	  Select GameCube if configuring for the Nintendo GameCube.
+	  Select GAMECUBE if configuring for the Nintendo GameCube.
 	  More information at: <http://gc-linux.sourceforge.net/>
 
 config ADIR
@@ -623,25 +623,41 @@ config PQ2ADS
 	depends on ADS8272
 	default y
 
-config GAMECUBE_RESET_SWITCH
-        bool "GameCube Reset button"
-        default n
-        ---help---
-          If you say yes to this option, support will be included for the
-          reset switch of the GameCube.
-                                                                                
-          This driver can also be built as a module.  If so, the module
-          will be called gc-rsw.
+config GAMECUBE_CONSOLE
+	bool "Nintendo GameCube debug console"
+	depends on GAMECUBE
+	default n
+	help
+	  This option enables an early minimal console suitable for debugging
+	  purposes.
+	  
+	  If in doubt, say N here.
 
-config GAMECUBE_DVD_COVER
-        bool "GameCube DVD Cover"
-        default n
-        ---help---
-          If you say yes to this option, support will be included for the
-          reset switch of the GameCube.
-                                                                                
-          This driver can also be built as a module.  If so, the module
-          will be called gc-dvdcover.
+config GAMECUBE_RESET
+	tristate "Nintendo GameCube reset button"
+	depends on GAMECUBE
+	default y
+	help
+	  If you say yes to this option, support will be included for the
+	  reset button of the Nintendo GameCube.
+	  
+	  This driver can also be built as a module.  If so, the module
+	  will be called gcn-rsw.
+	  
+	  If in doubt, say Y here.
+
+config GAMECUBE_DVDCOVER
+	tristate "Nintendo GameCube DVD cover"
+	depends on GAMECUBE
+	default y
+	help
+	  If you say yes to this option, support will be included for the
+	  DVD cover of the Nintendo GameCube.
+	  
+	  This driver can also be built as a module.  If so, the module
+	  will be called gcn-dvdcover.
+	  
+	  If in doubt, say Y here.
 
 config TQM8xxL
 	bool
@@ -824,12 +840,6 @@ config NR_CPUS
 	range 2 32
 	depends on SMP
 	default "4"
-
-config GAMECUBE_CONSOLE
-	bool "GameCube Minimal Screen Console"
-	depends on GAMECUBE
-	---help---
-	   ...
 
 config PREEMPT
 	bool "Preemptible Kernel"
