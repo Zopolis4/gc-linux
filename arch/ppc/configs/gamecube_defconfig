@@ -100,7 +100,7 @@ CONFIG_KERNEL_ELF=y
 CONFIG_BINFMT_ELF=y
 CONFIG_BINFMT_MISC=m
 CONFIG_CMDLINE_BOOL=y
-CONFIG_CMDLINE="console=ttyS0,9600 console=tty0 root=/dev/sda2"
+CONFIG_CMDLINE="root=/dev/sda2 video=gamecubefb"
 
 #
 # Bus options
@@ -193,7 +193,6 @@ CONFIG_LBD=y
 # Networking support
 #
 # CONFIG_NET is not set
-CONFIG_CRC32=y
 
 #
 # Amateur Radio support
@@ -223,19 +222,26 @@ CONFIG_FB=y
 # CONFIG_FB_3DFX is not set
 # CONFIG_FB_VOODOO1 is not set
 # CONFIG_FB_TRIDENT is not set
+CONFIG_FB_GAMECUBE=y
 # CONFIG_FB_VIRTUAL is not set
 
 #
 # Console display driver support
 #
-CONFIG_VGA_CONSOLE=y
+# CONFIG_VGA_CONSOLE is not set
 # CONFIG_MDA_CONSOLE is not set
 CONFIG_DUMMY_CONSOLE=y
 CONFIG_FRAMEBUFFER_CONSOLE=y
 CONFIG_PCI_CONSOLE=y
-# CONFIG_FONTS is not set
-CONFIG_FONT_8x8=y
+CONFIG_FONTS=y
+# CONFIG_FONT_8x8 is not set
 CONFIG_FONT_8x16=y
+# CONFIG_FONT_6x11 is not set
+# CONFIG_FONT_PEARL_8x8 is not set
+# CONFIG_FONT_ACORN_8x8 is not set
+# CONFIG_FONT_MINI_4x6 is not set
+# CONFIG_FONT_SUN8x16 is not set
+# CONFIG_FONT_SUN12x22 is not set
 
 #
 # Logo configuration
@@ -525,6 +531,7 @@ CONFIG_NLS_ISO8859_1=m
 #
 # Library routines
 #
+CONFIG_CRC32=y
 
 #
 # Kernel hacking
