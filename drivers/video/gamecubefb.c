@@ -34,7 +34,7 @@ static struct fb_var_screeninfo gamecubefb_defined __initdata = {
 };
 
 static struct fb_fix_screeninfo gamecubefb_fix __initdata = {
-	.id	= "VESA VGA",
+	.id	= "GameCube",
 	.type	= FB_TYPE_PACKED_PIXELS,
 	.accel	= FB_ACCEL_NONE,
 };
