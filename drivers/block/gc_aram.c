@@ -72,13 +72,9 @@ static struct gendisk *aram_gendisk;
 #define ARAM_READ				1
 #define ARAM_WRITE				0
 
-int ARAM_DMA_lock = 0;
 
 void ARAM_StartDMA (unsigned long mmAddr, unsigned long arAddr, unsigned long length, unsigned long type)
 {
-	while(ARAM_DMA_lock);
-	ARAM_DMA_lock = 1;
- 	
 	//printk("ARAM DMA copy -> %08x - %08x  - %d  %d\n",mmAddr,arAddr,length,type);
 	
 	AR_DMA_MMADDR_H = mmAddr >> 16;
@@ -90,16 +86,12 @@ void ARAM_StartDMA (unsigned long mmAddr, unsigned long arAddr, unsigned long le
 	AR_DMA_CNT_H = (type << 15) | (length >> 16);
 	AR_DMA_CNT_L = length & 0xFFFF;
 	
-	// For security
-	udelay(1000);
-
 	// Without the Break, the While loop loops endless
 	int counter=0;
 	while (AI_DSP_STATUS & 0x200) {
 		counter++;
 		if (counter>0xfffff) break;
 	};
-	ARAM_DMA_lock = 0;
 
 }
 /*
@@ -110,10 +102,13 @@ void ARAM_StartDMA (unsigned long mmAddr, unsigned long arAddr, unsigned long le
 static void do_aram_request(request_queue_t *q)
 {
 	struct request *req;
+	blk_stop_queue(q);
+	
 	while ((req = elv_next_request(q)) != NULL) {
 		unsigned long start = req->sector << 9;
 		unsigned long len  = req->current_nr_sectors << 9;
-
+		
+	
 		if (start + len > ARAM_BUFFERSIZE) {
 			printk( KERN_ERR DEVICE_NAME ": bad access: block=%lu, count=%u\n",
 				req->sector, req->current_nr_sectors);
@@ -141,6 +136,9 @@ static void do_aram_request(request_queue_t *q)
 		
 		end_request(req, 1);
 	}
+	
+	blk_start_queue(q);
+
 }
 
 
@@ -226,6 +224,7 @@ int __init aram_init(void)
 	aram_gendisk->queue = aram_queue;
 	set_capacity(aram_gendisk,ARAM_BUFFERSIZE>>9);
 	add_disk(aram_gendisk);
+//	spin_lock_init(aram_lock.queue_lock);
 	
 	#ifdef RAMDISK
 	RAMDISKBuffer = kmalloc(ARAM_BUFFERSIZE,GFP_KERNEL);
