@@ -17,10 +17,6 @@
 #include <linux/time.h>
 #include <linux/exi.h>
 
-#ifndef EXI_LITE
-#error Sorry, this driver needs currently the gcn-exi-lite framework.
-#endif
-
 /*
  * The EXI functions that we use are guaranteed to work by the gcn-exi-lite
  * framework even if exi_lite_init() has not been called.
@@ -28,12 +24,28 @@
 
 #define RTC_OFFSET 946684800L
 
-static int bias = 0;
+static int rtc_probe(struct exi_device *);
+static void rtc_remove(struct exi_device *);
 
+static int bias = 0;
+static int initialized = 0;
+static struct exi_driver rtc_exi_driver = {
+	.name = "RTC/SRAM",
+	.eid = {
+		.channel = 0,
+		.device  = 1,
+		.id      = 0xFFFF1698
+	},
+	.frequency = 3,
+	.probe  = rtc_probe,
+	.remove = rtc_remove 
+};
+
+#if 0
 static void read_sram(unsigned char *abuf)
 {
 	unsigned long a;
-
+	
 	/* select the SRAM device */
 	exi_select(0, 1, 3);
 
@@ -87,25 +99,20 @@ static void set_rtc(unsigned long aval)
 	/* Deselect the RTC device */
 	exi_deselect(0);
 }
-
-/**
- *
- */
-long __init gcn_time_init(void)
-{
-	char sram[64];
-	int *pbias = (int *)&sram[0xC];
-	read_sram(sram);
-	bias = *pbias;
-	return 0;
-}
-
+#endif
 /**
  *
  */
 unsigned long gcn_get_rtc_time(void)
 {
-	return get_rtc() + bias + RTC_OFFSET;
+	static int i=0;
+	if (i++ == 0) {
+		printk(KERN_INFO "Get RTC time\n");
+	}
+	if (initialized) {
+		//return get_rtc() + bias + RTC_OFFSET;
+	}
+	return 0;
 }
 
 /**
@@ -113,8 +120,42 @@ unsigned long gcn_get_rtc_time(void)
  */
 int gcn_set_rtc_time(unsigned long nowtime)
 {
-	set_rtc(nowtime - RTC_OFFSET - bias);
-
-	return 1;
+	printk(KERN_INFO "Set RTC time %lu\n",nowtime);
+	if (initialized) {
+		//set_rtc(nowtime - RTC_OFFSET - bias);
+		return 0;
+	}
+	
+	return 0;
 }
+
+static int rtc_probe(struct exi_device *dev) 
+{
+	/* nothing to probe, hardware is always there */
+	initialized = 1;
+	
+	return 0;
+}
+
+static void rtc_remove(struct exi_device *dev)
+{
+	initialized = 0;
+}
+
+/**
+ *
+ */
+long gcn_time_init(void)
+{
+	printk(KERN_INFO "gcn_time_init\n");
+	initialized = 0;
+	return 0;
+	//return exi_register_driver(&rtc_exi_driver);
+}
+	/*
+char sram[64];
+	int *pbias = (int *)&sram[0xC];
+	read_sram(sram);
+	bias = *pbias;
+	return 0; */
 

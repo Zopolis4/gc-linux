@@ -40,7 +40,7 @@ static unsigned long gamecube_find_end_of_memory(void)
 	return GCN_MEM_SIZE;
 }
 
-static void __init gamecube_map_io(void)
+static void gamecube_map_io(void)
 {
 	/* all RAM and more ??? */
 	io_block_mapping(0xd0000000, 0, 0x02000000, _PAGE_IO);
@@ -66,7 +66,7 @@ static void gamecube_halt(void)
 	gamecube_restart(NULL);
 }
 
-static void __init gamecube_calibrate_decr(void)
+static void gamecube_calibrate_decr(void)
 {
 	int freq, divisor;
 	freq = 162000000;
@@ -120,7 +120,7 @@ static struct hw_interrupt_type flipper_pic = {
 	.end		= flipper_end_irq,
 };
 
-static void __init gamecube_init_IRQ(void)
+static void gamecube_init_IRQ(void)
 {
 	int i;
 
@@ -146,7 +146,7 @@ static int gamecube_show_cpuinfo(struct seq_file *m)
 	return 0;
 }
 
-static void __init gamecube_setup_arch(void)
+static void gamecube_setup_arch(void)
 {
 #ifdef CONFIG_GAMECUBE_CONSOLE
 #if (GCN_XFB_START <= 0x00fffe00) 
@@ -201,14 +201,14 @@ platform_init(unsigned long r3, unsigned long r4, unsigned long r5,
 	ppc_md.find_end_of_memory = gamecube_find_end_of_memory;
 	ppc_md.setup_io_mappings = gamecube_map_io;
 
-	ppc_md.time_init = gcn_time_init;
-	ppc_md.set_rtc_time = gcn_set_rtc_time;
-	ppc_md.get_rtc_time = gcn_get_rtc_time;
-
 #ifdef CONFIG_KEXEC
 	ppc_md.machine_shutdown = gamecube_shutdown;
 	ppc_md.machine_kexec_prepare = gamecube_kexec_prepare;
 	ppc_md.machine_kexec = machine_kexec_simple;
 #endif /* CONFIG_KEXEC */
 
+	/* no RTC driver, too slow */
+	ppc_md.time_init      = NULL;
+	ppc_md.set_rtc_time   = NULL;
+	ppc_md.get_rtc_time   = NULL;
 }

@@ -16,7 +16,6 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/init.h>
-#include <linux/interrupt.h>
 
 #include <asm/io.h>
 
@@ -62,44 +61,9 @@ MODULE_LICENSE("GPL");
 #define di_printk(level, format, arg...) \
 	printk(level PFX format , ## arg)
 
-typedef enum {
-        OPENED = 0,
-        CLOSED,
-        UNKNOWN,
-} gcn_dvdcover_state_t;
-
-gcn_dvdcover_state_t gcn_dvdcover_state = UNKNOWN;
-
-/**
- *
- */
-static irqreturn_t gcn_dvdcover_handler(int this_irq, void *dev_id,
-					struct pt_regs *regs)
-{
-	unsigned long reason = readl(DI_DICVR);
-
-	gcn_dvdcover_state = (readl(DI_DICVR) & DI_DICVR_CVR)?
-			     OPENED:CLOSED;
-
-	di_printk(KERN_INFO, "DVD cover was %s.\n",
-		  (gcn_dvdcover_state == OPENED) ?
-		  "opened" : "closed");
-
-	/* handle only DVD cover interrupts here */
-	if (reason & DI_DICVR_CVRINT) {
-		writel(reason | DI_DICVR_CVRINT, DI_DICVR);
-		return IRQ_HANDLED;
-	}
-	return IRQ_NONE;
-}
-
-/**
- *
- */
 static int gcn_dvdcover_init(void)
 {
 	unsigned long outval;
-	int err;
 
 	/* clear pending DI interrupts and mask new ones */
 	/* this prevents an annoying bug while we lack a complete DVD driver */
@@ -111,16 +75,6 @@ static int gcn_dvdcover_init(void)
 	writel(DI_CMD_STOP << 24, DI_DICMDBUF0);
 	writel(DI_DICR_TSTART, DI_DICR);
 
-	err = request_irq(DVD_IRQ, gcn_dvdcover_handler, 0,
-			  "Nintendo GameCube DVD", 0);
-	if (err) {
-		di_printk(KERN_ERR, "request of irq%d failed\n", DVD_IRQ);
-		return err;
-	}
-
-	/* enable DVD cover interrupts */
-	writel(readl(DI_DICVR) | DI_DICVR_CVRINTMASK, DI_DICVR);
-
 	return 0;
 }
 
@@ -129,7 +83,7 @@ static int gcn_dvdcover_init(void)
  */
 static void gcn_dvdcover_exit(void)
 {
-	free_irq(DVD_IRQ, 0);
+	
 }
 
 module_init(gcn_dvdcover_init);

@@ -1,9 +1,9 @@
-/**
+/*
  * drivers/net/gcn-bba.c
  *
  * Nintendo GameCube Broadband Adapter driver
  * Copyright (C) 2004-2005 The GameCube Linux Team
- * Copyright (C) 2004,2005 Albert Herranz
+ * Copyright (C) 2004,2005 Albert Herranz,Todd Jeffreys
  *
  * Based on previous work by Stefan Esser, Franz Lehner, Costis and tmbinc.
  *
@@ -14,7 +14,7 @@
  *
  */
 
-#define BBA_DEBUG
+//#define BBA_DEBUG
 
 #include <linux/config.h>
 #include <linux/module.h>
@@ -27,18 +27,18 @@
 #include <linux/errno.h>
 #include <linux/init.h>
 #include <linux/delay.h>
+#include <linux/wait.h>
 #include <linux/inet.h>
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
 #include <linux/skbuff.h>
 #include <linux/spinlock.h>
-#include <linux/exi.h>
+#include <linux/kthread.h>
+#include <linux/sched.h>
 #include <asm/system.h>
 #include <asm/io.h>
-
-#ifndef EXI_LITE
-#error Sorry, this driver only works with the gcn-exi-lite framework.
-#endif
+#include <asm/atomic.h>
+#include <linux/exi.h>
 
 #ifdef BBA_DEBUG
 #  define DPRINTK(fmt, args...) \
@@ -173,128 +173,372 @@
 #define BBA_CMD_IR_MASKALL  0x00
 #define BBA_CMD_IR_MASKNONE 0xf8
 
-static void bba_cmd_ins(int reg, void *val, int len);
-static void bba_cmd_outs(int reg, void *val, int len);
-static void bba_ins(int reg, void *val, int len);
-static void bba_outs(int reg, void *val, int len);
+struct bba_private {
+	//spinlock_t lock;
 
-#define bba_select()   exi_select(BBA_EXI_CHANNEL, BBA_EXI_DEVICE, BBA_EXI_FREQ)
-#define bba_deselect() exi_deselect(BBA_EXI_CHANNEL)
+	u32 msg_enable;
+	u8 revid;
+	u8 __0x04_init[2];
+	u8 __0x05_init;
 
-static inline void bba_cmd_ins_nosel(int reg, void *val, int len)
+	struct exi_device *exi_dev;
+	struct net_device *dev;
+	struct net_device_stats stats;
+	struct task_struct *interrupt_thread;
+	wait_queue_head_t wait_queue;
+	atomic_t num_interrupts;
+	struct sk_buff *skb;
+	void *dma_send_ptr;
+	void *dma_recv_ptr;
+	u8 dma_send_buffer[ETH_FRAME_LEN + EXI_DMA_ALIGNMENT];
+	u8 dma_recv_buffer[ETH_FRAME_LEN + EXI_DMA_ALIGNMENT];
+};
+
+
+static void bba_cmd_ins(struct bba_private *priv,int reg, void *val, int len);
+static void bba_cmd_outs(struct bba_private *priv,int reg, void *val, int len);
+static void bba_ins(struct bba_private *priv,int reg, void *val, int len);
+static void bba_outs(struct bba_private *priv,int reg, void *val, int len);
+
+static inline void *align(void *ptr) 
 {
-	u16 req;
-	req = reg << 8;
-	exi_write(BBA_EXI_CHANNEL, &req, sizeof(req));
-	exi_read(BBA_EXI_CHANNEL, val, len);
+	u32 addr = (u32)ptr;
+	return (void*)
+		((addr + EXI_DMA_ALIGNMENT - 1) & ~(EXI_DMA_ALIGNMENT-1));
 }
 
-static void bba_cmd_ins(int reg, void *val, int len)
+struct sleep_t
 {
-	bba_select();
-	bba_cmd_ins_nosel(reg, val, len);
-	bba_deselect();
+	volatile int done;
+	wait_queue_head_t queue;
+};
+
+static void wakeup_callback(struct exi_command *cmd)
+{
+	struct sleep_t *val = (struct sleep_t *)cmd->param;
+	/* set to true */
+	val->done = 1;
+	wake_up(&val->queue);
 }
 
-static inline void bba_cmd_outs_nosel(int reg, void *val, int len)
+static void bba_do_sleeping_cmd(struct exi_command_group *cmd)
 {
-	u16 req;
-	req = (reg << 8) | 0x4000;
-	exi_write(BBA_EXI_CHANNEL, &req, sizeof(req));
-	exi_write(BBA_EXI_CHANNEL, val, len);
+	int i;
+	struct sleep_t sleep;
+
+	sleep.done = 0;
+	init_waitqueue_head(&sleep.queue);
+
+	/* setup completion routines */
+	for (i=0;i<cmd->num_commands-1;++i)
+	{
+		cmd->commands[i].completion_routine = NULL;
+	}
+	cmd->commands[i].param = (void*)&sleep;
+	cmd->commands[i].completion_routine = wakeup_callback;
+	/* perform the actions */
+	exi_add_command_group(cmd,1);
+	/* wait for completion */
+	wait_event(sleep.queue,sleep.done);
 }
 
-static void bba_cmd_outs(int reg, void *val, int len)
+static u32 bba_exi_probe(struct exi_device *exi_dev)
 {
-	bba_select();
-	bba_cmd_outs_nosel(reg, val, len);
-	bba_deselect();
+	u16 write;
+	u32 read;
+	struct exi_command_group cmd;
+	struct exi_command sub[2];
+	
+	write = 0;
+
+	cmd.flags = 0;
+	cmd.commands = sub;
+	cmd.num_commands = 2;
+	cmd.dev = exi_dev;
+	
+	sub[0].flags = EXI_CMD_WRITE;
+	sub[0].data  = &write;
+	sub[0].len   = sizeof(write);
+	
+	sub[1].flags = EXI_CMD_READ;
+	sub[1].data  = &read;
+	sub[1].len   = sizeof(read);
+
+	bba_do_sleeping_cmd(&cmd);
+	return read;
 }
 
-static inline u8 bba_cmd_in8(int reg)
+static inline void bba_build_subcmd_ins(struct exi_command *subcmd,
+					int reg,u32 *cmdbuffer,
+					void *data,unsigned int len)
 {
+	*cmdbuffer = (reg << 8) | 0x80000000;
+	
+	subcmd[0].flags = EXI_CMD_WRITE;
+	subcmd[0].data  = cmdbuffer;
+	subcmd[0].len   = 4;
+	subcmd[0].completion_routine = NULL;
+	
+	subcmd[1].flags = EXI_CMD_READ;
+	subcmd[1].data  = data;
+	subcmd[1].len   = len;
+	subcmd[1].completion_routine = NULL;
+}
+
+static inline void bba_build_subcmd_outs(struct exi_command *subcmd,
+					 int reg,u32 *cmdbuffer,
+					 void *data,unsigned int len)
+{
+	*cmdbuffer = (reg << 8) | 0xC0000000;
+	
+	subcmd[0].flags = EXI_CMD_WRITE;
+	subcmd[0].data  = cmdbuffer;
+	subcmd[0].len   = 4;
+	subcmd[0].completion_routine = NULL;
+	
+	subcmd[1].flags = EXI_CMD_WRITE;
+	subcmd[1].data  = data;
+	subcmd[1].len   = len;
+	subcmd[1].completion_routine = NULL;
+}
+
+static inline void bba_build_subcmd_cmd_ins(struct exi_command *subcmd,
+					    int reg,u16 *cmdbuffer,
+					    void *data,unsigned int len)
+{
+	*cmdbuffer = (reg << 8);
+	
+	subcmd[0].flags = EXI_CMD_WRITE;
+	subcmd[0].data  = cmdbuffer;
+	subcmd[0].len   = 2;
+	subcmd[0].completion_routine = NULL;
+	
+	subcmd[1].flags = EXI_CMD_READ;
+	subcmd[1].data  = data;
+	subcmd[1].len   = len;
+	subcmd[1].completion_routine = NULL;
+}
+
+static inline void bba_build_subcmd_cmd_outs(struct exi_command *subcmd,
+					     int reg,u16 *cmdbuffer,
+					     void *data,unsigned int len)
+{
+	*cmdbuffer = (reg << 8) | 0x4000;
+	
+	subcmd[0].flags = EXI_CMD_WRITE;
+	subcmd[0].data  = cmdbuffer;
+	subcmd[0].len   = 2;
+	subcmd[0].completion_routine = NULL;
+	
+	subcmd[1].flags = EXI_CMD_WRITE;
+	subcmd[1].data  = data;
+	subcmd[1].len   = len;
+	subcmd[1].completion_routine = NULL;
+}
+
+
+static void bba_cmd_ins(struct bba_private *bba,int reg,void *val,int len)
+{
+	u16 write;
+	struct exi_command_group cmd;
+	struct exi_command sub[2];
+	
+	cmd.flags = 0;
+	cmd.commands = sub;
+	cmd.num_commands = 2;
+	cmd.dev = bba->exi_dev;
+	
+	bba_build_subcmd_cmd_ins(sub,reg,&write,val,len);
+	
+	bba_do_sleeping_cmd(&cmd);
+}
+
+static void bba_cmd_outs(struct bba_private *bba,int reg,void *val,int len)
+{
+	u16 write;
+	struct exi_command_group cmd;
+	struct exi_command sub[2];
+
+	cmd.flags = 0;
+	cmd.commands = sub;
+	cmd.num_commands = 2;
+	cmd.dev = bba->exi_dev;
+	
+	bba_build_subcmd_cmd_outs(sub,reg,&write,val,len);
+	
+	bba_do_sleeping_cmd(&cmd);
+}
+
+static void bba_ins(struct bba_private *bba,int reg, void *val, int len)
+{
+	u32 write;
+	struct exi_command_group cmd;
+	struct exi_command sub[2];
+	
+	cmd.flags = 0;
+	cmd.commands = sub;
+	cmd.num_commands = 2;
+	cmd.dev = bba->exi_dev;
+	
+	bba_build_subcmd_ins(sub,reg,&write,val,len);
+	
+	bba_do_sleeping_cmd(&cmd);
+}
+
+static void bba_outs(struct bba_private *bba,int reg, void *val, int len)
+{
+	u32 write;
+	struct exi_command_group cmd;
+	struct exi_command sub[2];
+	
+	cmd.flags = 0;
+	cmd.commands = sub;
+	cmd.num_commands = 2;
+	cmd.dev = bba->exi_dev;
+	
+	bba_build_subcmd_outs(sub,reg,&write,val,len);
+	
+	bba_do_sleeping_cmd(&cmd);
+}
+
+static void bba_outs_dma(struct bba_private *bba,int reg, void *val, int len)
+{
+	u32 write;
+	u32 dma;
+	u32 rem;
+	struct exi_command_group cmd;
+	struct exi_command sub[3];
+	
+#ifdef BBA_DEBUG
+	if ((u32)val & (EXI_DMA_ALIGNMENT-1)) {
+		printk(KERN_INFO "WARNING, bba_outs_dma called with a unaligned buffer, addr is %p,len is %u\n",val,len);
+	}
+	else if (len < EXI_DMA_ALIGNMENT) {
+		printk(KERN_INFO "WARNING, bba_outs_dma called with a length < 32, %u\n",len);
+	}
+#endif
+	cmd.flags = 0;
+	cmd.commands = sub;
+	cmd.dev = bba->exi_dev;
+	
+	rem = len & (EXI_DMA_ALIGNMENT-1);  /* this is the remainder */
+	dma = len & ~(EXI_DMA_ALIGNMENT-1); /* this is the aligned counter */
+	
+	bba_build_subcmd_outs(sub,reg,&write,val,dma);
+	
+	if (rem) {
+		/* if we don't hit the 32 byte DMA alignment, we need to 
+		   write the remaining data in a non-dma fashion */
+		cmd.num_commands = 3;
+		
+		sub[2].flags = EXI_CMD_WRITE;
+		sub[2].data  = val + dma;
+		sub[2].len   = rem;
+	}
+	else {
+		cmd.num_commands = 2;
+	}
+	bba_do_sleeping_cmd(&cmd);
+}
+
+static void bba_ins_dma(struct bba_private *bba,int reg, void *val, int len)
+{
+	u32 write;
+	u32 dma;
+	u32 rem;
+	struct exi_command_group cmd;
+	struct exi_command sub[3];
+	
+#ifdef BBA_DEBUG
+	if ((u32)val & (EXI_DMA_ALIGNMENT-1)) {
+		printk(KERN_INFO "WARNING, bba_ins_dma called with a unaligned buffer, addr is %p,len is %u\n",val,len);
+	}
+	else if (len < EXI_DMA_ALIGNMENT) {
+		printk(KERN_INFO "WARNING, bba_ins_dma called with a length < 32, %u\n",len);
+	}
+#endif
+	cmd.flags = 0;
+	cmd.commands = sub;
+	cmd.dev = bba->exi_dev;
+	
+	rem = len & (EXI_DMA_ALIGNMENT-1); /* this is the remainder */
+	dma = len & ~(EXI_DMA_ALIGNMENT-1);/* this is the aligned counter */
+	
+	bba_build_subcmd_ins(sub,reg,&write,val,dma);
+	
+	if (rem) {
+		/* if we don't hit the 32 byte DMA alignment, we need to 
+		   write the remaining data in a non-dma fashion */
+		cmd.num_commands = 3;
+		
+		sub[2].flags = EXI_CMD_READ;
+		sub[2].data  = val + dma;
+		sub[2].len   = rem;
+	}
+	else {
+		cmd.num_commands = 2;
+	}
+	bba_do_sleeping_cmd(&cmd);
+}
+
+static u8 bba_cmd_in8_slow(struct bba_private *bba,int reg)
+{
+	u16 write;
 	u8 val;
-	bba_cmd_ins(reg, &val, sizeof(val));
+	struct exi_command_group cmd;
+	struct exi_command sub[2];
+
+	cmd.flags = EXI_DESELECT_UDELAY;
+	cmd.commands = sub;
+	cmd.num_commands = 2;
+	cmd.dev = bba->exi_dev;
+	cmd.deselect_udelay = 200;
+
+	bba_build_subcmd_cmd_ins(sub,reg,&write,&val,1);
+	
+	bba_do_sleeping_cmd(&cmd);
 	return val;
 }
 
-static u8 bba_cmd_in8_slow(int reg)
+static inline u8 bba_cmd_in8(struct bba_private *bba,int reg)
 {
 	u8 val;
-	bba_select();
-	bba_cmd_ins_nosel(reg, &val, sizeof(val));
-	udelay(200);
-	bba_deselect();
+	bba_cmd_ins(bba,reg,&val,sizeof(val));
 	return val;
 }
 
-static inline void bba_cmd_out8(int reg, u8 val)
+static inline void bba_cmd_out8(struct bba_private *bba,int reg, u8 val)
 {
-	bba_cmd_outs(reg, &val, sizeof(val));
+	bba_cmd_outs(bba,reg,&val,sizeof(val));
 }
 
-static inline u8 bba_in8(int reg)
+static inline u8 bba_in8(struct bba_private *bba,int reg)
 {
 	u8 val;
-	bba_ins(reg, &val, sizeof(val));
+	bba_ins(bba,reg, &val, sizeof(val));
 	return val;
 }
 
-static inline void bba_out8(int reg, u8 val)
+static inline void bba_out8(struct bba_private *bba,int reg, u8 val)
 {
-	bba_outs(reg, &val, sizeof(val));
+	bba_outs(bba,reg, &val, sizeof(val));
 }
 
-static inline u16 bba_in16(int reg)
+static inline u16 bba_in16(struct bba_private *bba,int reg)
 {
 	u16 val;
-	bba_ins(reg, &val, sizeof(val));
+	bba_ins(bba,reg, &val, sizeof(val));
 	return le16_to_cpup(&val);
 }
 
-static inline void bba_out16(int reg, u16 val)
+static inline void bba_out16(struct bba_private *bba,int reg, u16 val)
 {
 	cpu_to_le16s(&val);
-	bba_outs(reg, &val, sizeof(val));
+	bba_outs(bba,reg, &val, sizeof(val));
 }
 
-#define bba_in12(reg)      (bba_in16(reg) & 0x0fff)
-#define bba_out12(reg,val) do { bba_out16((reg),(val)&0x0fff); } while(0)
-
-static inline void bba_ins_nosel(int reg, void *val, int len)
-{
-	u32 req;
-	req = (reg << 8) | 0x80000000;
-	exi_write(BBA_EXI_CHANNEL, &req, sizeof(req));
-	exi_read(BBA_EXI_CHANNEL, val, len);
-}
-
-static void bba_ins(int reg, void *val, int len)
-{
-	bba_select();
-	bba_ins_nosel(reg, val, len);
-	bba_deselect();
-}
-
-static inline void bba_outs_nosel(int reg, void *val, int len)
-{
-	u32 req;
-	req = (reg << 8) | 0xC0000000;
-	exi_write(BBA_EXI_CHANNEL, &req, sizeof(req));
-	exi_write(BBA_EXI_CHANNEL, val, len);
-}
-
-static inline void bba_outs_more(void *val, int len)
-{
-	exi_write(BBA_EXI_CHANNEL, val, len);
-}
-
-static void bba_outs(int reg, void *val, int len)
-{
-	bba_select();
-	bba_outs_nosel(reg, val, len);
-	bba_deselect();
-}
+#define bba_in12(bba,reg)      (bba_in16((bba),(reg)) & 0x0FFF)
+#define bba_out12(bba,reg,val) (bba_out16((bba),(reg),(val) & 0x0FFF))
 
 /**
  * Nintendo GameCube Broadband Adapter driver.
@@ -303,11 +547,11 @@ static void bba_outs(int reg, void *val, int len)
 
 #define DRV_MODULE_NAME   "gcn-bba"
 #define DRV_DESCRIPTION   "Nintendo GameCube Broadband Adapter driver"
-#define DRV_AUTHOR        "Albert Herranz"
+#define DRV_AUTHOR        "Albert Herranz, Todd Jeffreys"
 
 char bba_driver_name[] = DRV_MODULE_NAME;
 char bba_driver_string[] = DRV_DESCRIPTION;
-char bba_driver_version[] = "0.3-isobel";
+char bba_driver_version[] = "0.4 - tcj";
 char bba_copyright[] = "Copyright (C) 2004 " DRV_AUTHOR;
 
 MODULE_AUTHOR(DRV_AUTHOR);
@@ -355,27 +599,16 @@ struct bba_descr {
 } __attribute((packed));
 
 
-struct bba_private {
-	spinlock_t lock;
-
-	u32 msg_enable;
-	u8 revid;
-	u8 __0x04_init[2];
-	u8 __0x05_init;
-
-	struct net_device *dev;
-	struct net_device_stats stats;
-};
-
 static int bba_open(struct net_device *dev);
 static int bba_close(struct net_device *dev);
 static struct net_device_stats *bba_get_stats(struct net_device *dev);
 
-static int __devinit bba_probe(void);
-static int __devinit bba_init_one(void);
+static int bba_probe(struct exi_device *dev);
+static void bba_remove(struct exi_device *dev);
+static int bba_init_one(struct exi_device *dev);
 static int __init bba_init_module(void);
 static void __exit bba_exit_module(void);
-static int bba_event_handler(int channel, int event, void *dev0);
+static int bba_event_handler(int channel, void *dev0);
 
 static int bba_reset(struct net_device *dev);
 
@@ -384,22 +617,17 @@ static int bba_reset(struct net_device *dev);
  */
 static int bba_open(struct net_device *dev)
 {
-	struct bba_private *priv = (struct bba_private *)dev->priv;
-	unsigned long flags;
 	int ret;
-
+	
 	/* according to patents, INTs will be triggered on EXI channel 2 */
-	ret = exi_register_event(BBA_EXI_CHANNEL_IRQ , EXI_EVENT_IRQ,
-				 bba_event_handler, dev);
+	ret = exi_register_irq(BBA_EXI_CHANNEL_IRQ,bba_event_handler, dev);
 	if (ret < 0) {
-		bba_printk(KERN_ERR, "unable to register EXI event %d\n",
-			   EXI_EVENT_IRQ);
+		bba_printk(KERN_ERR, "unable to register EXI IRQ for channel"
+			   " %d\n",BBA_EXI_CHANNEL_IRQ);
 		return ret;
 	}
 
-	spin_lock_irqsave(&priv->lock, flags);
 	ret = bba_reset(dev);
-	spin_unlock_irqrestore(&priv->lock, flags);
 
 	netif_start_queue(dev);
 
@@ -412,25 +640,20 @@ static int bba_open(struct net_device *dev)
 static int bba_close(struct net_device *dev)
 {
 	struct bba_private *priv = (struct bba_private *)dev->priv;
-	unsigned long flags;
 
 	netif_carrier_off(dev);
 
 	/* stop queue */
 	netif_stop_queue(dev);
 
-	spin_lock_irqsave(&priv->lock, flags);
-
 	/* stop receiver */
-	bba_out8(BBA_NCRA, bba_in8(BBA_NCRA) & ~BBA_NCRA_SR);
+	bba_out8(priv,BBA_NCRA, bba_in8(priv,BBA_NCRA) & ~BBA_NCRA_SR);
 
 	/* mask all interrupts */
-	bba_out8(BBA_IMR, 0x00);
-
-	spin_unlock_irqrestore(&priv->lock, flags);
+	bba_out8(priv,BBA_IMR, 0x00);
 
 	/* unregister exi event */
-	exi_unregister_event(2, EXI_EVENT_IRQ);
+	exi_unregister_irq(BBA_EXI_CHANNEL_IRQ);
 	return 0;
 }
 
@@ -443,61 +666,73 @@ static struct net_device_stats *bba_get_stats(struct net_device *dev)
 	return &priv->stats;
 }
 
+static void bba_do_xmit(struct bba_private *priv)
+{
+	u32 packetLen;
+	u8 ncra;
+	void *dma_send_ptr;
+        
+        /* if the TXFIFO is in use we'll try it later when free */
+	if ((ncra=bba_in8(priv,BBA_NCRA)) & (BBA_NCRA_ST0 | BBA_NCRA_ST1)) {
+		return;
+	}
+	
+	/* copy to the dma buffer if < ETH_ZLEN or unaligned */
+	if ((priv->skb->len < ETH_ZLEN) || 
+	    ((u32)priv->skb->data & (EXI_DMA_ALIGNMENT-1))) {
+		memcpy(priv->dma_send_ptr,priv->skb->data,priv->skb->len);
+		dma_send_ptr   = priv->dma_send_ptr;
+		packetLen      = max(priv->skb->len,(u32)ETH_ZLEN);
+	}
+	else {			/* skb is perfectly aligned */
+		dma_send_ptr   = priv->skb->data;
+		packetLen      = priv->skb->len;
+	}
+	
+	/* tell the card about the length of this packet */
+	bba_out12(priv,BBA_TXFIFOCNT, priv->skb->len);
+
+	/* store the packet in the TXFIFO */
+	bba_outs_dma(priv,BBA_WRTXFIFOD,dma_send_ptr,packetLen);
+	
+	/* tell the card to send the packet right now */
+	bba_out8(priv,BBA_NCRA,(ncra | BBA_NCRA_ST1) & ~BBA_NCRA_ST0);
+	
+	priv->dev->trans_start = jiffies;
+	priv->stats.tx_bytes += priv->skb->len;
+	priv->stats.tx_packets++;
+	
+	/* free the skb */
+	dev_kfree_skb(priv->skb);
+	priv->skb = NULL;
+}
 /**
  *
  */
 static int bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	struct bba_private *priv = (struct bba_private *)dev->priv;
-	unsigned long flags;
-
+	
+	/* check if we already have something queued */
+	if (priv->skb) {
+		netif_stop_queue(dev);
+		return NETDEV_TX_BUSY;
+	}
 	/* we are not able to send packets greater than this */
 	if (skb->len > BBA_TX_MAX_PACKET_SIZE) {
 		dev_kfree_skb(skb);
 		priv->stats.tx_dropped++;
-		return 0;
+		return NETDEV_TX_BUSY;
 	}
 
-	/* we need to make sure next section will run without disruptions */
-	spin_lock_irqsave(&priv->lock, flags);
-
-	/* if the TXFIFO is in use we'll try it later when free */
-	if (bba_in8(BBA_NCRA) & (BBA_NCRA_ST0 | BBA_NCRA_ST1)) {
-		netif_stop_queue(dev);
-		spin_unlock_irqrestore(&priv->lock, flags);
-		return 1;
-	}
-
-	/* tell the card about the length of this packet */
-	bba_out12(BBA_TXFIFOCNT, skb->len);
-
-	/* store the packet in the TXFIFO, including padding if needed */
-	bba_select();
-	bba_outs_nosel(BBA_WRTXFIFOD, skb->data, skb->len);
-	if (skb->len < ETH_ZLEN) {
-		u8 pad[ETH_ZLEN];
-		int pad_len = ETH_ZLEN - skb->len;
-		memset(pad, 0, pad_len);
-		bba_outs_more(pad, pad_len);
-	}
-	bba_deselect();
-
-	/* tell the card to send the packet right now */
-	bba_out8(BBA_NCRA, (bba_in8(BBA_NCRA) | BBA_NCRA_ST1) & ~BBA_NCRA_ST0);
-
-	/* stop the queue as we can only send one packet each time */
+	/* store the skb */
+	priv->skb = skb;
+	/* stop the queue  */
 	netif_stop_queue(dev);
-
-	/* end of critical section */
-	spin_unlock_irqrestore(&priv->lock, flags);
-
-	dev->trans_start = jiffies;
-	priv->stats.tx_bytes += skb->len;
-	priv->stats.tx_packets++;
-
-	dev_kfree_skb(skb);
-
-	return 0;
+	/* wake up the kernel thread to do it */
+	wake_up(&priv->wait_queue);
+	
+	return NETDEV_TX_OK;
 }
 
 /**
@@ -538,14 +773,14 @@ static int bba_rx_err(u8 status, struct net_device *dev)
 		}
 
 		/* stop receiver */
-		bba_out8(BBA_NCRA, bba_in8(BBA_NCRA) & ~BBA_NCRA_SR);
+		bba_out8(priv,BBA_NCRA, bba_in8(priv,BBA_NCRA) & ~BBA_NCRA_SR);
 
 		/* initialize page pointers */
-		bba_out12(BBA_RWP, BBA_INIT_RWP);
-		bba_out12(BBA_RRP, BBA_INIT_RRP);
+		bba_out12(priv,BBA_RWP, BBA_INIT_RWP);
+		bba_out12(priv,BBA_RRP, BBA_INIT_RRP);
 
 		/* start receiver again */
-		bba_out8(BBA_NCRA, bba_in8(BBA_NCRA) | BBA_NCRA_SR);
+		bba_out8(priv,BBA_NCRA, bba_in8(priv,BBA_NCRA) | BBA_NCRA_SR);
 	}
 	return errors;
 }
@@ -564,11 +799,11 @@ static int bba_rx(struct net_device *dev, int budget)
 	int received = 0;
 
 	/* get current receiver pointers */
-	rwp = bba_in12(BBA_RWP);
-	rrp = bba_in12(BBA_RRP);
+	rwp = bba_in12(priv,BBA_RWP);
+	rrp = bba_in12(priv,BBA_RRP);
 
 	while (netif_running(dev) && received < budget && rrp != rwp) {
-		bba_ins(rrp << 8, &descr, sizeof(descr));
+		bba_ins(priv,rrp << 8, &descr, sizeof(descr));
 		le32_to_cpus((u32 *) & descr);
 
 		size = descr.packet_len - 4;	/* ignore CRC */
@@ -582,30 +817,47 @@ static int bba_rx(struct net_device *dev, int budget)
 		}
 
 		/* allocate a buffer, omitting the CRC (4 bytes) */
-		skb = dev_alloc_skb(size + 2);
+		skb = dev_alloc_skb(size + 2 + EXI_DMA_ALIGNMENT);
 		if (!skb) {
 			priv->stats.rx_dropped++;
 			continue;
 		}
 
 		skb->dev = dev;
-		skb_reserve(skb, 2);	/* align */
+		skb_reserve(skb, EXI_DMA_ALIGNMENT - 2 - ETH_HLEN);/* align */
 		skb_put(skb, size);
 
 		pos = (rrp << 8) + 4;	/* skip descriptor */
 		top = (BBA_INIT_RHBP + 1) << 8;
 
 		if ((pos + size) < top) {
-			/* full packet in one chunk */
-			bba_ins(pos, skb->data, size);
+			/* full packet in one chunk, guaranteed to be > 32 */
+			bba_ins_dma(priv,pos, skb->data, size);
 		} else {
 			/* packet wrapped */
 			int chunk_size = top - pos;
-
-			bba_ins(pos, skb->data, chunk_size);
+			int rem = size - chunk_size;
+			/* the first read, check for minimum dma length */
+			if (chunk_size < EXI_DMA_ALIGNMENT) {
+				bba_ins(priv,pos,skb->data,chunk_size);
+			}
+			else {
+				bba_ins_dma(priv,pos,skb->data,chunk_size);
+			}
+			/* the second read, check for minimum dma length */
 			rrp = BBA_INIT_RRP;
-			bba_ins(rrp << 8, skb->data + chunk_size,
-				size - chunk_size);
+			if (rem < EXI_DMA_ALIGNMENT) {
+				bba_ins(priv,rrp << 8,
+					skb->data+chunk_size,rem);
+			}
+			else {
+				/* load the rest into our dma buffer */
+				bba_ins_dma(priv,rrp << 8,
+					    priv->dma_recv_ptr,rem);
+				/* now copy manually */
+				memcpy(skb->data+chunk_size,
+				       priv->dma_recv_ptr,rem);
+			}
 		}
 
 		skb->protocol = eth_type_trans(skb, dev);
@@ -617,10 +869,10 @@ static int bba_rx(struct net_device *dev, int budget)
 		netif_rx(skb);
 		received++;
 
-		bba_out12(BBA_RRP, descr.next_packet_ptr);
+		bba_out12(priv,BBA_RRP, descr.next_packet_ptr);
 
-		rwp = bba_in12(BBA_RWP);
-		rrp = bba_in12(BBA_RRP);
+		rwp = bba_in12(priv,BBA_RWP);
+		rrp = bba_in12(priv,BBA_RRP);
 	}
 
 	return received;
@@ -689,49 +941,41 @@ static void bba_tx_timeout(struct net_device *dev)
 /**
  *
  */
-static void inline bba_interrupt(struct net_device *dev)
+static void bba_interrupt(struct net_device *dev)
 {
 	struct bba_private *priv = (struct bba_private *)dev->priv;
-	unsigned long flags;
 	u8 ir, imr, status;
-	int loops = 0;
 
-	ir = bba_in8(BBA_IR);
-	imr = bba_in8(BBA_IMR);
+	ir = bba_in8(priv,BBA_IR);
+	imr = bba_in8(priv,BBA_IMR);
 	status = ir & imr;
 
 	/* close possible races with dev_close */
 	if (unlikely(!netif_running(dev))) {
-		bba_out8(BBA_IR, status);
-		bba_out8(BBA_IMR, 0x00);
+		bba_out8(priv,BBA_IR, status);
+		bba_out8(priv,BBA_IMR, 0x00);
 		return;
         }
 
 	while (status) {
-		bba_out8(BBA_IR, status);
+		bba_out8(priv,BBA_IR, status);
 
 		if (status & BBA_IR_RBFI) {
-			spin_lock_irqsave(&priv->lock, flags);
 			bba_rx(dev, 0x0f);
-			spin_unlock_irqrestore(&priv->lock, flags);
 		}
 		if (status & BBA_IR_RI) {
-			spin_lock_irqsave(&priv->lock, flags);
 			bba_rx(dev, 0x0f);
-			spin_unlock_irqrestore(&priv->lock, flags);
 		}
 		if (status & BBA_IR_REI) {
-			spin_lock_irqsave(&priv->lock, flags);
-			bba_rx_err(bba_in8(BBA_LRPS), dev);
-			spin_unlock_irqrestore(&priv->lock, flags);
+			bba_rx_err(bba_in8(priv,BBA_LRPS), dev);
 		}
 		if (status & BBA_IR_TI) {
-			bba_tx_err(bba_in8(BBA_LTPS), dev);
+			bba_tx_err(bba_in8(priv,BBA_LTPS), dev);
 			/* allow more packets to be sent */
 			netif_wake_queue(dev);
 		}
 		if (status & BBA_IR_TEI) {
-			bba_tx_err(bba_in8(BBA_LTPS), dev);
+			bba_tx_err(bba_in8(priv,BBA_LTPS), dev);
 			/* allow more packets to be sent */
 			netif_wake_queue(dev);
 		}
@@ -744,18 +988,9 @@ static void inline bba_interrupt(struct net_device *dev)
 		if (status & BBA_IR_FRAGI) {
 		}
 
-		ir = bba_in8(BBA_IR);
-		imr = bba_in8(BBA_IMR);
+		ir = bba_in8(priv,BBA_IR);
+		imr = bba_in8(priv,BBA_IMR);
 		status = ir & imr;
-		loops++;
-	}
-
-	if (loops > 10)
-		DPRINTK("a lot of interrupt work (%d loops)\n", loops);
-
-	/* wake up xmit queue in case transmitter is idle */
-	if ((bba_in8(BBA_NCRA) & (BBA_NCRA_ST0 | BBA_NCRA_ST1)) == 0) {
-		netif_wake_queue(dev);
 	}
 }
 
@@ -765,27 +1000,26 @@ static void inline bba_interrupt(struct net_device *dev)
 static int bba_reset(struct net_device *dev)
 {
 	struct bba_private *priv = (struct bba_private *)dev->priv;
-
 	/* unknown, mx register 0x60 */
-	bba_out8(0x60, 0);
+	bba_out8(priv,0x60, 0);
 	udelay(1000);
 
 	/* unknown, command register 0x0f */
-	bba_cmd_in8_slow(0x0f);
+	bba_cmd_in8_slow(priv,0x0f);
 	udelay(1000);
-
+	
 	/* software reset (write 1 then write 0) */
-	bba_out8(BBA_NCRA, BBA_NCRA_RESET);
+	bba_out8(priv,BBA_NCRA, BBA_NCRA_RESET);
 	udelay(100);
-	bba_out8(BBA_NCRA, 0);
+	bba_out8(priv,BBA_NCRA, 0);
 
 	/* unknown, command register 0x01 */
 	/* XXX obtain bits needed for challenge/response calculation later */
-	priv->revid = bba_cmd_in8(0x01);
+	priv->revid = bba_cmd_in8(priv,0x01);
 
 	/* unknown, command registers 0x04, 0x05 */
-	bba_cmd_outs(0x04, priv->__0x04_init, 2);
-	bba_cmd_out8(0x05, priv->__0x05_init);
+	bba_cmd_outs(priv,0x04, priv->__0x04_init, 2);
+	bba_cmd_out8(priv,0x05, priv->__0x05_init);
 
 	/*
 	 * These initializations seem to limit the final port speed to 10Mbps
@@ -793,60 +1027,60 @@ static int bba_reset(struct net_device *dev)
 	 * But, remember that the bba spi-like bus clock operates at 32MHz.
 	 * ---Albert Herranz
 	 */
-
+	
 	/* unknown, mx registers 0x5b, 0x5c, 0x5e */
-	bba_out8(0x5b, bba_in8(0x5b) & ~(1 << 7));
-	bba_out8(0x5e, 1); /* without this the BBA goes at half the speed */
-	bba_out8(0x5c, bba_in8(0x5c) | 4);
+	bba_out8(priv,0x5b, bba_in8(priv,0x5b) & ~(1 << 7));
+	bba_out8(priv,0x5e, 1); /* without this the BBA goes at half the speed */
+	bba_out8(priv,0x5c, bba_in8(priv,0x5c) | 4);
 	udelay(1000);
-
+	
 	/* accept broadcast, assert int for every two packets received */
-	bba_out8(BBA_NCRB, BBA_NCRB_AB | BBA_NCRB_2_PACKETS_PER_INT);
-
+	bba_out8(priv,BBA_NCRB, BBA_NCRB_AB | BBA_NCRB_2_PACKETS_PER_INT);
+	
 	/* setup receive interrupt time out, in 40ns units */
-	bba_out8(BBA_RXINTT, 0x00);
-	bba_out8(BBA_RXINTT+1, 0x06); /* 0x0600 = 61us */
-
+	bba_out8(priv,BBA_RXINTT, 0x00);
+	bba_out8(priv,BBA_RXINTT+1, 0x06); /* 0x0600 = 61us */
+	
 	/* auto RX full recovery */
-	bba_out8(BBA_MISC2, BBA_MISC2_AUTORCVR);
-
+	bba_out8(priv,BBA_MISC2, BBA_MISC2_AUTORCVR);
+	
 	/* initialize packet memory layout */
-	bba_out12(BBA_TLBP, BBA_INIT_TLBP);
-	bba_out12(BBA_BP, BBA_INIT_BP);
-	bba_out12(BBA_RHBP, BBA_INIT_RHBP);
-
+	bba_out12(priv,BBA_TLBP, BBA_INIT_TLBP);
+	bba_out12(priv,BBA_BP, BBA_INIT_BP);
+	bba_out12(priv,BBA_RHBP, BBA_INIT_RHBP);
+	
 	/* set receive page pointers */
-	bba_out12(BBA_RWP, BBA_INIT_RWP);
-	bba_out12(BBA_RRP, BBA_INIT_RRP);
-
-	/* start receiver */
-	bba_out8(BBA_NCRA, BBA_NCRA_SR);
-
+	bba_out12(priv,BBA_RWP, BBA_INIT_RWP);
+	bba_out12(priv,BBA_RRP, BBA_INIT_RRP);
+	
 	/* packet memory won't contain packets with RW, FO, CRC errors */
-	bba_out8(BBA_GCA, BBA_GCA_ARXERRB);
-
+	bba_out8(priv,BBA_GCA, BBA_GCA_ARXERRB);
+	
 	/* retrieve MAC address */
-	bba_ins(BBA_NAFR_PAR0, dev->dev_addr, ETH_ALEN);
+	bba_ins(priv,BBA_NAFR_PAR0,dev->dev_addr, ETH_ALEN);
 	if (!is_valid_ether_addr(dev->dev_addr)) {
 		random_ether_addr(dev->dev_addr);
 	}
-
+	
 	/* setup broadcast address */
-	memset(dev->broadcast, 0xff, ETH_ALEN);
-
+	memset(dev->broadcast, 0xFF, ETH_ALEN);
+	
 	/* clear all interrupts */
-	bba_out8(BBA_IR, 0xFF);
-
+	bba_out8(priv,BBA_IR, 0xFF);
+	
 	/* enable all interrupts */
-	bba_out8(BBA_IMR, 0xFF & ~BBA_IMR_FIFOEIM);
-
+	bba_out8(priv,BBA_IMR, 0xFF & ~BBA_IMR_FIFOEIM);
+	
 	/* unknown, short command registers 0x02 */
 	/* XXX enable interrupts on the EXI glue logic */
-	bba_cmd_out8(0x02, BBA_CMD_IR_MASKNONE);
+	bba_cmd_out8(priv,0x02, BBA_CMD_IR_MASKNONE);
 
+	/* start receiver */
+	bba_out8(priv,BBA_NCRA, BBA_NCRA_SR);
+	
+	
 	/* DO NOT clear interrupts on the EXI glue logic !!! */
 	/* we need that initial interrupts for the challenge/response */
-
 	return 0;		/* OK */
 }
 
@@ -865,35 +1099,41 @@ unsigned long bba_calc_response(unsigned long val, struct bba_private *priv)
 	i1 = (val & 0x00ff0000) >> 16;
 	i2 = (val & 0x0000ff00) >> 8;
 	i3 = (val & 0x000000ff);
-
+	
 	u8 c0, c1, c2, c3;
-	c0 = ((i0 + i1 * 0xc1 + 0x18 + revid_0) ^ (i3 * i2 + 0x90)
-	    ) & 0xff;
-	c1 = ((i1 + i2 + 0x90) ^ (c0 + i0 - 0xc1)
-	    ) & 0xff;
-	c2 = ((i2 + 0xc8) ^ (c0 + ((revid_eth_0 + revid_0 * 0x23) ^ 0x19))
-	    ) & 0xff;
-	c3 = ((i0 + 0xc1) ^ (i3 + ((revid_eth_1 + 0xc8) ^ 0x90))
-	    ) & 0xff;
-
+	c0 = ((i0 + i1 * 0xc1 + 0x18 + revid_0) ^ (i3 * i2 + 0x90)) & 0xff;
+	c1 = ((i1 + i2 + 0x90) ^ (c0 + i0 - 0xc1)) & 0xff;
+	c2 = ((i2 + 0xc8) ^ (c0 + ((revid_eth_0 + revid_0 * 0x23) ^ 0x19))) 
+		& 0xff;
+	c3 = ((i0 + 0xc1) ^ (i3 + ((revid_eth_1 + 0xc8) ^ 0x90))) & 0xff;
+	
 	return ((c0 << 24) | (c1 << 16) | (c2 << 8) | c3);
 }
 
-/**
- *
- */
-static int bba_event_handler(int channel, int event, void *dev0)
+static int bba_event_handler(int channel,void *dev0)
 {
-	struct net_device *dev = (struct net_device *)dev0;
-	struct bba_private *priv = (struct bba_private *)dev->priv;
-	unsigned long flags;
+	struct net_device *dev = (struct net_device*)dev0;
+	struct bba_private *priv = (struct bba_private*)dev->priv;
+	/* delay interrupt processing to the tasklet.
+	   we can't use the regular processing because it relies on the bba_
+	   functions which sleep.  We can't sleep from an IRQ handler.
+        */
+	
+	/* schedule the kthread */
+	atomic_inc(&priv->num_interrupts);
+	wake_up(&priv->wait_queue);
+	return 0;
+}
+
+static void bba_handle_interrupt(struct bba_private *priv)
+{
 	register u8 status, mask;
 
 	/* get interrupt status from EXI glue */
-	status = bba_cmd_in8(0x03);
+	status = bba_cmd_in8(priv,0x03);
 
 	/* XXX mask all EXI glue interrupts */
-	bba_cmd_out8(0x02, BBA_CMD_IR_MASKALL);
+	bba_cmd_out8(priv,0x02, BBA_CMD_IR_MASKALL);
 
 	/* start with the usual case */
 	mask = (1<<7);
@@ -901,7 +1141,7 @@ static int bba_event_handler(int channel, int event, void *dev0)
 	/* normal interrupt from the macronix chip */
 	if (status & mask) {
 		/* call our interrupt handler */
-		bba_interrupt(dev);
+		bba_interrupt(priv->dev);
 		goto out;
 	}
 
@@ -910,29 +1150,27 @@ static int bba_event_handler(int channel, int event, void *dev0)
 	if (status & mask) {
 		DPRINTK("bba: killing interrupt!\n");
 		/* reset the adapter so that we can continue working */
-		spin_lock_irqsave(&priv->lock, flags);
-		bba_reset(dev);
-		spin_unlock_irqrestore(&priv->lock, flags);
+		bba_reset(priv->dev);
 		goto out;
 	}
-
+	
 	/* command error interrupt, haven't seen one yet */
 	mask >>= 1;
 	if (status & mask) {
 		goto out;
 	}
-
+	
 	/* challenge/response interrupt */
 	mask >>= 1;
 	if (status & mask) {
 		unsigned long response;
 		unsigned long challenge;
-
+		
 		/* kids, don't do it without an adult present */
-		bba_cmd_out8(0x05, priv->__0x05_init);
-		bba_cmd_ins(0x08, &challenge, sizeof(challenge));
+		bba_cmd_out8(priv,0x05, priv->__0x05_init);
+		bba_cmd_ins(priv,0x08, &challenge, sizeof(challenge));
 		response = bba_calc_response(challenge, priv);
-		bba_cmd_outs(0x09, &response, sizeof(response));
+		bba_cmd_outs(priv,0x09, &response, sizeof(response));
 
 		goto out;
 	}
@@ -941,7 +1179,7 @@ static int bba_event_handler(int channel, int event, void *dev0)
 	mask >>= 1;
 	if (status & mask) {
 		/* better get a "1" here ... */
-		u8 result = bba_cmd_in8(0x0b);
+		u8 result = bba_cmd_in8(priv,0x0b);
 		if (result != 1) {
 			bba_printk(KERN_DEBUG,
 				   "challenge failed! (result=%d)\n", result);
@@ -954,26 +1192,48 @@ static int bba_event_handler(int channel, int event, void *dev0)
 
 out:
 	/* assert interrupt */
-	bba_cmd_out8(0x03, mask);
+	bba_cmd_out8(priv,0x03, mask);
 
 	/* enable interrupts again */
-	bba_cmd_out8(0x02, BBA_CMD_IR_MASKNONE);
-
-	return 1;
+	bba_cmd_out8(priv,0x02, BBA_CMD_IR_MASKNONE);
 }
 
-static struct net_device *bba_dev = NULL;
-
+static int int_kthread(void *param)
+{
+	struct bba_private *priv = (struct bba_private *)param;
+	/* set my priority through the roof */
+	//set_user_nice(current,-20);
+	current->flags |= PF_NOFREEZE;
+	/* go into running state */
+	__set_current_state(TASK_RUNNING);
+	do {
+		/* wait for a wakeup */
+		wait_event(priv->wait_queue,
+			   atomic_read(&priv->num_interrupts) || priv->skb);
+		/* process the interrupt */
+		if (atomic_read(&priv->num_interrupts)) {
+			atomic_dec(&priv->num_interrupts);
+			bba_handle_interrupt(priv);
+		}
+		if (priv->skb) {
+			/* send the packet */
+			bba_do_xmit(priv);
+		}
+		
+	} while (!kthread_should_stop());
+	
+	return 0;
+}
 /**
  *
  */
-static int __devinit bba_init_one(void)
+static int bba_init_one(struct exi_device *exi_dev)
 {
 	struct net_device *dev = NULL;
 	struct bba_private *priv;
 	int err;
 
-	dev = alloc_etherdev(sizeof(*priv));
+	dev = alloc_etherdev(sizeof(struct bba_private));
 	if (!dev) {
 		printk(KERN_ERR "unable to allocate net device\n");
 		err = -ENOMEM;
@@ -990,32 +1250,36 @@ static int __devinit bba_init_one(void)
 	/* XXX dev->tx_timeout = bba_tx_timeout; */
 
 	SET_MODULE_OWNER(dev);
+	SET_NETDEV_DEV(dev,&exi_dev->dev);
 
 	priv = netdev_priv(dev);
 	priv->dev = dev;
-	spin_lock_init(&priv->lock);
+	priv->exi_dev = exi_dev;
+	priv->skb = NULL;
+	//spin_lock_init(&priv->lock);
 
 	priv->revid = 0xf0;
 	priv->__0x04_init[0] = 0xd1;
 	priv->__0x04_init[1] = 0x07;
 	priv->__0x05_init = 0x4e;
-
+	priv->dma_send_ptr = align(priv->dma_send_buffer);
+	priv->dma_recv_ptr = align(priv->dma_recv_buffer);
+	atomic_set(&priv->num_interrupts,0);
+	init_waitqueue_head(&priv->wait_queue);
+	priv->interrupt_thread = kthread_run(int_kthread,priv,"knetexi");
+	
 	ether_setup(dev);
 	dev->flags &= ~IFF_MULTICAST;
 
 	bba_reset(dev);
-
+	
 	err = register_netdev(dev);
 	if (err) {
-		printk(KERN_ERR PFX "Cannot register net device, "
-		       "aborting.\n");
+		printk(KERN_ERR PFX "Cannot register net device, aborting\n");
 		goto err_out_free_dev;
 	}
-
-	if (bba_dev)
-		free_netdev(bba_dev);
-	bba_dev = dev;
-
+	
+	exi_set_driver_data(exi_dev,dev);
 	return 0;
 
 err_out_free_dev:
@@ -1025,31 +1289,51 @@ err_out:
 	return err;
 }
 
+static void bba_remove(struct exi_device *dev)
+{
+	struct net_device *bba_dev = (struct net_device*)exi_get_driver_data(dev);
+	struct bba_private *priv = (struct bba_private*)bba_dev->priv;
+	
+	if (bba_dev) {
+		kthread_stop(priv->interrupt_thread);
+		
+		unregister_netdev(bba_dev);
+		free_netdev(bba_dev);
+
+		exi_set_driver_data(dev,NULL);
+	}
+}
 /**
  *
  */
-static int __devinit bba_probe(void)
+static int bba_probe(struct exi_device *dev)
 {
 	int ret = 0;
-
-	short cmd = 0;
 	long exi_id;
 
-	bba_select();
-	exi_write(0, &cmd, 2);
-	exi_read(0, &exi_id, 4);
-	bba_deselect();
+	exi_id = bba_exi_probe(dev);
 	if (exi_id != BBA_EXI_ID) {
 		bba_printk(KERN_WARNING, "Nintendo GameCube Broadband Adapter"
 			   " not found\n");
 		return -ENODEV;
 	}
-
-	ret = bba_init_one();
-
+	
+	ret = bba_init_one(dev);
+	
 	return ret;
 }
 
+static struct exi_driver bba_exi_driver = {
+	.name = "Nintendo Gamecube Broadband Adapter",
+	.eid = {
+		.channel = BBA_EXI_CHANNEL,
+		.device  = BBA_EXI_DEVICE,
+		.id      = BBA_EXI_ID
+	},
+	.frequency = BBA_EXI_FREQ,
+	.probe = bba_probe,
+	.remove = bba_remove 
+};
 /**
  *	bba_init_module -  driver initialization routine
  *
@@ -1057,18 +1341,7 @@ static int __devinit bba_probe(void)
  */
 static int __init bba_init_module(void)
 {
-	int ret = 0;
-
-	bba_printk(KERN_INFO, "%s - version %s\n",
-		   bba_driver_string, bba_driver_version);
-	/* bba_printk(KERN_INFO, "%s\n", bba_copyright); */
-
-	/* only one should call exi_lite_init()/exi_lite_exit() */
-	exi_lite_init();
-
-	ret = bba_probe();
-
-	return ret;
+	return exi_register_driver(&bba_exi_driver);
 }
 
 /**
@@ -1076,9 +1349,9 @@ static int __init bba_init_module(void)
  */
 static void __exit bba_exit_module(void)
 {
-	unregister_netdev(bba_dev);
-	exi_lite_exit();
+	exi_unregister_driver(&bba_exi_driver);
 }
 
 module_init(bba_init_module);
 module_exit(bba_exit_module);
+

@@ -20,7 +20,7 @@
 #include <linux/interrupt.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
-
+#include <asm/io.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
 #define SNDRV_GET_ID
@@ -48,7 +48,7 @@ MODULE_LICENSE("GPL");
 
 #define DSP_IRQ 6
 
-#define AUDIO_DSP_CONTROL   *(volatile u_int16_t *)(0xCC00500a)
+#define AI_DSP_CSR          (void __iomem*)0xCC00500A
 #define  AI_CSR_RES         (1<<0)
 #define  AI_CSR_PIINT       (1<<1)
 #define  AI_CSR_HALT        (1<<2)
@@ -68,7 +68,7 @@ MODULE_LICENSE("GPL");
 #define AUDIO_DMA_LENGTH    *(volatile u_int16_t *)(0xCC005036)
 #define  AI_DCL_PLAY        (1<<15)
 
-#define AUDIO_DMA_LEFT      *(volatile u_int16_t *)(0xCC00503a)
+#define AUDIO_DMA_LEFT      *(volatile u_int16_t *)(0xCC00503A)
 #define AUDIO_STREAM_STATUS *(volatile u_int32_t *)(0xCC006C00)
 #define  AI_AICR_RATE       (1<<6)
 
@@ -252,9 +252,9 @@ static snd_pcm_uframes_t snd_gcn_pointer(snd_pcm_substream_t * substream)
 static irqreturn_t snd_gcn_interrupt(int irq, void *dev, struct pt_regs *regs)
 {
 	snd_gcn_t *chip = (snd_gcn_t *) dev;
-	unsigned short val = AUDIO_DSP_CONTROL;
+	unsigned long flags;
 
-	if (val & AI_CSR_AIDINT) {
+	if (readw(AI_DSP_CSR) & AI_CSR_AIDINT) {
 		u_int32_t addr;
 
 		DPRINTK("DSP interrupt! period #%i\n", chip->cur_period);
@@ -284,7 +284,10 @@ static irqreturn_t snd_gcn_interrupt(int irq, void *dev, struct pt_regs *regs)
 			snd_pcm_period_elapsed(chip->playback_substream);
 		}
 		/* ack AI DMA interrupt */
-		AUDIO_DSP_CONTROL |= AI_CSR_AIDINT;
+		local_irq_save(flags);
+		writew(readw(AI_DSP_CSR) | AI_CSR_AIDINT,AI_DSP_CSR);
+		local_irq_restore(flags);
+		
 		return IRQ_HANDLED;
 	}
 
@@ -334,7 +337,7 @@ static int __init alsa_card_gcn_init(void)
 {
 	int err;
 	snd_card_t *card;
-
+	unsigned long flags;
 /*	if (!is_gamecube())
 		return -ENODEV; */
 
@@ -363,12 +366,11 @@ static int __init alsa_card_gcn_init(void)
 		return -EBUSY;
 	} else {
 
-		/* enable AI DMA interrupt */
-		AUDIO_DSP_CONTROL |= AI_CSR_AIDINTMASK;
-
-		/* enable any DSP interrupts */
-		AUDIO_DSP_CONTROL |= AI_CSR_PIINT;
-
+		/* enable AI DMA and DSP interrupt */
+		local_irq_save(flags);
+		writew(readw(AI_DSP_CSR) | AI_CSR_AIDINTMASK | AI_CSR_PIINT,
+		       AI_DSP_CSR);
+		local_irq_restore(flags);
 	}
 
 #if 0
@@ -409,10 +411,15 @@ static int __init alsa_card_gcn_init(void)
 
 static void __exit alsa_card_gcn_exit(void)
 {
+	unsigned long flags;
 	DPRINTK("Goodbye, cruel world\n");
 
 	StopSample();
-	AUDIO_DSP_CONTROL &= ~AI_CSR_AIDINTMASK;
+	/* disable interrupts */
+	local_irq_save(flags);
+	writew(readw(AI_DSP_CSR) & ~AI_CSR_AIDINTMASK,AI_DSP_CSR);
+	local_irq_restore(flags);
+	
 	free_irq(DSP_IRQ, gcn_audio);
 	snd_card_free(gcn_audio->card);
 }
