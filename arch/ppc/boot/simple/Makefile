@@ -113,6 +113,10 @@ zimageinitrd-$(CONFIG_SPRUCE)		:= zImage.initrd-TREE
   entrypoint-$(CONFIG_SPRUCE)		:= 0x00800000
         misc-$(CONFIG_SPRUCE)		+= misc-spruce.o
 
+      zimage-$(CONFIG_GAMECUBE)		:= zImage-DOL
+zimageinitrd-$(CONFIG_GAMECUBE)		:= zImage.initrd-DOL
+         end-$(CONFIG_GAMECUBE)		:= dol
+
 # SMP images should have a '.smp' suffix.
          end-$(CONFIG_SMP)             := $(end-y).smp
 
@@ -167,7 +171,7 @@ $(obj)/zvmlinux: $(OBJS) $(LIBS) $(srctree)/$(boot)/ld.script \
 		--set-section-flags=.image=contents,alloc,load,readonly,data \
 		$(obj)/dummy.o $(obj)/image.o
 	$(LD) $(LD_ARGS) -o $@ $(OBJS) $(obj)/image.o $(LIBS)
-	$(OBJCOPY) $(OBJCOPY_ARGS) $@ $@ --change-addresses=-0x80000000 -R .comment -R .stab \
+	$(OBJCOPY) $(OBJCOPY_ARGS) $@ $@ -R .comment -R .stab \
 		-R .stabstr -R .ramdisk -R .sysmap
 
 $(obj)/zvmlinux.initrd: $(OBJS) $(LIBS) $(srctree)/$(boot)/ld.script \
@@ -179,7 +183,7 @@ $(obj)/zvmlinux.initrd: $(OBJS) $(LIBS) $(srctree)/$(boot)/ld.script \
 		--set-section-flags=.image=contents,alloc,load,readonly,data \
 		$(obj)/dummy.o $(obj)/image.o
 	$(LD) $(LD_ARGS) -o $@ $(OBJS) $(obj)/image.o $(LIBS)
-	$(OBJCOPY) $(OBJCOPY_ARGS) $@ $@ --change-addresses=-0x80000000 -R .comment -R .stab \
+	$(OBJCOPY) $(OBJCOPY_ARGS) $@ $@ -R .comment -R .stab \
 		-R .stabstr -R .sysmap
 
 # Sort-of dummy rules, that let us format the image we want.
@@ -218,3 +222,16 @@ $(images)/zImage-PPLUS: $(obj)/zvmlinux $(MKPREP) $(MKBUGBOOT)
 $(images)/zImage.initrd-PPLUS: $(obj)/zvmlinux.initrd $(MKPREP) $(MKBUGBOOT)
 	$(MKPREP) -pbp $(obj)/zvmlinux.initrd $(images)/zImage.initrd.$(end-y)
 	$(MKBUGBOOT) $(obj)/zvmlinux.initrd $(images)/zImage.initrd.bugboot
+
+#
+# FIXME Must generate actual .dol's. All we're doing ATM is just adjusting
+# VMA/LMA addresses of all sections in the respective images so we can just
+# feed the result into `doltool'. Ick.
+#
+$(images)/zImage-DOL: $(obj)/zvmlinux
+	$(OBJCOPY) $(OBJCOPY_ARGS) $(obj)/zvmlinux $(obj)/zvmlinux \
+		--change-addresses=0x80000000
+
+$(images)/zImage.initrd-DOL: $(obj)/zvmlinux.initrd
+	$(OBJCOPY) $(OBJCOPY_ARGS) $(obj)/zvmlinux.initrd \
+		$(obj)/zvmlinux.initrd --change-addresses=0x80000000
