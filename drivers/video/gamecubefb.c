@@ -47,6 +47,79 @@ static unsigned short  *pmi_base  = 0;
 static void            (*pmi_start)(void);
 static void            (*pmi_pal)(void);
 
+
+/* --------------------------------------------------------------------- */
+// This is Costis' RGB to YCbYCr conversion code. This looks like a bad
+// hack, because we make the original cfbimgblit.c encode RGB 5:5:5 pixel
+// data and convert it into YCbYCr on every write of an int into the
+// framebuffer. But this is also quite good implementation, because YCbYCr
+// means that two pixels are always encoded together and, while each one
+// has its own luminance, they share the chrominance, so a putpixel() is
+// not possible, and just hooking into settwopixels() solves all problems.
+//
+// What doesn't work correctly right now, is setting a single pixel, because
+// the cfbimgblit.c code reads two pixels, assumes that it is RGB, changes
+// one pixel, and we'll convert it into YCbYCr. This breaks the encoding.
+// So we need to implement a 32 bit read from the framebuffer as well and
+// return RGB encoded data.
+#define CLAMP(x,l,h) ((x > h) ? h : ((x < l) ? l : x))
+
+// 16:16 fixed point... hopefully not much accuracy is lost!
+#define Ya 16843 // 0.257
+#define Yb 33030 // 0.504
+#define Yc 6423 // 0.098
+#define Yd 1048576 // 16.0
+#define Ye 32768 // 0.5
+
+#define Cba -9699 // 0.148
+#define Cbb -19071 // 0.291
+#define Cbc 28770 // 0.439
+#define Cbd 8388608 // 128.0
+#define Cbe 32768 // 0.5
+
+#define Cra 28770 // 0.439
+#define Crb -24117 // 0.368
+#define Crc -4653 // 0.071
+#define Crd 8388608 // 128.0
+#define Cre 32768 // 0.5
+
+unsigned long GC_Video_RGBToYCbCrFixed (unsigned char r, unsigned char g, unsigned char b)
+{
+	unsigned long Y, Cb, Cr;
+
+	Y = ((Ya * r) + (Yb * g) + (Yc * b) + Yd + Ye) >> 16;
+	Cb = ((Cba * r) + (Cbb * g) + (Cbc * b) + Cbd + Cre) >> 16;
+	Cr = ((Cra * r) + (Crb * g) + (Crc * b) + Crd + Cre) >> 16;
+
+    Y  = CLAMP(Y , 16, 235);
+    Cb = CLAMP(Cb, 16, 240);
+    Cr = CLAMP(Cr, 16, 240);
+
+	return (unsigned long)(((unsigned char)Y << 24) | ((unsigned char)Cb << 16) | ((unsigned char)Y << 8) | (unsigned char)Cr);
+}
+
+void gamecubefb_writel(unsigned long color, int *address)
+{
+        unsigned char r, g, b;
+        unsigned long pa, pb;
+
+        r = ((color >> 27) & 31) << 3;
+        g = ((color >> 22) & 31) << 3;
+        b = ((color >> 17) & 31) << 3;
+
+        pa = GC_Video_RGBToYCbCrFixed (r, g, b);
+
+        r = ((color >> 11) & 31) << 3;
+        g = ((color >> 6) & 31) << 3;
+        b = ((color >> 1) & 31) << 3;
+
+        pb = GC_Video_RGBToYCbCrFixed (r, g, b);
+
+        fb_writel_real((pa & 0xFF000000) | (pb & 0x0000FF00) |
+                (((pa & 0x00FF0000) + (pb & 0x00FF0000)) >> 1) |
+                (((pa & 0x000000FF) + (pb & 0x000000FF)) >> 1), address);
+}
+
 /* --------------------------------------------------------------------- */
 
 static int gamecubefb_pan_display(struct fb_var_screeninfo *var,
@@ -207,11 +280,11 @@ int __init gamecubefb_init(void)
 	gamecubefb_defined.hsync_len    = (gamecubefb_defined.xres / 8) & 0xf8;
 
 	if (gamecubefb_defined.bits_per_pixel > 8) {
-		gamecubefb_defined.red.offset    = 0;
+		gamecubefb_defined.red.offset    = 11;
 		gamecubefb_defined.red.length    = 5;
-		gamecubefb_defined.green.offset  = 5;
+		gamecubefb_defined.green.offset  = 6;
 		gamecubefb_defined.green.length  = 5;
-		gamecubefb_defined.blue.offset   = 10;
+		gamecubefb_defined.blue.offset   = 1;
 		gamecubefb_defined.blue.length   = 5;
 		gamecubefb_defined.transp.offset = 15;
 		gamecubefb_defined.transp.length = 1;
