@@ -19,9 +19,12 @@
 /* ------------------------------------------------------------------------- */
 
 /*
- * $Id: gc-net.c,v 1.20 2004/02/29 08:36:29 hamtitampti Exp $
+ * $Id: gc-net.c,v 1.21 2004/03/01 09:05:17 hamtitampti Exp $
  *
  * $Log: gc-net.c,v $
+ * Revision 1.21  2004/03/01 09:05:17  hamtitampti
+ * added timeout for TX lock
+ *
  * Revision 1.20  2004/02/29 08:36:29  hamtitampti
  * improofed internal structure, read comment in file
  *
@@ -543,6 +546,8 @@ static int gc_bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	netif_stop_queue(dev);	
 		
 	if (priv->tx_lock) {
+		if ((dev->trans_start + 2*HZ)< jiffies) priv->tx_lock = 0;
+		
 		priv->stats.tx_dropped++;
 		udelay(1000);
 		netif_wake_queue(dev);
