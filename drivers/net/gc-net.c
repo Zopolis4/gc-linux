@@ -184,7 +184,7 @@ int exi_request_irq(int channel, int event, exi_irq_handler_t *handler, void *co
 {
 	if (exi_handler[channel * 3 + event])
 	{
-		printk("EXI: irq %d:%d already used!\n", channel, event);
+		//printk("EXI: irq %d:%d already used!\n", channel, event);
 		return -1;
 	}
 	exi_handler[channel * 3 + event] = handler;
@@ -652,7 +652,7 @@ static void inline gcif_service(struct net_device *dev)
 
 	if (!status) {
 		eth_outb(9, 0xff);
-		printk("?? GC irq but no irq ??\n");
+		//printk("?? GC irq but no irq ??\n");
 	}
 
 	if (status & 4)
@@ -762,7 +762,7 @@ int __init gc_bba_probe(struct net_device *dev)
 	short s=0;
 	long l;
 	/*dev->priv = kmalloc(sizeof(struct net_device_stats), GFP_KERNEL);*/
-	printk("gc_bba_probe\n");
+	//printk("gc_bba_probe\n");
 
 	SET_MODULE_OWNER(dev);
 
@@ -945,7 +945,7 @@ static struct net_device gc_bba_dev;
 
 static int __init gc_bba_init(void)
 {
-	printk("gc_bba_init\n");
+	//printk("gc_bba_init\n");
 	spin_lock_init(&gc_bba_lock);
 
 //	exi_init();
