@@ -49,14 +49,15 @@ gamecube_map_io(void)
 static void
 gamecube_restart(char *cmd)
 {
-	printk("gamecube_restart()\n");
-	GAMECUBE_OUT(GAMECUBE_RESET, 0);
+	local_irq_disable();
+	writeb(0x00, GAMECUBE_RESET);
 }
 
 static void
 gamecube_power_off(void)
 {
-	for(;;);
+	local_irq_disable();
+	for (;;);	/* Wait until power button depressed */
 }
 
 static void
