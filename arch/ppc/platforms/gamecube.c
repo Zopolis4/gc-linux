@@ -19,6 +19,14 @@
 extern void gamecube_init_IRQ(void);
 extern int gamecube_get_irq(struct pt_regs *regs);
 
+extern long __init
+gamecube_time_init(void);
+
+extern unsigned long 
+gamecube_get_rtc_time(void);
+
+extern int 
+gamecube_set_rtc_time(unsigned long nowtime);
 
 void __init
 gamecube_setup_arch(void)
@@ -103,6 +111,9 @@ platform_init(unsigned long r3, unsigned long r4, unsigned long r5,
 	ppc_md.find_end_of_memory = gamecube_find_end_of_memory;
 	ppc_md.setup_io_mappings = gamecube_map_io;
 
+	ppc_md.time_init      = gamecube_time_init;
+	ppc_md.set_rtc_time   = gamecube_set_rtc_time;
+	ppc_md.get_rtc_time   = gamecube_get_rtc_time;
 #ifdef CONFIG_DUMMY_CONSOLE
 	conswitchp = &dummy_con;
 #endif
