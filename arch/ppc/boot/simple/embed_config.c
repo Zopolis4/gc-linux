@@ -17,10 +17,12 @@
 #include <asm/mpc8260.h>
 #include <asm/immap_8260.h>
 #endif
+#ifdef CONFIG_6xx
+#include <asm/ppc6xx.h>
+#endif
 #ifdef CONFIG_40x
 #include <asm/io.h>
 #endif
-#include <asm/processor.h>
 extern unsigned long timebase_period_ns;
 
 /* For those boards that don't provide one.
@@ -902,18 +904,23 @@ embed_config(bd_t **bdp)
 #endif
 
 #ifdef CONFIG_GAMECUBE
+/*
+ * We're the only 7xx board without a rom monitor, yet. This
+ * should suffice until we have one (uBoot, here we come ...)
+ */
 void
 embed_config(bd_t **bdp)
 {
-       bd_t  *bd;
-       bd = &bdinfo;
-       *bdp = bd;
-       bd->bi_memsize = 24 * 1024 * 1024;
-       bd->bi_tbfreq = 200 * 1000 * 1000;
-       bd->bi_intfreq = 200000000;
-       bd->bi_busfreq = 100000000;
-       timebase_period_ns = 1000000000 / bd->bi_tbfreq;
+	bd_t  *bd;
+
+	bd = &bdinfo;
+	*bdp = bd;
+
+	bd->bi_memsize = 24 * 1024 * 1024;
+	bd->bi_tbfreq = 200 * 1000 * 1000;
+	bd->bi_intfreq = 200000000;
+	bd->bi_busfreq = 100000000;
+	timebase_period_ns = 1000000000 / bd->bi_tbfreq;
  }
 
  #endif
-

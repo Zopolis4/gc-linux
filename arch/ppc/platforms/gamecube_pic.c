@@ -11,6 +11,8 @@
 
 #include <asm/io.h>
 
+#include "gamecube.h"
+
 
 static void gamecube_mask_and_ack_irq(unsigned int irq)
 {

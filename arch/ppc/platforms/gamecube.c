@@ -14,6 +14,7 @@
 #include <asm/io.h>
 
 #include "console.h"
+#include "gamecube.h"
 
 
 extern void gamecube_init_IRQ(void);

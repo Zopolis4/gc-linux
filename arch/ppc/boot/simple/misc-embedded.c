@@ -16,12 +16,13 @@
 #include <asm/residual.h>
 #if defined(CONFIG_4xx)
 #include <asm/ibm4xx.h>
+#elif defined(CONFIG_6xx)
+#include <asm/ppc6xx.h>
 #elif defined(CONFIG_8xx)
 #include <asm/mpc8xx.h>
 #elif defined(CONFIG_8260)
 #include <asm/mpc8260.h>
 #endif
-#include <asm/processor.h>
 
 #include "nonstdio.h"
 #include "zlib.h"
@@ -80,7 +81,7 @@ load_kernel(unsigned long load_addr, int num_words, unsigned long cksum, bd_t *b
 	char *cp, ch;
 	int timer = 0, zimage_size;
 	unsigned long initrd_size;
-	
+
 	/* First, capture the embedded board information.  Then
 	 * initialize the serial console port.
 	 */
