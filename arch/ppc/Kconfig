@@ -563,6 +563,16 @@ config GAMECUBE
 
 endchoice
 
+config GC_RESETSWITCH
+        bool "RESETSWITCH"
+        default n
+        ---help---
+          If you say yes to this option, support will be included for the
+          reset switch of the GameCube.
+                                                                                
+          This driver can also be built as a module.  If so, the module
+          will be called gc-rsw.
+
 config TQM8xxL
 	bool
 	depends on 8xx && (TQM823L || TQM850L || FPS850L || TQM855L || TQM860L || SM850)

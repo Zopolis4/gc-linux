@@ -47,6 +47,7 @@ obj-$(CONFIG_SANDPOINT)		+= sandpoint.o
 obj-$(CONFIG_SPRUCE)		+= spruce_setup.o spruce_pci.o
 obj-$(CONFIG_GAMECUBE)		+= gamecube.o
 obj-$(CONFIG_GAMECUBE_CONSOLE)	+= console.o
+obj-$(CONFIG_GAMECUBE_RESET_SWITCH)	+= gc-rsw.o
 
 ifeq ($(CONFIG_SMP),y)
 obj-$(CONFIG_PPC_PMAC)		+= pmac_smp.o
