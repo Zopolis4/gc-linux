@@ -581,12 +581,11 @@ static int gc_bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
 }
 
 
-static char *gc_input(struct net_device *dev)
+static void gc_input(struct net_device *dev)
 {
 
 	struct gc_private *priv = (struct gc_private *)dev->priv;
 	struct sk_buff	*skb;
-	char *p, *q;
 
 	unsigned short size, p_read, p_write;
 	unsigned short next_receive_frame;
@@ -623,7 +622,7 @@ static char *gc_input(struct net_device *dev)
 	{
 		BBA_DBG("nothing left.\n");
 		priv->stats.rx_missed_errors++;
-		return 0;
+		return ;
 	}
 
 	unsigned char descr[4];
@@ -632,7 +631,7 @@ static char *gc_input(struct net_device *dev)
 	{
 		BBA_DBG("NO DATA AVAILABLE!\n");
 		priv->stats.rx_missed_errors++;
-		return 0;
+		return ;
 	}
 
 	size=0;
@@ -696,7 +695,7 @@ static char *gc_input(struct net_device *dev)
 	priv->stats.rx_bytes ++;	/* count all received bytes */
 	
 	next_receive_frame  = descr[0];
-	next_receive_frame |= (descr[1]0x0f) << 8;
+	next_receive_frame |= (descr[1] & 0x0f) << 8;
 	
 	/*
 		do we have additional packages ?
@@ -705,7 +704,7 @@ static char *gc_input(struct net_device *dev)
 	*/
 	if (next_receive_frame != p_write) gc_input(dev);
 	
-	return p;
+	return ;
 }
 
 
