@@ -21,6 +21,25 @@
 #include <asm/io.h>
 
 /* --------------------------------------------------------------------- */
+volatile static unsigned int *gamecube_video = (unsigned int*) 0xCC002000;
+static const unsigned int VIDEO_Mode640X480NtscYUV16[32] = {
+0x0F060001, 0x476901AD, 0x02EA5140, 0x00030018,
+0x00020019, 0x410C410C, 0x40ED40ED, 0x00435A4E,
+0x00000000, 0x00435A4E, 0x00000000, 0x00000000,
+0x110701AE, 0x10010001, 0x00010001, 0x00010001,
+0x00000000, 0x00000000, 0x28500100, 0x1AE771F0,
+0x0DB4A574, 0x00C1188E, 0xC4C0CBE2, 0xFCECDECF,
+0x13130F08, 0x00080C0F, 0x00FF0000, 0x00000000,
+0x02800000, 0x000000FF, 0x00FF00FF, 0x00FF00FF};
+static const unsigned int VIDEO_Mode640X480Pal50YUV16[32] = {
+0x11F50101, 0x4B6A01B0, 0x02F85640, 0x00010023,
+0x00000024, 0x4D2B4D6D, 0x4D8A4D4C, 0x00435A4E,
+0x00000000, 0x00435A4E, 0x00000000, 0x013C0144,
+0x113901B1, 0x10010001, 0x00010001, 0x00010001,
+0x00000000, 0x00000000, 0x28500100, 0x1AE771F0,
+0x0DB4A574, 0x00C1188E, 0xC4C0CBE2, 0xFCECDECF,
+0x13130F08, 0x00080C0F, 0x00FF0000, 0x00000000,
+0x02800000, 0x000000FF, 0x00FF00FF, 0x00FF00FF};
 
 static struct fb_var_screeninfo gamecubefb_defined __initdata = {
 	.activate	= FB_ACTIVATE_NOW,
@@ -38,6 +57,11 @@ static struct fb_fix_screeninfo gamecubefb_fix __initdata = {
 	.type	= FB_TYPE_PACKED_PIXELS,
 	.accel	= FB_ACCEL_NONE,
 };
+
+#define TV_ENC_DETECT 0
+#define TV_ENC_NTSC 1
+#define TV_ENC_PAL 2
+static int tv_encoding __initdata = TV_ENC_DETECT;
 
 static struct fb_info fb_info;
 static u32 pseudo_palette[17];
@@ -215,10 +239,12 @@ int __init gamecubefb_setup(char *options)
 {
 	char *this_opt;
 
+	printk("options = %s\n", options);
 	if (!options || !*options)
 		return 0;
 
 	while ((this_opt = strsep(&options, ",")) != NULL) {
+	printk("this_opt = %s\n", this_opt);
 		if (!*this_opt) continue;
 
 		if (! strcmp(this_opt, "redraw"))
@@ -227,6 +253,14 @@ int __init gamecubefb_setup(char *options)
 			ypan=1;
 		else if (! strcmp(this_opt, "ywrap"))
 			ypan=2;
+		else if (!strncmp(this_opt, "tv=", 3)) {
+		printk("detected \"tv=\"\n");
+		printk("cmd line: %s\n", this_opt);
+			if(!strncmp(this_opt + 3, "PAL", 3))
+				tv_encoding = TV_ENC_PAL;
+			else if(!strncmp(this_opt + 3, "NTSC", 4))
+				tv_encoding = TV_ENC_NTSC;
+		}
 	}
 	return 0;
 }
@@ -236,12 +270,17 @@ int __init gamecubefb_init(void)
 	int video_cmap_len;
 	int i;
 
+	// detect current video mode
+	if (tv_encoding == TV_ENC_DETECT) {
+		tv_encoding = ((gamecube_video[0] >> 8) & 3) + 1;
+	}
+
 	gamecubefb_defined.bits_per_pixel = 16;
 	gamecubefb_defined.xres = 640;
-	gamecubefb_defined.yres = 576;
-	gamecubefb_fix.line_length = 640*2;
-	gamecubefb_fix.smem_len = 640*576*2;
-	gamecubefb_fix.smem_start = (24*1024*1024)-gamecubefb_fix.smem_len;
+	gamecubefb_defined.yres = (tv_encoding == TV_ENC_NTSC) ? 480 : 576;
+	gamecubefb_fix.line_length = gamecubefb_defined.xres * (gamecubefb_defined.bits_per_pixel/8);
+	gamecubefb_fix.smem_len = gamecubefb_fix.line_length * gamecubefb_defined.yres;
+	gamecubefb_fix.smem_start = (24*1024*1024)-gamecubefb_fix.smem_len; /* end of RAM */
 	gamecubefb_fix.visual   = (gamecubefb_defined.bits_per_pixel == 8) ?
 		FB_VISUAL_PSEUDOCOLOR : FB_VISUAL_TRUECOLOR;
 
@@ -262,16 +301,13 @@ int __init gamecubefb_init(void)
 		return -EIO;
 	}
 
-	//MISTFIX
-	//fb_info.screen_base = gamecubefb_fix.smem_start;
-
 	printk(KERN_INFO "gamecubefb: framebuffer at 0x%lx, mapped to 0x%p, size %dk\n",
 	       gamecubefb_fix.smem_start, fb_info.screen_base, gamecubefb_fix.smem_len/1024);
 	printk(KERN_INFO "gamecubefb: mode is %dx%dx%d, linelength=%d, pages=%d\n",
 	       gamecubefb_defined.xres, gamecubefb_defined.yres, gamecubefb_defined.bits_per_pixel, gamecubefb_fix.line_length, 0); //screen_info.pages);
 
-	gamecubefb_defined.xres_virtual = 640;
-	gamecubefb_defined.yres_virtual = 576;
+	gamecubefb_defined.xres_virtual = gamecubefb_defined.xres;
+	gamecubefb_defined.yres_virtual = gamecubefb_defined.yres;
 	ypan = 0;
 
 	/* some dummy values for timing to make fbset happy */
@@ -310,39 +346,24 @@ int __init gamecubefb_init(void)
 	if (register_framebuffer(&fb_info)<0)
 		return -EINVAL;
 
-volatile static unsigned int *gamecube_video = (unsigned int*) 0xCC002000;
-static const unsigned int VIDEO_Mode640X480Pal50YUV16[32] = {
-0x11F50101, 0x4B6A01B0, 0x02F85640, 0x00010023,
-0x00000024, 0x4D2B4D6D, 0x4D8A4D4C, 0x00435A4E,
-0x00000000, 0x00435A4E, 0x00000000, 0x013C0144,
-0x113901B1, 0x10010001, 0x00010001, 0x00010001,
-0x00000000, 0x00000000, 0x28500100, 0x1AE771F0,
-0x0DB4A574, 0x00C1188E, 0xC4C0CBE2, 0xFCECDECF,
-0x13130F08, 0x00080C0F, 0x00FF0000, 0x00000000,
-0x02800000, 0x000000FF, 0x00FF00FF, 0x00FF00FF};
+	unsigned int *VIDEO_Mode;
+
+	printk("tv_encoding = %i\n", tv_encoding);
+
+	if (tv_encoding == TV_ENC_NTSC)
+		VIDEO_Mode = VIDEO_Mode640X480NtscYUV16;
+	else
+		VIDEO_Mode = VIDEO_Mode640X480Pal50YUV16;
 
 	// initialize screen
 	for(i=0; i<32; i++) {
-		gamecube_video[i] = VIDEO_Mode640X480Pal50YUV16[i];
+		gamecube_video[i] = VIDEO_Mode[i];
 	}
 	gamecube_video[7] = 0x10000000 | (gamecubefb_fix.smem_start>>5);
-	printk("POKE(%x,%x)\n", &gamecube_video[7], 0x10000000 | (gamecubefb_fix.smem_start>>5));
 	gamecube_video[9] = 0x10000000 | ((gamecubefb_fix.smem_start+gamecubefb_fix.line_length)>>5);
-	printk("POKE(%x,%x)\n", &gamecube_video[9], (gamecubefb_fix.smem_start+gamecubefb_fix.line_length)>>5);
-
-#if 1
-	/* clear screen */
-	int c = 640*576/2;
-	//unsigned long *p = (unsigned long*)fb_info.screen_base;
-	unsigned long *p = (unsigned long*)fb_info.screen_base;
-	while (c--)
-		*p++ = 0x00800080;
-#endif
-	printk("Clearing screen at %x\n",fb_info.screen_base);
 
 	printk(KERN_INFO "fb%d: %s frame buffer device\n",
 	       fb_info.node, fb_info.fix.id);
-
 	return 0;
 }
 
