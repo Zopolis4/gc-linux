@@ -17,6 +17,12 @@
     along with this program; if not, write to the Free Software
     Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.		     */
 /* ------------------------------------------------------------------------- */
+/*
+ * Albert Herranz
+ *	GAMECUBE
+ *	- Fixed bug that caused kernel to "loop" in gc_dvdcover_handler
+ *	  sometimes during kernel init.
+ */
 
 #include <linux/kernel.h>
 #include <linux/ioport.h>
@@ -40,19 +46,30 @@ static irqreturn_t gc_dvdcover_handler(int this_irq, void *dev_id, struct pt_reg
 	if (reason & 4) {
 		GAMECUBE_OUT(GAMECUBE_DICVR, reason | 4);
 		printk(KERN_ERR "gc_dvdcover: DVD cover was closed\n");
+		return IRQ_HANDLED;
 	}
-	return IRQ_HANDLED;
+	return IRQ_NONE;
 }
 
 
 static int gc_dvdcover_init(void)
 {
+        unsigned long outval;
+                                                                                
+        /* clear pending DI interrupts and mask new ones */
+        /* this prevents an annoying bug while we lack a complete DVD driver */
+        outval = GC_DI_DISR_BRKINT | GC_DI_DISR_TCINT |
+                        GC_DI_DISR_DEINT;
+        outval &= ~(GC_DI_DISR_BRKINTMASK | GC_DI_DISR_TCINTMASK |
+                        GC_DI_DISR_DEINTMASK);
+        GAMECUBE_OUT(GC_DI_DISR, outval);
+                                                                                
 	if (request_irq(DVD_IRQ, gc_dvdcover_handler, 0, "GameCube DVD Cover", 0) < 0) {
 		printk(KERN_ERR "gc_dvdcover: Request irq%d failed\n", DVD_IRQ);
 	} else {
 		enable_irq(DVD_IRQ);
+		GAMECUBE_OUT(GAMECUBE_DICVR, GAMECUBE_IN(GAMECUBE_DICVR) | 2);
 	}
-	GAMECUBE_OUT(GAMECUBE_DICVR, GAMECUBE_IN(GAMECUBE_DICVR) | 2);
 	return 0;
 }
 
