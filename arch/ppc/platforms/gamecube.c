@@ -29,7 +29,6 @@ gamecube_map_io(void)
 static void
 gamecube_unmask_irq(unsigned int irq)
 {
-	//return;
 	if (irq < GAMECUBE_IRQS) {
 		GAMECUBE_OUT(GAMECUBE_PIIM, GAMECUBE_IN(GAMECUBE_PIIM) | (1 << irq));
 	}
@@ -38,7 +37,6 @@ gamecube_unmask_irq(unsigned int irq)
 static void
 gamecube_mask_irq(unsigned int irq)
 {
-	//return;
 	if (irq < GAMECUBE_IRQS) {
 		GAMECUBE_OUT(GAMECUBE_PIIM, GAMECUBE_IN(GAMECUBE_PIIM) & ~(1 << irq)); /* mask */
 	}
@@ -47,7 +45,6 @@ gamecube_mask_irq(unsigned int irq)
 static void
 gamecube_mask_and_ack_irq(unsigned int irq)
 {
-	//return;
 	if (irq < GAMECUBE_IRQS) {
 		GAMECUBE_OUT(GAMECUBE_PIIM, GAMECUBE_IN(GAMECUBE_PIIM) & ~(1 << irq)); /* mask */
 		GAMECUBE_OUT(GAMECUBE_PIIC, 1 << irq); /* ack */
@@ -70,7 +67,6 @@ gamecube_init_IRQ(void)
 {
 	int i;
 
-	//return;
 	GAMECUBE_OUT(GAMECUBE_PIIM,0);		/* disable all irqs */
 	GAMECUBE_OUT(GAMECUBE_PIIC,0xffffffff);	/* ack all irqs */
 
@@ -88,7 +84,6 @@ gamecube_get_irq(struct pt_regs *regs)
 	int irq = 0;
 	u_int irq_status, irq_test = 1;
 
-	//return;
 	irq_status = GAMECUBE_IN(GAMECUBE_PIIC);
 
 	do
