@@ -6,7 +6,7 @@
 /*
  	// Some test things
  	
- 	echo hello | dd of=/dev/aram seek=10
+ 	echo hello1234567890hello1234567890 | dd of=/dev/aram seek=10
  	dd if=/dev/aram skip=10
   	cat /dev/aram  | wc -c
 
@@ -19,10 +19,12 @@
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/blkdev.h>
+#include <linux/delay.h>
 
 #include <asm/setup.h>
 #include <asm/bitops.h>
 #include <asm/pgtable.h>
+#include <asm/cacheflush.h>
 
 #define ARAM_MAJOR Z2RAM_MAJOR
 
@@ -41,6 +43,7 @@
 	#define ARAM_BUFFERSIZE 10*1024
 #else
 	#define ARAM_BUFFERSIZE 14*1024*1024
+	//#define ARAM_BUFFERSIZE 10*1024
 	#define ARAM_SOUNDMEMORYOFFSET	1024*1024
 #endif
 
@@ -53,41 +56,55 @@
 
 static int current_device   = -1;
 static spinlock_t aram_lock = SPIN_LOCK_UNLOCKED;
-
+extern void flush_cache(void *start, unsigned int len);
 
 static struct block_device_operations aram_fops;
 static struct gendisk *aram_gendisk;
 
-#define AR_DMA_MMADDR_H			*(volatile unsigned short*)0xCC005020
-#define AR_DMA_MMADDR_L			*(volatile unsigned short*)0xCC005022
-#define AR_DMA_ARADDR_H			*(volatile unsigned short*)0xCC005024
-#define AR_DMA_ARADDR_L			*(volatile unsigned short*)0xCC005026
-#define AR_DMA_CNT_H			*(volatile unsigned short*)0xCC005028
-#define AR_DMA_CNT_L			*(volatile unsigned short*)0xCC00502A
+#define AR_DMA_MMADDR_H			*(unsigned short*)0xCC005020
+#define AR_DMA_MMADDR_L			*(unsigned short*)0xCC005022
+#define AR_DMA_ARADDR_H			*(unsigned short*)0xCC005024
+#define AR_DMA_ARADDR_L			*(unsigned short*)0xCC005026
+#define AR_DMA_CNT_H			*(unsigned short*)0xCC005028
+#define AR_DMA_CNT_L			*(unsigned short*)0xCC00502A
+#define AI_DSP_STATUS	 		*(unsigned short*)0xCC00500A
 
 #define ARAM_READ				1
 #define ARAM_WRITE				0
 
+int ARAM_DMA_lock = 0;
 
 void ARAM_StartDMA (unsigned long mmAddr, unsigned long arAddr, unsigned long length, unsigned long type)
 {
+	while(ARAM_DMA_lock);
+	ARAM_DMA_lock = 1;
+ 	
+	//printk("ARAM DMA copy -> %08x - %08x  - %d  %d\n",mmAddr,arAddr,length,type);
+	
 	AR_DMA_MMADDR_H = mmAddr >> 16;
 	AR_DMA_MMADDR_L = mmAddr & 0xFFFF;
-
+	
 	AR_DMA_ARADDR_H = arAddr >> 16;
 	AR_DMA_ARADDR_L = arAddr & 0xFFFF;
-
+	
 	AR_DMA_CNT_H = (type << 15) | (length >> 16);
 	AR_DMA_CNT_L = length & 0xFFFF;
-
-	// Missing: Ready Flag for Transfer finished....
 	
-	//while (); ??????????
+	udelay(10000);
+	// Missing: Ready Flag for Transfer finished....
+	int counter=0;
+	while (AI_DSP_STATUS & 0x200) {
+		counter++;
+		if (counter>0xfffff) break;
+	};
+	ARAM_DMA_lock = 0;
 
 }
-
-
-
+/*
+ 	echo YUHUUhello1234567890hello12345678901234567890CCC > /dev/aram 
+ 	dd if=/dev/aram 
+ 	cat /dev/aram  | wc -c
+*/
 static void do_aram_request(request_queue_t *q)
 {
 	struct request *req;
@@ -110,8 +127,11 @@ static void do_aram_request(request_queue_t *q)
 		}		
 		#else
 		if (rq_data_dir(req) == READ) {
+			flush_dcache_range((unsigned long)req->buffer,(unsigned long)req->buffer + len);
 			ARAM_StartDMA((unsigned long)req->buffer,start+ARAM_SOUNDMEMORYOFFSET, len,ARAM_READ);
+			flush_dcache_range((unsigned long)req->buffer,(unsigned long)req->buffer + len);
 		} else {
+			flush_dcache_range((unsigned long)req->buffer,(unsigned long)req->buffer + len);
 			ARAM_StartDMA((unsigned long)req->buffer,start+ARAM_SOUNDMEMORYOFFSET, len,ARAM_WRITE);
 		}			
 		#endif		
