@@ -1,7 +1,7 @@
 /*
  * Datel/GameCube keyboard driver for Linux
  */
-  
+
 /*
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,7 +22,62 @@
  * Vojtech Pavlik, Simunkova 1594, Prague 8, 182 00 Czech Republic
  */
 
+ /*
+ There are three ways to connect a keyboard to the GameCube:
 
+ * ASCII
+   The "ASCII" keyboard is the official Nintendo/SEGA keyboard for the
+   GameCube. It has 80 keys plus an Fn key; some of the keys have
+   Japanese labelings. It has an LShift and an RShift key, but only a
+   single Ctrl and Alt key.
+   The Fn key is internal to the keyboard. It makes the keyboard send
+   different scancodes if it is pressed, and an Fn keypress alone cannot
+   be intercepted.
+
+ * Datel
+   The Datel Keyboard is a British IBM PS/2 keyboard that ships with an
+   adapter.
+
+ * Tototek Adapter (the Lik-Sang one)
+   The Tototek adapter converts the IBM PS/2 protocol to the GameCube
+   SI protocol and also converts the PS/2 scancodes into GameCube
+   scancodes. The keys that have Japanese labelings on the ASCII
+   keyboard get mapped to keys like PrintScreen and Pause.
+   There are some interesting details about the Tototek Adapter:
+   1) As there are no GameCube scancodes for RStrg and RAlt, the
+      adapter sends LStrg and LAlt instead.
+   2) There are GameCube scancodes both for LShift (0x54) and RShift
+      (0x55), but the adapter sends LShift no matter which Shift key
+      is pressed.
+   3) The key right of LShift on non-US keyboards sends no scancode.
+   4) The Pause/SysReq key only sends the keycode of 0x37 once, even if
+      it's pressed down continuously.
+   5) The Numpad is completely broken. The GameCube has no scancodes
+      for the Numpad, so Tototek seems to have tried to map the PS/2
+      Numpad scancodes to GameCube scancodes.
+      The NumLock key sends 0x6A, a scancode that is undefined for the
+      GameCube. 0-9 and Enter send the scancodes of their counterparts
+      on the alphanumeric part of the keyboard, regardless of the
+      status of NumLock, so he Numpad cannot be used as cursor keys.
+      Numpad-- sends the same as -_, which is okay, but Numpad-+ sends
+      the same as ;: - this makes sense for the the Japanese ASCII
+      labeling only.
+      Numpad-* sends 0x37, the same as Pause/SysReq, but this one
+      continues sending it. And Numpad-/ sends 0x36, just like
+      PrintScreen.
+   5) All combinations of Pause/SysReq with other keys are possible,
+      except for these: LStrg or LStrg together with Pause/SysReq
+      doesn't send anything. This would have been SysReq.
+   6) The adapter easily gets confused by two keys for which it
+      produces the same GameCube scancodes: If you hold down LStrg
+      and press RStrg, the LStrg scancode will disappear even though
+      LStrg is srill pressed down. The same is true for Ctrl and Alt.
+   It would have made sense to add a switch that disables the scancode
+   conversion completely. Or, as a simple hack in the converter's
+   firmware, to always send the PS/2 scancode + 0x80 as a second key
+   if the scancode that is sent is ambiguous.
+
+*/
 
 #include <linux/input.h>
 #include <linux/module.h>
@@ -49,14 +104,122 @@ struct gckbd {
 
 
 static unsigned char gckbd_keycode[256] = {
-	 0,  0,  0,  0,  0,  0,102,107,104,109,  0,  0,  0,  0,  0,  0,
-	30, 48, 46, 32, 18, 33, 34, 35, 23, 36, 37, 38, 50, 49, 24, 25,
-	16, 19, 31, 20, 22, 47, 17, 45, 21, 44,  2,  3,  4,  5,  6,  7,
-	 8,  9, 10, 11, 12,  0, 43, 40, 26, 13, 55, 27, 51, 52, 53,  0,
-	59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 87, 88,  1,110,111, 41,
+	/* 00 */ 0,
+	/* 01 */ 0,
+	/* 02 */ 0,
+	/* 03 */ 0,
+	/* 04 */ 0,
+	/* 05 */ 0,
+	/* 06 */ 102, /* TODO: Home */
+	/* 07 */ 107, /* TODO: End */
+	/* 08 */ 104, /* TODO: PgUp */
+	/* 09 */ 109, /* TODO: PgDn */
+	/* 0a */ 0x46, /* ScrollLock */
+	/* 0b */ 0,
+	/* 0c */ 0,
+	/* 0d */ 0,
+	/* 0e */ 0,
+	/* 0f */ 0,
+	/* 10 */ 30,   /* A */
+	/* 11 */ 48,   /* B */
+	/* 12 */ 46,   /* C */
+	/* 13 */ 32,   /* D */
+	/* 14 */ 18,   /* E */
+	/* 15 */ 33,   /* F */
+	/* 16 */ 34,   /* G */
+	/* 17 */ 35,   /* H */
+	/* 18 */ 23,   /* I */
+	/* 19 */ 36,   /* J */
+	/* 1a */ 37,   /* K */
+	/* 1b */ 38,   /* L */
+	/* 1c */ 50,   /* M */
+	/* 1d */ 49,   /* N */
+	/* 1e */ 24,   /* O */
+	/* 1f */ 25,   /* P */
+	/* 20 */ 16,   /* Q */
+	/* 21 */ 19,   /* R */
+	/* 22 */ 31,   /* S */
+	/* 23 */ 20,   /* T */
+	/* 24 */ 22,   /* U */
+	/* 25 */ 47,   /* V */
+	/* 26 */ 17,   /* W */
+	/* 27 */ 45,   /* X */
+	/* 28 */ 21,   /* Y */
+	/* 29 */ 44,   /* Z */
+	/* 2a */ 0x02, /* 1 */
+	/* 2b */ 0x03, /* 2 */
+	/* 2c */ 0x04, /* 3 */
+	/* 2d */ 0x05, /* 4 */
+	/* 2e */ 0x06, /* 5 */
+	/* 2f */ 0x07, /* 6 */
+	/* 30 */ 0x08, /* 7 */
+	/* 31 */ 0x09, /* 8 */
+	/* 32 */ 0x0a, /* 9 */
+	/* 33 */ 0x0b, /* 0 */
+	/* 34 */ 0x0c, /* -_ (or Numpad--) */
+	/* 35 */ 0x0d, /* =+ */
+	/* 36 */ 43, /* TODO: is either PrintScreen  or Numpad-/ */
+	/* 37 */ 40, /* TODO: is either Pause/SysReq or Numpad-* */
+	/* 38 */ 0x1a, /* [{ */
+	/* 39 */ 0x27, /* ;: (or Numpad-+) */
+	/* 3a */ 0x28, /* '" */
+	/* 3b */ 0x1b, /* ]} */
+	/* 3c */ 0x33, /* ,< */
+	/* 3d */ 0x34, /* .> (or Numpad-,) */
+	/* 3e */ 0x35, /* /? */
+	/* 3f */ 0x2b, /* \| */
+	/* 40 */ 0x3b, /* F1 */
+	/* 41 */ 0x3c, /* F2 */
+	/* 42 */ 0x3d, /* F3 */
+	/* 43 */ 0x3e, /* F4 */
+	/* 44 */ 0x3f, /* F5 */
+	/* 45 */ 0x40, /* F6 */
+	/* 46 */ 0x41, /* F7 */
+	/* 47 */ 0x42, /* F8 */
+	/* 48 */ 0x43, /* F9 */
+	/* 49 */ 0x44, /* F10 */
+	/* 4a */ 0x57, /* F11 */
+	/* 4b */ 0x58, /* F12 */
+	/* 4c */ 0x01, /* ESC */
+	/* 4d */ 0x6e, /* TODO: Ins */
+	/* 4e */ 0x6f, /* TODO: Del */
+	/* 4f */ 0x29, /* `~ */
 	// FIXME: 0x58 = winkey1, 0x5B = winkey2 0x5B = winkey3?
-	14, 15,  0, 58, 42, 54, 29, 56,  0, 57,  0,  0,105,108,103,106,
-	 0, 28,  0,  0, 39, 78,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+	/* 50 */ 0x0e, /* Backspace */
+	/* 51 */ 0x0f, /* Tab */
+	/* 52 */ 0,
+	/* 53 */ 0x3a, /* CapsLock */
+	/* 54 */ 0x2a, /* LShift - Tototek adapter send this code for
+			  LShift and RShift */
+	/* 55 */ 54,
+	/* 56 */ 0x1d, /* LCtrl - Tototek adapter sends this code for
+			  LCtrl and RCtrl */
+	/* 57 */ 0x38, /* LAlt - Tototek adapter sends this code for
+			  LAlt and RAlt */
+	/* 58 */ 0,    /* TODO: LWin */
+	/* 59 */ 0x39, /* Space */
+	/* 5a */ 0,    /* TODO: RWin */
+	/* 5b */ 0,    /* TODO: Menu */
+	/* 5c */ 105,  /* TODO: Left */
+	/* 5d */ 108,  /* TODO: Down */
+	/* 5e */ 103,  /* TODO: Up */
+	/* 5f */ 106,  /* TODO: Right */
+	/* 60 */ 0,
+	/* 61 */ 28,
+	/* 62 */ 0,
+	/* 63 */ 0,
+	/* 64 */ 39,
+	/* 65 */ 78,
+	/* 66 */ 0,
+	/* 67 */ 0,
+	/* 68 */ 0,
+	/* 69 */ 0,
+	/* 6a */ 0x45, /* NumLock */
+	/* 6b */ 0,
+	/* 6c */ 0,
+	/* 6d */ 0,
+	/* 6e */ 0,
+	/* 6f */ 0,
 	 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
 	 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
 	 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
@@ -89,31 +252,92 @@ static void gckbd_timer(unsigned long private)
 	key2 = (*kbd->portRegister >> 16) & 0xFF;
 	key3 = (*kbd->portRegister >>  8) & 0xFF;
 
+//	printk("-%x %x %x - %x %x %x-\n", key1, key2, key3, kbd->pressedKeys[0],
+//			kbd->pressedKeys[1], kbd->pressedKeys[2]);
 
+#if 0
 	// report released keys
 	for (i = 0; i < 3; i++)
 	{
-		if (kbd->pressedKeys[i] && kbd->pressedKeys[i] != key1 && kbd->pressedKeys[i] != key2 && kbd->pressedKeys[i] != key3)
+		if (kbd->pressedKeys[i] && kbd->pressedKeys[i] != key1 && kbd->pressedKeys[i] != key2 && kbd->pressedKeys[i] != key3) {
+			printk("released: %x\n", kbd->pressedKeys[i]);
 			input_report_key (&kbd->dev, gckbd_keycode[kbd->pressedKeys[i]], 0);
+		}
+	}
+#endif
+
+	if (kbd->pressedKeys[0]) {
+		if ((kbd->pressedKeys[0]) != key1 &&
+		    (kbd->pressedKeys[0]) != key2 &&
+		    (kbd->pressedKeys[0]) != key3) {
+//			printk("released1: %x\n", kbd->pressedKeys[0]);
+			input_report_key (&kbd->dev, gckbd_keycode[kbd->pressedKeys[0]], 0);
+		}
+	}
+	if (kbd->pressedKeys[1]) {
+		if ((kbd->pressedKeys[1]) != key1 &&
+		    (kbd->pressedKeys[1]) != key2 &&
+		    (kbd->pressedKeys[1]) != key3) {
+//			printk("released2: %x\n", kbd->pressedKeys[1]);
+			input_report_key (&kbd->dev, gckbd_keycode[kbd->pressedKeys[1]], 0);
+		}
+	}
+	if (kbd->pressedKeys[2]) {
+		if ((kbd->pressedKeys[2]) != key1 &&
+		    (kbd->pressedKeys[2]) != key2 &&
+		    (kbd->pressedKeys[2]) != key3) {
+//			printk("released3: %x\n", kbd->pressedKeys[2]);
+			input_report_key (&kbd->dev, gckbd_keycode[kbd->pressedKeys[2]], 0);
+		}
 	}
 
-
-
+#if 0
 	// check if we should report anything
-	if (key1 && gckbd_keycode[key1])
+	if (key1 && gckbd_keycode[key1]) {
+		printk("pressed1: %x\n", key1);
 		input_report_key (&kbd->dev, gckbd_keycode[key1], 1);
-	if (key2 && gckbd_keycode[key2])
+	}
+	if (key2 && gckbd_keycode[key2]) {
+		printk("pressed2: %x\n", key2);
 		input_report_key (&kbd->dev, gckbd_keycode[key2], 1);
-	if (key3 && gckbd_keycode[key3])
+	}
+	if (key3 && gckbd_keycode[key3]) {
+		printk("pressed3: %x\n", key3);
 		input_report_key (&kbd->dev, gckbd_keycode[key3], 1);
+	}
+#endif
+	if (key1) {
+		if ((key1 != kbd->pressedKeys[0]) &&
+		    (key1 != kbd->pressedKeys[1]) &&
+		    (key1 != kbd->pressedKeys[2])) {
+//			printk("pressed1: %x\n", key1);
+			input_report_key (&kbd->dev, gckbd_keycode[key1], 1);
+		}
+	}
+	if (key2) {
+		if ((key2 != kbd->pressedKeys[0]) &&
+		    (key2 != kbd->pressedKeys[1]) &&
+		    (key2 != kbd->pressedKeys[2])) {
+//			printk("pressed2: %x\n", key1);
+			input_report_key (&kbd->dev, gckbd_keycode[key2], 1);
+		}
+	}
+	if (key3) {
+		if ((key3 != kbd->pressedKeys[0]) &&
+		    (key3 != kbd->pressedKeys[1]) &&
+		    (key3 != kbd->pressedKeys[2])) {
+//			printk("pressed3: %x\n", key1);
+			input_report_key (&kbd->dev, gckbd_keycode[key3], 1);
+		}
+	}
 
 	input_sync (&kbd->dev);
 
 
 	// keep state of pressed keys
 	kbd->pressedKeys[0] = key1;
-	kbd->pressedKeys[1] = key1;
-	kbd->pressedKeys[2] = key1;
+	kbd->pressedKeys[1] = key2;
+	kbd->pressedKeys[2] = key3;
 
 
 	mod_timer (&kbd->timer, jiffies + HZ/50);
