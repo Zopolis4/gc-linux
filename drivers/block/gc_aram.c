@@ -11,6 +11,13 @@
   	cat /dev/aram  | wc -c
 
 */
+/*
+  2004/06/26 - isobel
+    - avoid registering interrupt handlers for nothing
+    - mask ARAM DMA interrupt as we are not going to handle it
+    - fix compiler warnings
+    - fix explicit cache handling code
+*/
 
 #define DEVICE_NAME "ARAM"
 
@@ -108,7 +115,7 @@ static void do_aram_request(request_queue_t *q)
 	
 		if (start + len > ARAM_BUFFERSIZE) {
 			printk( KERN_ERR DEVICE_NAME ": bad access: block=%lu, count=%u\n",
-				req->sector, req->current_nr_sectors);
+				(unsigned long)req->sector, req->current_nr_sectors);
 			end_request(req, 0);
 			continue;
 		}
@@ -122,9 +129,10 @@ static void do_aram_request(request_queue_t *q)
 		#else
 		if (rq_data_dir(req) == READ) {
 			//memset(req->buffer,0,len);
-			flush_dcache_range((unsigned long)req->buffer,(unsigned long)req->buffer + len);
+			//flush_dcache_range((unsigned long)req->buffer,(unsigned long)req->buffer + len);
 			ARAM_StartDMA((unsigned long)req->buffer,start+ARAM_SOUNDMEMORYOFFSET, len,ARAM_READ);
-			flush_dcache_range((unsigned long)req->buffer,(unsigned long)req->buffer + len);
+			//flush_dcache_range((unsigned long)req->buffer,(unsigned long)req->buffer + len);
+			invalidate_dcache_range((unsigned long)req->buffer,(unsigned long)req->buffer + len);
 		} else {
 			flush_dcache_range((unsigned long)req->buffer,(unsigned long)req->buffer + len);
 			ARAM_StartDMA((unsigned long)req->buffer,start+ARAM_SOUNDMEMORYOFFSET, len,ARAM_WRITE);
@@ -234,11 +242,13 @@ static struct block_device_operations aram_fops =
 
 static struct request_queue *aram_queue;
 
+#if 0
 static irqreturn_t aram_interrupt(int irq, void *dev_id, struct pt_regs * regs)
 {
 	printk("interrupt received\n");
 	return 0;
 }
+#endif
 
 int __init aram_init(void)
 {
@@ -267,12 +277,18 @@ int __init aram_init(void)
 	
 	add_disk(aram_gendisk);
 	spin_lock_init(&aram_lock);
-	
+
+#if 0	
 	ret = request_irq(5, aram_interrupt, 0,aram_gendisk->disk_name, aram_gendisk);
 	if (ret) {
 		//BBA_DBG(KERN_ERR "%s: unable to get IRQ %d\n", dev->name, dev->irq);
 		return ret;
 	}
+#endif
+
+#define AUDIO_DSP_CONTROL   *(volatile u_int16_t *)(0xCC00500a)
+#define  AI_CSR_ARINTMASK   (1<<6)
+	AUDIO_DSP_CONTROL &= ~AI_CSR_ARINTMASK;
 		
 	#ifdef RAMDISK
 	RAMDISKBuffer = kmalloc(ARAM_BUFFERSIZE,GFP_KERNEL);
