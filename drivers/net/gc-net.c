@@ -870,7 +870,7 @@ static int adapter_init(struct net_device *dev)
 	//select_nic();
 	rx_page = 0; /* used by RESET */
 
-	printk("initializing BBA...\n");
+//	printk("initializing BBA...\n");
 
 	eth_outb(0x60, 0);	// unknown
 	udelay(10000);
@@ -883,9 +883,9 @@ static int adapter_init(struct net_device *dev)
 	eth_exi_outs(4, "\xd1\x07\x75\x75", 2);
 	eth_exi_outb(5, 0x4e);
 
-	printk("BBA %02x %02x %02x %02x %02x %02x %02x %02x\n",
-		 eth_exi_inb(0), eth_exi_inb(1), eth_exi_inb(2), eth_exi_inb(3),
-		 eth_exi_inb(4), eth_exi_inb(5), eth_exi_inb(6), eth_exi_inb(7));
+//	printk("BBA %02x %02x %02x %02x %02x %02x %02x %02x\n",
+//		 eth_exi_inb(0), eth_exi_inb(1), eth_exi_inb(2), eth_exi_inb(3),
+//		 eth_exi_inb(4), eth_exi_inb(5), eth_exi_inb(6), eth_exi_inb(7));
 	eth_outb(0x5b, eth_inb(0x5b)&~(1<<7));
 	eth_outb(0x5e, 1);
 	eth_outb(0x5c, eth_inb(0x5c)|4);
@@ -912,9 +912,9 @@ static int adapter_init(struct net_device *dev)
 	eth_outb(0x32, 8);
 
 	eth_ins(0x20, dev->dev_addr, ETH_LEN);
-	printk("MAC ADDRESS %02x:%02x:%02x:%02x:%02x:%02x\n",
-		dev->dev_addr[0], dev->dev_addr[1], dev->dev_addr[2],
-		dev->dev_addr[3], dev->dev_addr[4], dev->dev_addr[5]);
+//	printk("MAC ADDRESS %02x:%02x:%02x:%02x:%02x:%02x\n",
+//		dev->dev_addr[0], dev->dev_addr[1], dev->dev_addr[2],
+//		dev->dev_addr[3], dev->dev_addr[4], dev->dev_addr[5]);
 
 	/* Get the adapter ethernet address from the ROM */
 	for (i = 0; i < ETH_ALEN; i++) {
@@ -934,7 +934,7 @@ static int adapter_init(struct net_device *dev)
 	eth_outb(8, 0xFF); // enable all IRQs
 	eth_outb(9, 0xFF); // clear all irqs
 
-	printk("after all: irq mask %x %x\n", eth_inb(8), eth_inb(9));
+//	printk("after all: irq mask %x %x\n", eth_inb(8), eth_inb(9));
 
 //	netif_start_queue(dev);
 
@@ -983,7 +983,7 @@ void gcif_irq_handler(int channel, int event, void *ct)
 	{
 		eth_exi_outb(3, 0x40);
 		eth_exi_outb(2, 0xF8);
-		printk("GCIF - EXI - 0x40!\n");
+//		printk("GCIF - EXI - 0x40!\n");
 		adapter_init(dev);
 		return;
 		
@@ -1010,7 +1010,7 @@ void gcif_irq_handler(int channel, int event, void *ct)
 		eth_exi_outb(2, 0xF8);
 		return;
 	}
-	printk("GCIF - EXI - ?? %02x\n", s);
+//	printk("GCIF - EXI - ?? %02x\n", s);
 	eth_exi_outb(2, 0xF8);
 }
 
