@@ -162,6 +162,8 @@ extern int tcx_init(void);
 extern int tcx_setup(char*);
 extern int leo_init(void);
 extern int leo_setup(char*);
+extern int kyrofb_init(void);
+extern int kyrofb_setup(char*);
 extern int gamecubefb_init(void);
 extern int gamecubefb_setup(char*);
 
