@@ -103,7 +103,7 @@ CONFIG_KERNEL_ELF=y
 CONFIG_BINFMT_ELF=y
 CONFIG_BINFMT_MISC=m
 CONFIG_CMDLINE_BOOL=y
-CONFIG_CMDLINE="root=/dev/ram0 video=gamecubefb ip=192.168.0.47"
+CONFIG_CMDLINE="root=/dev/ram0 video=gamecubefb ip=192.168.000.047"
 
 #
 # Bus options
