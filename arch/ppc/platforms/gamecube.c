@@ -29,11 +29,6 @@ gamecube_get_rtc_time(void);
 extern int 
 gamecube_set_rtc_time(unsigned long nowtime);
 
-void __init
-gamecube_setup_arch(void)
-{
-}
-
 unsigned long gamecube_find_end_of_memory(void)
 {
 	return 24*1024*1024 - (640*576*2); /* 24 MB minus max. framebuffer */
@@ -84,6 +79,14 @@ gamecube_show_cpuinfo(struct seq_file *m)
 	return 0;
 }
 
+static void __init
+gamecube_setup_arch(void)
+{
+#ifdef CONFIG_DUMMY_CONSOLE
+	conswitchp = &dummy_con;
+#endif
+}
+
 void __init
 platform_init(unsigned long r3, unsigned long r4, unsigned long r5,
 	      unsigned long r6, unsigned long r7)
@@ -116,7 +119,4 @@ platform_init(unsigned long r3, unsigned long r4, unsigned long r5,
 	ppc_md.time_init      = gamecube_time_init;
 	ppc_md.set_rtc_time   = gamecube_set_rtc_time;
 	ppc_md.get_rtc_time   = gamecube_get_rtc_time;
-#ifdef CONFIG_DUMMY_CONSOLE
-	conswitchp = &dummy_con;
-#endif
 }
