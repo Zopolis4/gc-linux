@@ -351,13 +351,12 @@ static int __init exi_layer_init(void)
 	if (!test_and_set_bit(1, &exi_running)) {
 		retval = exi_hw_init();
 		if (retval)
-			goto err_irq_init;
+			goto err_hw_init;
 	}
 
-	/* initialize channels and devices */
+	/* initialize devices */
 	for (channel = 0; channel < EXI_MAX_CHANNELS; ++channel) {
 		exi_channel = to_exi_channel(channel);
-		exi_channel_init(exi_channel, channel);
 		for (device = 0; device < EXI_DEVICES_PER_CHANNEL; ++device) {
 			exi_device = &exi_devices[channel][device];
 			exi_device_init(exi_device, channel, device);
@@ -387,7 +386,7 @@ err_device_register:
 		device_unregister(&exi_bus_devices[channel]);
 	}
 	exi_hw_exit();
-err_irq_init:
+err_hw_init:
 	return retval;
 }
 

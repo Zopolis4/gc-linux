@@ -89,27 +89,27 @@ static struct exi_channel exi_channels[EXI_MAX_CHANNELS] = {
 	[0] = {
 		.channel = 0,
 		.lock = SPIN_LOCK_UNLOCKED,
-		.cmd_lock = SPIN_LOCK_UNLOCKED,
 		.io_lock = SPIN_LOCK_UNLOCKED,
 		.io_base = EXI_IO_BASE(0),
+		.select_lock = SPIN_LOCK_UNLOCKED,
 		.wait_queue = __WAIT_QUEUE_HEAD_INITIALIZER(
 				exi_channels[0].wait_queue),
 	},
 	[1] = {
 		.channel = 1,
 		.lock = SPIN_LOCK_UNLOCKED,
-		.cmd_lock = SPIN_LOCK_UNLOCKED,
 		.io_lock = SPIN_LOCK_UNLOCKED,
 		.io_base = EXI_IO_BASE(1),
+		.select_lock = SPIN_LOCK_UNLOCKED,
 		.wait_queue = __WAIT_QUEUE_HEAD_INITIALIZER(
 				exi_channels[1].wait_queue),
 	},
 	[2] = {
 		.channel = 2,
 		.lock = SPIN_LOCK_UNLOCKED,
-		.cmd_lock = SPIN_LOCK_UNLOCKED,
 		.io_lock = SPIN_LOCK_UNLOCKED,
 		.io_base = EXI_IO_BASE(2),
+		.select_lock = SPIN_LOCK_UNLOCKED,
 		.wait_queue = __WAIT_QUEUE_HEAD_INITIALIZER(
 				exi_channels[2].wait_queue),
 	},
@@ -160,7 +160,7 @@ void exi_channel_init(struct exi_channel *exi_channel, unsigned int channel)
 
 	exi_channel->channel = channel;
 	spin_lock_init(&exi_channel->lock);
-	spin_lock_init(&exi_channel->cmd_lock);
+	spin_lock_init(&exi_channel->select_lock);
 	spin_lock_init(&exi_channel->io_lock);
 	exi_channel->io_base = EXI_IO_BASE(channel);
 	init_waitqueue_head(&exi_channel->wait_queue);
@@ -406,16 +406,14 @@ static inline void exi_cmd_select(struct exi_command *cmd)
 {
 	struct exi_channel *exi_channel = cmd->exi_channel;
 	struct exi_device *exi_device;
-	//struct exi_driver *exi_driver;
 
 	BUG_ON(cmd->data == NULL);
 	BUG_ON(exi_is_selected(exi_channel));
 
-	spin_lock(&exi_channel->cmd_lock);
+	spin_lock(&exi_channel->select_lock);
 
 	/* cmd->data contains the device to select */
 	exi_device = cmd->data;
-	//exi_driver = to_exi_driver(exi_device->dev.driver);
 
 	exi_channel->device_selected = exi_device;
 	exi_channel->flags |= EXI_SELECTED;
@@ -443,7 +441,7 @@ static inline void exi_cmd_deselect(struct exi_command *cmd)
 	exi_channel->flags &= ~EXI_SELECTED;
 	exi_channel->device_selected = NULL;
 
-	spin_unlock(&exi_channel->cmd_lock);
+	spin_unlock(&exi_channel->select_lock);
 }
 
 /*
@@ -507,13 +505,14 @@ static int exi_cmd_transfer(struct exi_command *cmd)
 
 	/*
 	 * |_______________|______...______|_______________| DMA alignment
-	 *     <----------------- len ----------------->
+	 *     <--pre_len--><---- len -----><-post_len->
 	 *     +-----------+------...------+-----------+
 	 *     | pre_data  | data          | post_data |
 	 *     | non-DMA   | DMA           | non-DMA   |
 	 *     +-----------+------...------+-----------+
 	 *       < 32 bytes  N*32 bytes      < 32 bytes
 	 *     |<--------->|<-----...----->|<--------->|
+	 *     <-------------- cmd->len --------------->
 	 */
 
 	pre_data = data;
@@ -816,13 +815,14 @@ static inline int exi_can_trigger_event(struct exi_channel *exi_channel,
 static inline int exi_trigger_event(struct exi_channel *exi_channel,
 				    unsigned int event_id)
 {
-	struct exi_event_handler *event;
+	exi_event_handler_t handler;
+	int retval = 0;
 
-	event = &exi_channel->events[event_id];
-	if (event->handler) {
-		return event->handler(exi_channel, event_id, event->data);
+	handler = exi_channel->events[event_id].handler;
+	if (handler) {
+		retval = handler(exi_channel, event_id, event->data);
 	}
-	return 0;
+	return retval;
 }
 
 /*
@@ -941,7 +941,7 @@ static int exi_enable_event(struct exi_channel *exi_channel,
 		writel(csr | (EXI_CSR_EXTIN | EXI_CSR_EXTINMASK), csr_reg);
 		break;
 	case EXI_EVENT_TC:
-		writel(csr | (EXI_CSR_TCINT | EXI_CSR_TCINTMASK), csr_reg);
+		//writel(csr | (EXI_CSR_TCINT | EXI_CSR_TCINTMASK), csr_reg);
 		break;
 	case EXI_EVENT_IRQ:
 		writel(csr | (EXI_CSR_EXIINT | EXI_CSR_EXIINTMASK), csr_reg);
@@ -970,7 +970,7 @@ static int exi_disable_event(struct exi_channel *exi_channel,
 		writel((csr | EXI_CSR_EXTIN) & ~EXI_CSR_EXTINMASK, csr_reg);
 		break;
 	case EXI_EVENT_TC:
-		writel((csr | EXI_CSR_TCINT) & ~EXI_CSR_TCINTMASK, csr_reg);
+		//writel((csr | EXI_CSR_TCINT) & ~EXI_CSR_TCINTMASK, csr_reg);
 		break;
 	case EXI_EVENT_IRQ:
 		writel((csr | EXI_CSR_EXIINT) & ~EXI_CSR_EXIINTMASK, csr_reg);
@@ -1070,7 +1070,7 @@ static void exi_quiesce_all_channels(u32 csr_mask)
 }
 
 /*
- * Pseudo-Internal. Initialize
+ * Pseudo-Internal. Initialize basic channel structures and hardware.
  */
 int exi_hw_init(void)
 {
@@ -1085,6 +1085,7 @@ int exi_hw_init(void)
 		exi_channel_init(exi_channel, channel);
 	}
 
+	/* calm down the hardware and allow external insertions */
 	exi_quiesce_all_channels(EXI_CSR_EXTINMASK);
 
 	/* register the exi interrupt handler */
@@ -1097,7 +1098,7 @@ int exi_hw_init(void)
 }
 
 /*
- * Pseudo-Internal.
+ * Pseudo-Internal. 
  */
 void exi_hw_exit(void)
 {

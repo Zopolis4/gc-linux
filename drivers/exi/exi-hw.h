@@ -88,27 +88,26 @@
 struct exi_event_handler {
 	exi_event_handler_t	handler;
 	void			*data;
-	unsigned int		channel_mask; /* channels used by the handler */
+	unsigned int		channel_mask;	/* channels used by handler */
 };
 
 /*
  * This structure represents an exi channel.
  */
 struct exi_channel {
-	spinlock_t		lock;
+	spinlock_t		lock;		/* misc channel lock */
 
 	int			channel;
 	unsigned long		flags;
 #define EXI_SELECTED (1<<0)
 #define EXI_DMABUSY  (1<<1)
 
-	spinlock_t		io_lock;
+	spinlock_t		io_lock;	/* serializes access to CSR */
 	void __iomem		*io_base;
 
+	spinlock_t		select_lock;	/* held while using channel */
 	struct exi_device	*device_selected;
 	wait_queue_head_t	wait_queue;
-
-	spinlock_t		cmd_lock;
 
 	struct exi_command	*dma_cmd;
 	struct exi_command	post_cmd;
