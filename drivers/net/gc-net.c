@@ -39,6 +39,10 @@
 
 #include "exi.h"
 
+#define BBA_DBG(format, arg...); { }
+//#define BBA_DBG(format, arg...) printk(f,## arg)
+
+
 #define BBA_IRQ 4
 #define IRQ_EXI 4
 //#define PKT_BUF_SZ		1536	/* Size of each temporary Rx buffer. */
@@ -166,7 +170,7 @@ static inline int have_irq(int t)
 		return 1;
 	} else
 	{
-		printk("UNHANDLED EXI\n");
+		BBA_DBG("UNHANDLED EXI\n");
 		return 0;
 	}
 }
@@ -190,7 +194,7 @@ void exi_interrupt_handler(int irq, void *c)
 
 void exi_init()
 {
-	printk("EXI: init interrupts\n");
+	BBA_DBG("EXI: init interrupts\n");
 	//request_irq(IRQ_EXI, exi_interrupt_handler, 0);
 	//request_debug_irq(IRQ_EXI, exi_interrupt_debug_handler, 0);
 
@@ -201,7 +205,7 @@ int exi_request_irq(int channel, int event, exi_irq_handler_t *handler, void *co
 {
 	if (exi_handler[channel * 3 + event])
 	{
-		//printk("EXI: irq %d:%d already used!\n", channel, event);
+		BBA_DBG("EXI: irq %d:%d already used!\n", channel, event);
 		return -1;
 	}
 	exi_handler[channel * 3 + event] = handler;
@@ -421,11 +425,11 @@ static inline u8 de600_read_byte(unsigned char type, struct net_device *dev)
 static int gc_bba_open(struct net_device *dev)
 {
 	struct gc_private *priv = (struct gc_private *)dev->priv;
-	//printk("gc_bba_open\n");
+	BBA_DBG("gc_bba_open\n");
 
 	int ret = request_irq(dev->irq, gc_bba_interrupt, 0, dev->name, dev);
 	if (ret) {
-		printk(KERN_ERR "%s: unable to get IRQ %d\n", dev->name, dev->irq);
+		BBA_DBG(KERN_ERR "%s: unable to get IRQ %d\n", dev->name, dev->irq);
 		return ret;
 	}
 
@@ -443,7 +447,7 @@ static int gc_bba_open(struct net_device *dev)
 
 static int gc_bba_close(struct net_device *dev)
 {
-	printk("gc_bba_close\n");
+	BBA_DBG("gc_bba_close\n");
 
 //	//select_nic();
 	rx_page = 0;
@@ -490,7 +494,7 @@ static int gc_bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
 			return 1;
 		}
 		/* else */
-		printk(KERN_WARNING "%s: transmit timed out (%d), %s?\n", dev->name, tickssofar, "network cable problem");
+		BBA_DBG(KERN_WARNING "%s: transmit timed out (%d), %s?\n", dev->name, tickssofar, "network cable problem");
 		/* Restart the adapter. */
 		spin_lock_irqsave(&priv->lock, priv->lockflags);
 		if (adapter_init(dev)) {
@@ -504,7 +508,7 @@ static int gc_bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	netif_stop_queue(dev);
 
 	/* Start real output */
-//	printk("gc_bba_start_xmit:len=%d, page %d/%d\n", skb->len, tx_fifo_in, free_tx_pages);
+	BBA_DBG("gc_bba_start_xmit:len=%d, page %d/%d\n", skb->len, tx_fifo_in, free_tx_pages);
 
 	spin_lock_irqsave(&priv->lock, priv->lockflags);
 
@@ -535,7 +539,7 @@ static int gc_bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	val = eth_inb(0);
 	if (val & 4)
 	{
-		printk("err USE!\n");
+		BBA_DBG("err USE!\n");
 		netif_start_queue(dev);		/* allow more packets into adapter */
 		spin_unlock_irqrestore(&priv->lock, priv->lockflags);
 		dev_kfree_skb(skb);
@@ -544,13 +548,13 @@ static int gc_bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	val|=4;
 	eth_outb(0, val);
 
-//	printk("DEBUG: waiting for tx done!\n");
+	BBA_DBG("DEBUG: waiting for tx done!\n");
 
 	while (!(eth_inb(9)&0x14));
 
 	if (eth_inb(9) & 0x10)
 	{
-		printk("TRANSMIT ERROR!\n");
+		BBA_DBG("TRANSMIT ERROR!\n");
 		priv->stats.tx_errors++;
 //		eth_outb(9, 0x10);
 	}
@@ -562,7 +566,8 @@ static int gc_bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
 
 //	int s = eth_inb(4);
 //	if (s)
-//		printk("tx error %02x\n", s);
+	
+	BBA_DBG("tx error %02x\n", s);
 
 	netif_start_queue(dev);		/* allow more packets into adapter */
 	
@@ -578,25 +583,45 @@ static int gc_bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
 
 static char *gc_input(struct net_device *dev)
 {
-//	struct gcif *gcif=(struct gcif*)netif->state;
+
 	struct gc_private *priv = (struct gc_private *)dev->priv;
 	struct sk_buff	*skb;
 	char *p, *q;
-	unsigned char *buffer;
+
 	unsigned short size, p_read, p_write;
+	unsigned short next_receive_frame;
+	
 	int i;
 	int ptr;
 
+	/*
+	Input Flow concept: Take a look to Hardware spec page 35
+	*/
+	
+	/*
+		Receive Buffer Write Page Pointer: Current receive write page pointer. The MSB
+		is the Reg17h.3 bit. The LSB is the Reg16h.0 bit. This register is controlled by
+		GMAC only. An internal Byte Counter (RWPBC) is associated with this page
+		register.
+	*/
 	p_write  = eth_inb(0x16);
-	p_write |= eth_inb(0x17) << 8;
+	p_write |= (eth_inb(0x17)&0x0f) << 8;
 
+	/*
+		Receive buffer Read Page Pointer: Current receive read page pointer. RRP[11:0]
+		is mapped to MA[19:8]. The MSB is the Reg19h.3 bit. The LSB is the Reg18h.0
+		bit. This register is normally controlled by the device driver. An internal Byte
+		Counter (RRPBC) is associated with this page register.
+	*/
+	
 	p_read  = eth_inb(0x18);
-	p_read |= eth_inb(0x19) << 8;
-//	printk("w %x r %x\n", p_write, p_read);
+	p_read |= (eth_inb(0x19)&0x0f) << 8;
+
+	BBA_DBG("Receive Buffer Page Pointer: %x\n", p_read);
 
 	if (p_read == p_write)
 	{
-		printk("nothing left.\n");
+		BBA_DBG("nothing left.\n");
 		priv->stats.rx_missed_errors++;
 		return 0;
 	}
@@ -605,7 +630,7 @@ static char *gc_input(struct net_device *dev)
 	eth_outb(0x3a, 2);
 	if (eth_inb(0x3a) & 2)
 	{
-		printk("NO DATA AVAILABLE!\n");
+		BBA_DBG("NO DATA AVAILABLE!\n");
 		priv->stats.rx_missed_errors++;
 		return 0;
 	}
@@ -613,17 +638,21 @@ static char *gc_input(struct net_device *dev)
 	size=0;
 
 	eth_ins(p_read << 8, descr, 4);
-//??????????????????????????????????
-	size = (descr[1] >> 4) | (descr[2]<<4);
 	
-//	size = descr[1];		/* low byte */
-//	size += (descr[2] << 8);	/* high byte */
-
+	/*
+		Size Looks Crazy, but ok, the Packet Lenght is indeed 3 nibbles = 12 bits
+		and shifed with 4 bit to the top.
+	*/	
+	
+	size = (descr[1] & 0xf0);	/* low byte */
+	size |= (descr[2] << 8);	/* high byte */
+	size = size >>4;
 	size -= 4;			/* Ignore trailing 4 CRC-bytes */
 	
+	// Max of 6*256 (pages * pageSize) can happen
 
-	if ((size < 32)  ||  (size > 1535)) {
-		printk(KERN_WARNING "%s: Bogus packet size %d.\n", dev->name, size);
+	if ((size < 32)  ||  (size > 1536)) {
+		BBA_DBG(KERN_WARNING "%s: Bogus packet size %d.\n", dev->name, size);
 		if (size > 10000) {
 			adapter_init(dev);
 			priv->stats.rx_length_errors++;
@@ -631,43 +660,32 @@ static char *gc_input(struct net_device *dev)
 		return;
 	}
 
-	// HOTFIX (for to be sure:)
-	#if 1
-	if (size<2002) skb = dev_alloc_skb(2002);	// enough for Standart MTU of 1500
-	#else
+	// We allocate Space for the Kernel IP System now
 	skb = dev_alloc_skb(size+2);
-	#endif
 	
-	
-	if (skb == NULL) {
-		printk("%s: Couldn't allocate a sk_buff of size %d.\n", dev->name, size);
+	if (!skb) {
+		BBA_DBG("%s: Couldn't allocate a sk_buff of size %d.\n", dev->name, size);
 		priv->stats.rx_errors++;
 		return;
 	}
-	/* else */
-
+	
 	skb->dev = dev;
 	skb_reserve(skb,2);	/* Align */
 
 	/* 'skb->data' points to the start of sk_buff data area. */
-	buffer = skb_put(skb,size);
-
-//	printk("There are %u bytes data\n", size);
-
+	skb_put(skb,size);
+	
+	// We calculate the DMA position
 	ptr = (p_read << 8) + 4;
-
-	if (ptr + size > 0x1000)
-	{
-		int len1 = 0x1000 - ptr - size;
-		eth_ins(ptr, buffer, len1);
-		eth_ins(ptr, buffer + len1, size - len1);
-	} else
-		eth_ins(ptr, buffer, size);
-
-	eth_outb(0x18, descr[0] & 0xFF);
-	eth_outb(0x19, descr[1] & 0xFF);
-
+	// We read the Network buffer into the skb->data
+	eth_ins(ptr, skb->data, size);
 	skb->protocol=eth_type_trans(skb,dev);
+
+	/*
+		We update the  Read Page Pointer with the next pointer, which was given to us
+	*/
+	eth_outb(0x18, descr[0] & 0xFF);
+	eth_outb(0x19, descr[1] & 0x0F);
 
 	netif_rx(skb);
 
@@ -676,6 +694,16 @@ static char *gc_input(struct net_device *dev)
 
 	priv->stats.rx_packets ++;	/* count all receives */
 	priv->stats.rx_bytes ++;	/* count all received bytes */
+	
+	next_receive_frame  = descr[0];
+	next_receive_frame |= (descr[1]0x0f) << 8;
+	
+	/*
+		do we have additional packages ?
+		Hopefully, i understood the documentation correct.
+		We call Recurse the compleate gc_input() again, and do as long
+	*/
+	if (next_receive_frame != p_write) gc_input(dev);
 	
 	return p;
 }
@@ -694,11 +722,11 @@ static void inline gcif_service(struct net_device *dev)
 
 	int status = inb9 & inb8;
 
-//	printk("gcif_service: %08x %08x status %08x\n", inb8, inb9, status);
+	BBA_DBG("gcif_service: %08x %08x status %08x\n", inb8, inb9, status);
 
 	if (!status) {
 		eth_outb(9, 0xff);
-		//printk("?? GC irq but no irq ??\n");
+		BBA_DBG("?? GC irq but no irq ??\n");
 	}
 
 	if (status & 4)
@@ -707,7 +735,7 @@ static void inline gcif_service(struct net_device *dev)
 
 		int s = eth_inb(4);
 		if (s)   // should not occur, since 4 == TX OK
-			printk("tx error %02x\n", s);
+			BBA_DBG("tx error %02x\n", s);
 	}
 
 	if (status & 2)
@@ -729,29 +757,29 @@ static void inline gcif_service(struct net_device *dev)
 	if (status & 8)
 	{
 		eth_outb(9, 8);
-		printk("receive error :(\n");
+		BBA_DBG("receive error :(\n");
 	}
 
 	if (status & 0x10)
 	{
 		eth_outb(9, 0x10);
-		printk("tx error\n");
+		BBA_DBG("tx error\n");
 	}
 	if (status & 0x20)
 	{
 		eth_outb(9, 0x20);
-		printk("rx fifo error\n");
+		BBA_DBG("rx fifo error\n");
 	}
 	if (status & 0x80)
 	{
 		eth_outb(9, 0x80);
-		printk("rx overflow!\n");
+		BBA_DBG("rx overflow!\n");
 	}
 
 	if (status & ~(0xBE))
 	{
 		eth_outb(9, status & ~0xBE);
-		printk("status %02x\n", status & ~0xBE);
+		BBA_DBG("status %02x\n", status & ~0xBE);
 	}
 //	eth_outb(9, status);
 }
@@ -774,7 +802,7 @@ static irqreturn_t gc_bba_interrupt(int irq, void *dev_id, struct pt_regs * regs
 
 	/* This might just as well be deleted now, no crummy drivers present :-) */
 	if ((dev == NULL) || (dev->irq != irq)) {
-		printk(KERN_ERR "%s: bogus interrupt %d\n", dev?dev->name:"GC_BBA", irq);
+		BBA_DBG(KERN_ERR "%s: bogus interrupt %d\n", dev?dev->name:"GC_BBA", irq);
 		return IRQ_NONE;
 	}
 
@@ -812,7 +840,7 @@ int __init gc_bba_probe(struct net_device *dev)
 	long l;
 
 
-	//printk("gc_bba_probe\n");
+	BBA_DBG("gc_bba_probe\n");
 
 	
 	SET_MODULE_OWNER(dev);
@@ -826,14 +854,14 @@ int __init gc_bba_probe(struct net_device *dev)
 	exi_imm_ex(0, &l, 4, EXI_READ);
 	exi_deselect(0);
 
-//	printk(": %u\n", l);
+	BBA_DBG(": %u\n", l);
 	if (l != 0x4020200) {
-		printk("GameCube broadband adapter not found");
+		BBA_DBG("GameCube broadband adapter not found");
 		return -ENODEV;
 	}
 
 
-	//printk("initializing BBA...\n");
+	BBA_DBG("initializing BBA...\n");
 
 	eth_outb(0x60, 0);	// unknown
 	udelay(10000);
@@ -846,7 +874,7 @@ int __init gc_bba_probe(struct net_device *dev)
 	eth_exi_outs(4, "\xd1\x07\x75\x75", 2);
 	eth_exi_outb(5, 0x4e);
 
-//	printk("BBA %02x %02x %02x %02x %02x %02x %02x %02x\n",
+//	BBA_DBG("BBA %02x %02x %02x %02x %02x %02x %02x %02x\n",
 //		 eth_exi_inb(0), eth_exi_inb(1), eth_exi_inb(2), eth_exi_inb(3),
 //		 eth_exi_inb(4), eth_exi_inb(5), eth_exi_inb(6), eth_exi_inb(7));
 
@@ -877,8 +905,8 @@ int __init gc_bba_probe(struct net_device *dev)
 
 	eth_ins(0x20, dev->dev_addr, ETH_LEN);
 
-	printk(KERN_INFO "%s: Nintendo GameCube broadband adapter", dev->name);
-	printk(", %02x:%02x:%02x:%02x:%02x:%02x.\n",
+	BBA_DBG(KERN_INFO "%s: Nintendo GameCube broadband adapter", dev->name);
+	BBA_DBG(", %02x:%02x:%02x:%02x:%02x:%02x.\n",
 		dev->dev_addr[0], dev->dev_addr[1], dev->dev_addr[2],
 		dev->dev_addr[3], dev->dev_addr[4], dev->dev_addr[5]);
 
@@ -893,7 +921,7 @@ int __init gc_bba_probe(struct net_device *dev)
 	eth_outb(8, 0xFF); // enable all IRQs
 	eth_outb(9, 0xFF); // clear all irqs
 
-//	printk("after all: irq mask %x %x\n", eth_inb(8), eth_inb(9));
+	BBA_DBG("after all: irq mask %x %x\n", eth_inb(8), eth_inb(9));
 
 	/* Initialize the device structure. */
 
@@ -926,7 +954,7 @@ static int adapter_init(struct net_device *dev)
 	//select_nic();
 	rx_page = 0; /* used by RESET */
 
-//	printk("initializing BBA...\n");
+	BBA_DBG("initializing BBA...\n");
 
 	eth_outb(0x60, 0);	// unknown
 	udelay(10000);
@@ -939,9 +967,10 @@ static int adapter_init(struct net_device *dev)
 	eth_exi_outs(4, "\xd1\x07\x75\x75", 2);
 	eth_exi_outb(5, 0x4e);
 
-//	printk("BBA %02x %02x %02x %02x %02x %02x %02x %02x\n",
-//		 eth_exi_inb(0), eth_exi_inb(1), eth_exi_inb(2), eth_exi_inb(3),
-//		 eth_exi_inb(4), eth_exi_inb(5), eth_exi_inb(6), eth_exi_inb(7));
+	BBA_DBG("BBA %02x %02x %02x %02x %02x %02x %02x %02x\n",
+		 eth_exi_inb(0), eth_exi_inb(1), eth_exi_inb(2), eth_exi_inb(3),
+		 eth_exi_inb(4), eth_exi_inb(5), eth_exi_inb(6), eth_exi_inb(7));
+
 	eth_outb(0x5b, eth_inb(0x5b)&~(1<<7));
 	eth_outb(0x5e, 1);
 	eth_outb(0x5c, eth_inb(0x5c)|4);
@@ -968,9 +997,10 @@ static int adapter_init(struct net_device *dev)
 	eth_outb(0x32, 8);
 
 	eth_ins(0x20, dev->dev_addr, ETH_LEN);
-//	printk("MAC ADDRESS %02x:%02x:%02x:%02x:%02x:%02x\n",
-//		dev->dev_addr[0], dev->dev_addr[1], dev->dev_addr[2],
-//		dev->dev_addr[3], dev->dev_addr[4], dev->dev_addr[5]);
+
+	BBA_DBG("MAC ADDRESS %02x:%02x:%02x:%02x:%02x:%02x\n",
+		dev->dev_addr[0], dev->dev_addr[1], dev->dev_addr[2],
+		dev->dev_addr[3], dev->dev_addr[4], dev->dev_addr[5]);
 
 	/* Get the adapter ethernet address from the ROM */
 	for (i = 0; i < ETH_ALEN; i++) {
@@ -978,9 +1008,9 @@ static int adapter_init(struct net_device *dev)
 	}
 
 //	eth_ins(0x20, dev->ethaddr->addr, 6);
-//	printk("MAC ADDRESS %02x:%02x:%02x:%02x:%02x:%02x\n",
-//		gcif->ethaddr->addr[0], gcif->ethaddr->addr[1], gcif->ethaddr->addr[2],
-//		gcif->ethaddr->addr[3], gcif->ethaddr->addr[4], gcif->ethaddr->addr[5]);
+	BBA_DBG("MAC ADDRESS %02x:%02x:%02x:%02x:%02x:%02x\n",
+		gcif->ethaddr->addr[0], gcif->ethaddr->addr[1], gcif->ethaddr->addr[2],
+		gcif->ethaddr->addr[3], gcif->ethaddr->addr[4], gcif->ethaddr->addr[5]);
 	
 	strncpy(dev->name,"GameCube BBA",IFNAMSIZ);
 	dev->name[IFNAMSIZ-1]= 0;
@@ -993,7 +1023,7 @@ static int adapter_init(struct net_device *dev)
 	eth_outb(8, 0xFF); // enable all IRQs
 	eth_outb(9, 0xFF); // clear all irqs
 
-//	printk("after all: irq mask %x %x\n", eth_inb(8), eth_inb(9));
+	BBA_DBG("after all: irq mask %x %x\n", eth_inb(8), eth_inb(9));
 
 //	netif_start_queue(dev);
 
@@ -1007,7 +1037,7 @@ static int __init gc_bba_init(void)
 	memset(&gc_bba_dev,0,sizeof(struct net_device));
 	
 	
-	//printk("gc_bba_init\n");
+	BBA_DBG("gc_bba_init\n");
 
 //	exi_init();
 
@@ -1019,7 +1049,7 @@ static int __init gc_bba_init(void)
 
 static void __exit gc_bba_exit(void)
 {
-	printk("gc_bba_exit\n");
+	BBA_DBG("gc_bba_exit\n");
 	unregister_netdev(&gc_bba_dev);
 }
 
@@ -1034,7 +1064,7 @@ void gcif_irq_handler(int channel, int event, void *ct)
 
 	if (s & 0x80)
 	{
-//		printk("GC_IRQ service.\n");
+//		BBA_DBG("GC_IRQ service.\n");
 		eth_exi_outb(3, 0x80);
 		gcif_service(dev);
 		eth_exi_outb(2, 0xF8);
@@ -1044,7 +1074,7 @@ void gcif_irq_handler(int channel, int event, void *ct)
 	{
 		eth_exi_outb(3, 0x40);
 		eth_exi_outb(2, 0xF8);
-//		printk("GCIF - EXI - 0x40!\n");
+//		BBA_DBG("GCIF - EXI - 0x40!\n");
 		adapter_init(dev);
 		return;
 		
@@ -1052,21 +1082,21 @@ void gcif_irq_handler(int channel, int event, void *ct)
 	}
 	if (s & 0x20)
 	{
-		printk("GCIF - EXI - CMDERR!\n");
+		BBA_DBG("GCIF - EXI - CMDERR!\n");
 		eth_exi_outb(3, 0x20);
 		eth_exi_outb(2, 0xF8);
 		return;
 	}
 	if (s & 0x10)
 	{
-		printk("GCIF - EXI - patchtru!\n");
+		BBA_DBG("GCIF - EXI - patchtru!\n");
 		eth_exi_outb(3, 0x10);
 		eth_exi_outb(2, 0xF8);
 		return;
 	}
 	if (s & 0x08)
 	{
-		printk("GCIF - EXI - HASH function\n");
+		BBA_DBG("GCIF - EXI - HASH function\n");
 		eth_exi_outb(3, 0x08);
 		eth_exi_outb(2, 0xF8);
 		return;
