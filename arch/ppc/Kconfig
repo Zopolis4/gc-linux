@@ -651,6 +651,16 @@ config PQ2ADS
 	depends on ADS8272
 	default y
 
+config GAMECUBE_RTC
+	bool "Nintendo GameCube Real Time Clock and SRAM"
+	depends on GAMECUBE && EXI
+	default y
+	help
+	  If you say yes to this option, support will be included for the
+	  Real Time Clock and SRAM of the Nintendo GameCube.
+	  
+	  If in doubt, say Y here.
+
 config GAMECUBE_CONSOLE
 	bool "Nintendo GameCube debug console"
 	depends on GAMECUBE
@@ -662,15 +672,12 @@ config GAMECUBE_CONSOLE
 	  If in doubt, say N here.
 
 config GAMECUBE_RESET
-	tristate "Nintendo GameCube reset button"
+	bool "Nintendo GameCube reset button"
 	depends on GAMECUBE
 	default y
 	help
 	  If you say yes to this option, support will be included for the
 	  reset button of the Nintendo GameCube.
-	  
-	  This driver can also be built as a module.  If so, the module
-	  will be called gcn-rsw.
 	  
 	  If in doubt, say Y here.
 

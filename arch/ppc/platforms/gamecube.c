@@ -206,9 +206,4 @@ platform_init(unsigned long r3, unsigned long r4, unsigned long r5,
 	ppc_md.machine_kexec_prepare = gamecube_kexec_prepare;
 	ppc_md.machine_kexec = machine_kexec_simple;
 #endif /* CONFIG_KEXEC */
-
-	/* no RTC driver, too slow */
-	ppc_md.time_init      = NULL;
-	ppc_md.set_rtc_time   = NULL;
-	ppc_md.get_rtc_time   = NULL;
 }

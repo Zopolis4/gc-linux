@@ -1,8 +1,9 @@
 /*
  * arch/ppc/platforms/gcn-rtc.c
  *
- * Nintendo GameCube RTC functions
- * Copyright (C) 2004 The GameCube Linux Team
+ * Nintendo GameCube RTC/SRAM functions
+ * Copyright (C) 2004-2005 The GameCube Linux Team
+ * Copyright (C) 2005 Albert Herranz
  *
  * Based on gamecube_time.c from Torben Nielsen.
  *
@@ -15,147 +16,222 @@
 
 #include <linux/init.h>
 #include <linux/time.h>
+
 #include <linux/exi.h>
 
-/*
- * The EXI functions that we use are guaranteed to work by the gcn-exi-lite
- * framework even if exi_lite_init() has not been called.
- */
+#define DRV_MODULE_NAME   "gcn-rtc"
+#define DRV_DESCRIPTION   "Nintendo GameCube RTC/SRAM driver"
+#define DRV_AUTHOR        "Albert Herranz"
 
-#define RTC_OFFSET 946684800L
+static char rtc_driver_version[] = "1.0";
 
-static int rtc_probe(struct exi_device *);
-static void rtc_remove(struct exi_device *);
+#define rtc_printk(level, format, arg...) \
+	printk(level DRV_MODULE_NAME ": " format , ## arg)
 
-static int bias = 0;
-static int initialized = 0;
-static struct exi_driver rtc_exi_driver = {
-	.name = "RTC/SRAM",
-	.eid = {
-		.channel = 0,
-		.device  = 1,
-		.id      = 0xFFFF1698
-	},
-	.frequency = 3,
-	.probe  = rtc_probe,
-	.remove = rtc_remove 
+
+#define RTC_EXI_ID	0xFFFF1698
+
+#define RTC_EXI_CHANNEL	0
+#define RTC_EXI_DEVICE	1
+#define RTC_EXI_FREQ	3 /* 8MHz */
+
+#define RTC_OFFSET	946684800L
+
+
+struct gcn_sram {
+	u16     csum1;
+	u16     csum2;
+	u32     ead0;
+	u32     ead1;
+	int     bias;
+	s8      horz_display_offset;
+	u8      ntd;
+	u8      language;
+	u8      flags;
+	u8      reserved[44];
 };
 
-#if 0
-static void read_sram(unsigned char *abuf)
+struct rtc_private {
+	spinlock_t		lock;
+	struct exi_device	*dev;
+
+	struct gcn_sram         sram;
+};
+
+static struct rtc_private rtc_private;
+
+/*
+ * Loads the SRAM contents.
+ */
+static void sram_load(struct exi_device *dev)
 {
-	unsigned long a;
-	
+	struct rtc_private *priv = exi_get_drvdata(dev);
+	struct gcn_sram *sram = &priv->sram;
+	u32 req;
+
 	/* select the SRAM device */
-	exi_select(0, 1, 3);
+	exi_dev_select(dev);
 
 	/* send the appropriate command */
-	a = 0x20000100;
-	exi_write(0, &a, 4);
+	req = 0x20000100;
+	exi_dev_write(dev, &req, sizeof(req));
 
 	/* read the SRAM data */
-	exi_read(0, abuf, 64);
+	exi_dev_read(dev, sram, sizeof(*sram));
 
 	/* deselect the SRAM device */
-	exi_deselect(0);
+	exi_dev_deselect(dev);
 
 	return;
 }
 
-static unsigned long get_rtc(void)
-{
-	unsigned long a = 0L;
-
-	/* select the RTC device */
-	exi_select(0, 1, 3);
-
-	/* send the appropriate command */
-	a = 0x20000000;
-	exi_write(0, &a, 4);
-
-	/* read the time and date value */
-	exi_read(0, &a, 4);
-
-	/* deselect the RTC device */
-	exi_deselect(0);
-
-	return a;
-}
-
-static void set_rtc(unsigned long aval)
+/*
+ * Gets the hardware clock date and time.
+ */
+static unsigned long rtc_get_time(struct exi_device *dev)
 {
 	unsigned long a;
 
 	/* select the RTC device */
-	exi_select(0, 1, 3);
+	exi_dev_select(dev);
 
 	/* send the appropriate command */
-	a = 0xA0000000;
-	exi_write(0, &a, 4);
+	a = 0x20000000;
+	exi_dev_write(dev, &a, sizeof(a));
 
-	/* Set the new time and date value */
-	exi_write(0, &aval, 4);
+	/* read the time and date value */
+	exi_dev_read(dev, &a, sizeof(a));
 
-	/* Deselect the RTC device */
-	exi_deselect(0);
+	/* deselect the RTC device */
+	exi_dev_deselect(dev);
+
+	return a;
 }
-#endif
+
+/*
+ * Sets the hardware clock date and time to @aval.
+ */
+static void rtc_set_time(struct exi_device *dev, unsigned long aval)
+{
+	u32 req;
+
+	/* select the RTC device */
+	exi_dev_select(dev);
+
+	/* send the appropriate command */
+	req = 0xa0000000;
+	exi_dev_write(dev, &req, sizeof(req));
+
+	/* set the new time and date value */
+	exi_dev_write(dev, &aval, sizeof(aval));
+
+	/* deselect the RTC device */
+	exi_dev_deselect(dev);
+}
+
+/**
+ * Platform specific function to return the current date and time.
+ */
+static unsigned long gcn_get_rtc_time(void)
+{
+	struct rtc_private *priv = &rtc_private;
+
+	return rtc_get_time(priv->dev) + priv->sram.bias + RTC_OFFSET;
+}
+
+/**
+ * Platform specific function to set the current date and time.
+ *
+ */
+static int gcn_set_rtc_time(unsigned long nowtime)
+{
+	struct rtc_private *priv = &rtc_private;
+
+	rtc_set_time(priv->dev, nowtime - RTC_OFFSET - priv->sram.bias);
+
+	return 1;
+}
+
 /**
  *
  */
-unsigned long gcn_get_rtc_time(void)
-{
-	static int i=0;
-	if (i++ == 0) {
-		printk(KERN_INFO "Get RTC time\n");
-	}
-	if (initialized) {
-		//return get_rtc() + bias + RTC_OFFSET;
-	}
-	return 0;
-}
-
-/**
- *
- */
-int gcn_set_rtc_time(unsigned long nowtime)
-{
-	printk(KERN_INFO "Set RTC time %lu\n",nowtime);
-	if (initialized) {
-		//set_rtc(nowtime - RTC_OFFSET - bias);
-		return 0;
-	}
-	
-	return 0;
-}
-
-static int rtc_probe(struct exi_device *dev) 
-{
-	/* nothing to probe, hardware is always there */
-	initialized = 1;
-	
-	return 0;
-}
-
 static void rtc_remove(struct exi_device *dev)
 {
-	initialized = 0;
+	struct rtc_private *priv = exi_get_drvdata(dev);
+	unsigned long flags;
+
+	if (priv) {
+		spin_lock_irqsave(&priv->lock, flags);
+		ppc_md.set_rtc_time = NULL;
+		ppc_md.get_rtc_time = NULL;
+		spin_unlock_irqrestore(&priv->lock, flags);
+	}
+	exi_device_put(dev);
 }
 
 /**
  *
  */
-long gcn_time_init(void)
+static int rtc_probe(struct exi_device *dev)
 {
-	printk(KERN_INFO "gcn_time_init\n");
-	initialized = 0;
-	return 0;
-	//return exi_register_driver(&rtc_exi_driver);
+	struct rtc_private *priv = &rtc_private;
+	unsigned long flags;
+	int retval = -ENODEV;
+
+	if (exi_device_get(dev)) {
+		spin_lock_init(&priv->lock);
+
+		exi_set_drvdata(dev, priv);
+		priv->dev = dev;
+
+		memset(&priv->sram, 0, sizeof(struct gcn_sram));
+		sram_load(dev);
+
+		spin_lock_irqsave(&priv->lock, flags);
+		ppc_md.set_rtc_time = gcn_set_rtc_time;
+		ppc_md.get_rtc_time = gcn_get_rtc_time;
+		spin_unlock_irqrestore(&priv->lock, flags);
+		
+		retval = 0;
+	}
+
+	return retval;
 }
-	/*
-char sram[64];
-	int *pbias = (int *)&sram[0xC];
-	read_sram(sram);
-	bias = *pbias;
-	return 0; */
+
+static struct exi_device_id rtc_eid_table[] = {
+        [0] = {
+                .channel = RTC_EXI_CHANNEL,
+                .device  = RTC_EXI_DEVICE,
+                .id      = RTC_EXI_ID
+        },
+        { .id = 0 }
+};
+
+static struct exi_driver rtc_driver = {
+	.name = "gcn-rtc",
+	.eid_table = rtc_eid_table,
+	.frequency = RTC_EXI_FREQ,
+	.probe = rtc_probe,
+	.remove = rtc_remove,
+};
+
+static int __init rtc_init_module(void)
+{
+	rtc_printk(KERN_INFO, "%s - version %s\n",
+		   DRV_DESCRIPTION, rtc_driver_version);
+
+	return exi_driver_register(&rtc_driver);
+}
+
+static void __exit rtc_exit_module(void)
+{
+	exi_driver_unregister(&rtc_driver);
+}
+
+module_init(rtc_init_module);
+module_exit(rtc_exit_module);
+
+MODULE_AUTHOR(DRV_AUTHOR);
+MODULE_DESCRIPTION(DRV_DESCRIPTION);
+MODULE_LICENSE("GPL");
 
