@@ -517,6 +517,13 @@ config SANDPOINT
 	  Select SANDPOINT if configuring for a Motorola Sandpoint X3
 	  (any flavor).
 
+config GAMECUBE
+	bool "Nintendo-GameCube"
+	help
+	   Select GAMECUBE if configuring for the Nintendo GameCube.
+	   More information is available at:
+	   <http://gc-linux.sourceforge.net/>.
+
 config ADIR
 	bool "SBS-Adirondack"
 
@@ -559,11 +566,6 @@ config TQM8260
 	  Date of Release: June 2001
 	  End of Life: not yet :-)
 	  URL: <http://www.denx.de/PDF/TQM82xx_SPEC_Rev005.pdf>
-
-config GAMECUBE
-	bool "GameCube"
-	---help---
-	   The Nintendo GamCube.
 
 endchoice
 
