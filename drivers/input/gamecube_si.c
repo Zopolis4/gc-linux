@@ -14,7 +14,7 @@
 
 
 MODULE_AUTHOR ("Steven Looman <steven@krx.nl>");
-MODULE_DESCRIPTION ("Nintendo Gamecube controller input driver");
+MODULE_DESCRIPTION ("Nintendo GameCube controller input driver");
 MODULE_LICENSE ("GPL");
 
 
@@ -56,7 +56,7 @@ MODULE_LICENSE ("GPL");
 
 
 static struct resource resources = {
-	"Gamecube SI",
+	"GameCube SI",
 	0xCC006400,
 	0xCC006500,
 	IORESOURCE_MEM|IORESOURCE_BUSY
@@ -311,10 +311,10 @@ static int gcSiEvent (struct input_dev *dev, unsigned int type, unsigned int cod
 static int __init gcSiInit(void) {
 	int i;
 
-	printk (KERN_WARNING "Gamecube SI: init\n");
+	printk (KERN_WARNING "GameCube SI: init\n");
 
 	if (request_resource (&iomem_resource, &resources) < 0) {
-		printk (KERN_WARNING "Gamecube SI: resource busy\n");
+		printk (KERN_WARNING "GameCube SI: resource busy\n");
 		return -EBUSY;
 	}
 
@@ -326,7 +326,7 @@ static int __init gcSiInit(void) {
 		// probe ports
 		port[i].id = getControllerID(i) >> 16;
 #ifdef GCSIDEBUG
-		printk (KERN_WARNING "Gamecube SI: port[%d] = 0x%x\n", i, port[i].id);
+		printk (KERN_WARNING "GameCube SI: port[%d] = 0x%x\n", i, port[i].id);
 #endif
 
 		init_input_dev (&port[i].inputDev);
@@ -335,13 +335,13 @@ static int __init gcSiInit(void) {
 		port[i].inputDev.close = gcSiClose;
 		port[i].inputDev.private = (unsigned int *)i;
 
-		printk (KERN_WARNING "Gamecube Si: Port %d: ", i);
+		printk (KERN_WARNING "GameCube SI: Port %d: ", i);
 
 		switch (port[i].id) {
 			case ID_PAD:
 				printk (KERN_WARNING "standard pad\n");
 				
-				sprintf (port[i].name, "Gamecube standard pad");
+				sprintf (port[i].name, "GameCube standard pad");
 				port[i].inputDev.name = port[i].name;
 
 //				sprintf (port[i].phys, "gcsi/port%d", i);
@@ -451,7 +451,7 @@ static int __init gcSiInit(void) {
 static void __exit gcSiExit(void) {
 	int i;
 	
-	printk (KERN_WARNING "Gamecube SI: exit\n");
+	printk (KERN_WARNING "GameCube SI: exit\n");
 
 	for (i = 0; i < 4; ++i)
 		if (port[i].id == ID_PAD ||
