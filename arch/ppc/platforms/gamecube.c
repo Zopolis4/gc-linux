@@ -27,43 +27,12 @@
 #include "gamecube.h"
 
 /*
- * There are 14 IRQs in total. Each has a corresponding bit in both
- * the Interrupt Cause (ICR) and Interrupt Mask (IMR) registers.
- *
- * Enabling/disabling an interrupt line involves asserting/clearing
- * the corresponding bit in IMR. ACK'ing a request simply involves
- * asserting the corresponding bit in ICR.
- */
-#define FLIPPER_NR_IRQS		14
-#define FLIPPER_ICR		((volatile ulong *)0xcc003000)
-#define FLIPPER_IMR		((volatile ulong *)0xcc003004)
-
-/*
- * Anything written here automagically puts us through reset.
- */
-#define GCN_PI_RESET		0xcc003024
-
-/*
- * These registers control where the visible framebuffer is located.
- */
-#define GCN_VI_TFBL		0xcc00201c
-#define GCN_VI_BFBL		0xcc002024
-
-/*
- * We happen to be ISA/PCI-free, hence the !CONFIG_PCI. These
- * are here only to avoid the accompanying compile breakage.
+ * We happen to be ISA/PCI-free, hence !CONFIG_PCI. These
+ * are only here to avoid the accompanying compile breakage.
  */
 unsigned long isa_io_base = 0;
 unsigned long isa_mem_base = 0;
 unsigned long pci_dram_offset = 0;
-
-/* from arch/ppc/platforms/gcn-time.c */
-extern long gcn_time_init(void) __init;
-extern unsigned long gcn_get_rtc_time(void);
-extern int gcn_set_rtc_time(unsigned long nowtime);
-
-/* from arch/ppc/platforms/gcn-con.c */
-extern void gcn_con_init(void);
 
 
 static unsigned long gamecube_find_end_of_memory(void)
@@ -83,7 +52,7 @@ static void __init gamecube_map_io(void)
 static void gamecube_restart(char *cmd)
 {
 	local_irq_disable();
-	writeb(0x00, GCN_PI_RESET);
+	writeb(0x00, FLIPPER_RESET);
 }
 
 static void gamecube_power_off(void)

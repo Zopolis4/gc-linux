@@ -17,6 +17,23 @@
 #include <asm/ppcboot.h>
 
 /*
+ * There are 14 IRQs in total. Each has a corresponding bit in both
+ * the Interrupt Cause (ICR) and Interrupt Mask (IMR) registers.
+ *
+ * Enabling/disabling an interrupt line involves asserting/clearing
+ * the corresponding bit in IMR. ACK'ing a request simply involves
+ * asserting the corresponding bit in ICR.
+ */
+#define FLIPPER_NR_IRQS		(14)
+#define FLIPPER_ICR		((volatile ulong *)0xcc003000)
+#define FLIPPER_IMR		((volatile ulong *)0xcc003004)
+
+/*
+ * Anything written here automagically puts us through reset.
+ */
+#define FLIPPER_RESET		((volatile ulong *)0xcc003024)
+
+/*
  * This is the current memory layout for the GameCube Linux port.
  *
  *   +------------------------------+ 
@@ -82,5 +99,19 @@
 #define GCN_PRESERVE_TO         (GCN_KXC_START)
 #define GCN_PRESERVE_SIZE       (GCN_PRESERVE_END+1)
 
-#endif /* !__MACH_GAMECUBE_H */
+/*
+ * These registers control where the visible framebuffer is located.
+ */
+#define GCN_VI_TFBL		0xcc00201c
+#define GCN_VI_BFBL		0xcc002024
 
+
+/* arch/ppc/platforms/gcn-time.c */
+extern long gcn_time_init(void);
+extern unsigned long gcn_get_rtc_time(void);
+extern int gcn_set_rtc_time(unsigned long nowtime);
+
+/* arch/ppc/platforms/gcn-con.c */
+extern void gcn_con_init(void);
+
+#endif /* !__MACH_GAMECUBE_H */
