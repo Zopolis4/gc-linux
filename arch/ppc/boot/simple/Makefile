@@ -156,7 +156,7 @@ $(obj)/zvmlinux: $(OBJS) $(LIBS) $(boot)/ld.script $(images)/vmlinux.gz \
 		--set-section-flags=.image=contents,alloc,load,readonly,data \
 		$(obj)/dummy.o $(obj)/image.o
 	$(LD) $(LD_ARGS) -o $@ $(OBJS) $(obj)/image.o $(LIBS)
-	$(OBJCOPY) $(OBJCOPY_ARGS) $@ $@ -R .comment -R .stab \
+	$(OBJCOPY) $(OBJCOPY_ARGS) $@ $@ --change-addresses=-0x80000000 -R .comment -R .stab \
 		-R .stabstr -R .ramdisk -R .sysmap
 
 $(obj)/zvmlinux.initrd: $(OBJS) $(LIBS) $(boot)/ld.script \
@@ -168,7 +168,7 @@ $(obj)/zvmlinux.initrd: $(OBJS) $(LIBS) $(boot)/ld.script \
 		--set-section-flags=.image=contents,alloc,load,readonly,data \
 		$(obj)/dummy.o $(obj)/image.o
 	$(LD) $(LD_ARGS) -o $@ $(OBJS) $(obj)/image.o $(LIBS)
-	$(OBJCOPY) $(OBJCOPY_ARGS) $@ $@ -R .comment -R .stab \
+	$(OBJCOPY) $(OBJCOPY_ARGS) $@ $@  -R .comment -R .stab \
 		-R .stabstr -R .sysmap
 
 # Sort-of dummy rules, that let us format the image we want.
