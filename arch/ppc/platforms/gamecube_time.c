@@ -2,95 +2,6 @@
 #include <linux/time.h>
 
 
-
-#define RTC_OFFSET 946684800L
-
-static int bias = 0;
-
-long __init gamecube_time_init(void)
-{
-	char sram[64];
-	int *pbias = &sram[0xC];
-	read_sram(sram);
-	bias = *pbias;
-	return 0;
-}
-
-unsigned long gamecube_get_rtc_time(void)
-{
-	return get_rtc() + bias + RTC_OFFSET;
-}
-
-int gamecube_set_rtc_time(unsigned long nowtime)
-{
-	set_rtc(nowtime - RTC_OFFSET - bias);
-
-	return 1;
-}
-
-
-static unsigned long get_rtc(void)
-{
-	unsigned long a = 0L;
-
-	// Select the RTC device.
-	exi_select(0, 1, 3);
-
-	// Send the appropriate command.
-	a = 0x20000000;
-	exi_imm(0, &a, 4, 1, 0);
-	exi_sync(0);
-	// Read the time and date value!
-	exi_imm(0, &a, 4, 0, 0);
-	exi_sync(0);
-
-	// Deselect the RTC device.
-	exi_deselect(0);
-
-	return a;
-}
-
-static void set_rtc(unsigned long aval)
-{
-	unsigned long a;
-
-	// Select the RTC device.
-	exi_select(0, 1, 3);
-
-	// Send the appropriate command.
-	a = 0xA0000000;
-	exi_imm(0, &a, 4, 1, 0);
-	exi_sync(0);
-
-	// Set the new time and date value!
-	exi_imm(0, &aval, 4, 1, 0);
-	exi_sync(0);
-
-	// Deselect the RTC device.
-	exi_deselect(0);
-}
-
-static void read_sram(unsigned char *abuf)
-{
-	unsigned long a;
-
-	// Select the SRAM device.
-	exi_select(0, 1, 3);
-
-	// Send the appropriate command.
-	a = 0x20000100;
-	exi_imm(0, &a, 4, 1, 0);
-	exi_sync(0);
-
-	// Read the SRAM data!
-	exi_imm_ex(0, abuf, 64, 0);
-
-	// Deselect the SRAM device.
-	exi_deselect(0);
-
-	return;
-}
-
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 // must be MOVED LATER
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -179,3 +90,93 @@ static void exi_imm_ex(int channel, void *data, int len, int mode)
 		d += tc;
 	}
 }
+
+///////////////////////////////////////////////////////////7
+
+#define RTC_OFFSET 946684800L
+
+static int bias = 0;
+
+static void read_sram(unsigned char *abuf)
+{
+	unsigned long a;
+
+	// Select the SRAM device.
+	exi_select(0, 1, 3);
+
+	// Send the appropriate command.
+	a = 0x20000100;
+	exi_imm(0, &a, 4, 1, 0);
+	exi_sync(0);
+
+	// Read the SRAM data!
+	exi_imm_ex(0, abuf, 64, 0);
+
+	// Deselect the SRAM device.
+	exi_deselect(0);
+
+	return;
+}
+
+long __init gamecube_time_init(void)
+{
+	char sram[64];
+	int *pbias = (int *)&sram[0xC];
+	read_sram(sram);
+	bias = *pbias;
+	return 0;
+}
+
+static unsigned long get_rtc(void)
+{
+	unsigned long a = 0L;
+
+	// Select the RTC device.
+	exi_select(0, 1, 3);
+
+	// Send the appropriate command.
+	a = 0x20000000;
+	exi_imm(0, &a, 4, 1, 0);
+	exi_sync(0);
+	// Read the time and date value!
+	exi_imm(0, &a, 4, 0, 0);
+	exi_sync(0);
+
+	// Deselect the RTC device.
+	exi_deselect(0);
+
+	return a;
+}
+
+static void set_rtc(unsigned long aval)
+{
+	unsigned long a;
+
+	// Select the RTC device.
+	exi_select(0, 1, 3);
+
+	// Send the appropriate command.
+	a = 0xA0000000;
+	exi_imm(0, &a, 4, 1, 0);
+	exi_sync(0);
+
+	// Set the new time and date value!
+	exi_imm(0, &aval, 4, 1, 0);
+	exi_sync(0);
+
+	// Deselect the RTC device.
+	exi_deselect(0);
+}
+
+unsigned long gamecube_get_rtc_time(void)
+{
+	return get_rtc() + bias + RTC_OFFSET;
+}
+
+int gamecube_set_rtc_time(unsigned long nowtime)
+{
+	set_rtc(nowtime - RTC_OFFSET - bias);
+
+	return 1;
+}
+
