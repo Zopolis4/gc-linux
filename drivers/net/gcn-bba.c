@@ -1,14 +1,20 @@
 /**
- * gamecube_bba.c - Broadband Adapter driver for Nintendo's GameCube
- * Copyright(C) 2004 Albert Herranz
+ * drivers/net/gcn-bba.c
+ *
+ * Nintendo GameCube Broadband Adapter driver
+ * Copyright (C) 2004 Albert Herranz
+ * Copyright (C) 2004 The GameCube Linux Team
  *
  * Based on previous work by Stefan Esser, Franz Lehner, Costis and tmbinc.
  *
- * This source code is licensed under the GNU General Public License,
- * Version 2. See the file COPYING for more details.
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
  */
 
-#define DEBUG
+#define BBA_DEBUG
 
 #include <linux/config.h>
 #include <linux/module.h>
@@ -26,10 +32,13 @@
 #include <linux/etherdevice.h>
 #include <linux/skbuff.h>
 #include <linux/spinlock.h>
+#include <linux/exi.h>
 #include <asm/system.h>
 #include <asm/io.h>
 
-#define BBA_DEBUG (defined(DEBUG))
+#ifndef EXI_LITE
+#error Sorry, this driver only works with the gcn-exi-lite framework.
+#endif
 
 #ifdef BBA_DEBUG
 #  define DPRINTK(fmt, args...) \
@@ -37,348 +46,6 @@
 #else
 #  define DPRINTK(fmt, args...)
 #endif
-
-#define MISSING_EXI_FRAMEWORK 1
-#include <linux/exi.h>
-
-
-/* ----8<--------8<--------8<--------8<--------8<--------8<--------8<---- */
-
-/* XXX The following stuff should be part of the exi-driver when finished.    */
-/* XXX ---Albert Herranz                                                      */
-
-/* XXX hack to avoid kernel crash while we lack a proper initialized device */
-#undef dev_printk
-#define dev_printk(level, dev, format, arg...)  \
-        printk(level "exi bus0: " format , ## arg)
-
-#define EXI_MAX_CHANNELS  3	/* channels on the EXI bus */
-#define EXI_MAX_EVENTS    3	/* types of events on the EXI bus */
-
-#define EXI_EVENT_IRQ     0
-#define EXI_EVENT_INSERT  1
-#define EXI_EVENT_TC      2
-
-#define EXI_READ  0
-#define EXI_WRITE 1
-
-#define IRQ_EXI 4
-
-#define EXI_CSR_BASE 0xcc006800	/* EXI Channel Status Register */
-#define   EXI_CSR_EXT         (1<<12)
-#define   EXI_CSR_EXTINT      (1<<11)
-#define   EXI_CSR_EXTINTMASK  (1<<10)
-#define   EXI_CSR_CSMASK      (0x7<<7)
-#define     EXI_CSR_CS_0      (0x1<<7)	/* Chip Select 001 */
-#define     EXI_CSR_CS_1      (0x2<<7)	/* Chip Select 010 */
-#define     EXI_CSR_CS_2      (0x4<<7)	/* Chip Select 100 */
-#define   EXI_CSR_CLKMASK     (0x7<<4)
-#define     EXI_CSR_CLK_1MHZ  (0x0<<4)
-#define     EXI_CSR_CLK_2MHZ  (0x1<<4)
-#define     EXI_CSR_CLK_4MHZ  (0x2<<4)
-#define     EXI_CSR_CLK_8MHZ  (0x3<<4)
-#define     EXI_CSR_CLK_16MHZ (0x4<<4)
-#define     EXI_CSR_CLK_32MHZ (0x5<<4)
-#define   EXI_CSR_TCINT       (1<<3)
-#define   EXI_CSR_TCINTMASK   (1<<2)
-#define   EXI_CSR_EXIINT      (1<<1)
-#define   EXI_CSR_EXIINTMASK  (1<<0)
-
-#define EXI0_CSR (EXI_CSR_BASE + 0*0x14)	/* Channel 0 CSR */
-#define EXI1_CSR (EXI_CSR_BASE + 1*0x14)	/* Channel 1 CSR */
-#define EXI2_CSR (EXI_CSR_BASE + 2*0x14)	/* Channel 2 CSR */
-
-struct exi_dev_event {
-	int (*handler) (int, int, void *);
-	void *data;
-};
-
-struct exi_bus_dev_private {
-	spinlock_t lock;
-
-	spinlock_t select_lock;
-	unsigned long select_flags;
-
-	struct exi_dev_event events[EXI_MAX_CHANNELS][EXI_MAX_EVENTS];
-};
-
-//#define exi_bus_dev_priv(bus) ((bus)->priv)
-static struct exi_bus_dev_private __private;
-#define exi_bus_dev_priv(bus) (&__private)
-
-// these functions are used by gc_memcard.c ...
-void exi_select(int channel, int device, int freq);
-void exi_deselect(int channel);
-void exi_imm(int channel, void *data, int len, int mode, int zero);
-void exi_sync(int channel);
-
-static void exi_imm_ex(int channel, void *data, int len, int mode);
-
-static irqreturn_t exi_irq_handler(int irq, void *dev_id, struct pt_regs *regs);
-
-int exi_register_event(int channel, int event_id,
-		       int (*handler) (int, int, void *), void *dev);
-int exi_unregister_event(int channel, int event_id);
-
-static inline int exi_trigger_event(int channel, int event_id);
-
-static int exi_init(void);
-static void exi_exit(void);
-
-/* exi_select: enable chip select, set speed */
-
-static int selected = 0;
-void exi_select(int channel, int device, int freq)
-{
-	struct exi_bus_dev_private *priv = exi_bus_dev_priv(&exi_bus_dev);
-	spin_lock_irqsave(priv->select_lock, priv->select_flags);
-
-	volatile unsigned long *exi = (volatile unsigned long *)0xCC006800;
-	selected++;
-	if (selected != 1)
-		panic("-------- select while selected!\n");
-	long d;
-	// exi_select
-	d = exi[channel * 5];
-	d &= 0x405;
-	d |= ((1 << device) << 7) | (freq << 4);
-	exi[channel * 5] = d;
-}
-
-/* disable chipselect */
-void exi_deselect(int channel)
-{
-	volatile unsigned long *exi = (volatile unsigned long *)0xCC006800;
-	selected--;
-	if (selected)
-		panic("deselect broken!");
-	exi[channel * 5] &= 0x405;
-	struct exi_bus_dev_private *priv = exi_bus_dev_priv(&exi_bus_dev);
-	spin_unlock_irqrestore(priv->select_lock, priv->select_flags);
-}
-
-/* dirty way for asynchronous reads */
-static void *exi_last_addr;
-static int exi_last_len;
-
-/* mode?Read:Write len bytes to/from channel */
-/* when read, data will be written back in exi_sync */
-void exi_imm(int channel, void *data, int len, int mode, int zero)
-{
-	volatile unsigned long *exi = (volatile unsigned long *)0xCC006800;
-	if (mode == EXI_WRITE)
-		exi[channel * 5 + 4] = *(unsigned long *)data;
-	exi[channel * 5 + 3] = ((len - 1) << 4) | (mode << 2) | 1;
-	if (mode == EXI_READ) {
-		exi_last_addr = data;
-		exi_last_len = len;
-	} else {
-		exi_last_addr = 0;
-		exi_last_len = 0;
-	}
-}
-
-/* Wait until transfer is done, write back data */
-void exi_sync(int channel)
-{
-	volatile unsigned long *exi = (volatile unsigned long *)0xCC006800;
-	while (exi[channel * 5 + 3] & 1) ;
-
-	if (exi_last_addr) {
-		int i;
-		unsigned long d;
-		d = exi[channel * 5 + 4];
-		for (i = 0; i < exi_last_len; ++i)
-			((unsigned char *)exi_last_addr)[i] =
-			    (d >> ((3 - i) * 8)) & 0xFF;
-	}
-}
-
-/* simple wrapper for transfers > 4bytes */
-static void exi_imm_ex(int channel, void *data, int len, int mode)
-{
-	unsigned char *d = (unsigned char *)data;
-	while (len) {
-		int tc = len;
-		if (tc > 4)
-			tc = 4;
-		exi_imm(channel, d, tc, mode, 0);
-		exi_sync(channel);
-		len -= tc;
-		d += tc;
-	}
-}
-
-/**
- *	exi_irq_handler - handle interrupts from EXI devices
- *	@irq: interrupt line
- *	@dev_id: device from where the interrupt comes (exi_bus_dev)
- *	@regs: processor register set
- *
- *	Handles External Interface interrupts from EXI devices.
- *
- *	Usually, the exi_bus_dev handles all interrupts and passes them
- *	to EXI devices that have asked previously for specific subtypes
- *	of these interrupts.
- */
-static irqreturn_t exi_irq_handler(int irq, void *dev_id, struct pt_regs *regs)
-{
-	struct exi_bus_dev_private *priv = exi_bus_dev_priv(&exi_bus_dev);
-
-	register unsigned long reg, csr, status, mask;
-	register int channel;
-
-	spin_lock(&priv->lock);
-
-	for (channel = 0; channel < EXI_MAX_CHANNELS; channel++) {
-		reg = EXI_CSR_BASE + channel * 0x14;
-		csr = readl(reg);
-		mask = csr & (EXI_CSR_EXTINTMASK |
-			      EXI_CSR_TCINTMASK | EXI_CSR_EXIINTMASK);
-		status = csr & (mask << 1);
-		if (!status)
-			continue;
-
-		writel(csr | status, reg);	/* ack all, XXX really? */
-		//int devnum = (csr & EXI_CSR_CSMASK) >> 7;
-
-		if (status & EXI_CSR_EXTINT)
-			exi_trigger_event(channel, EXI_EVENT_INSERT);
-		if (status & EXI_CSR_TCINT)
-			exi_trigger_event(channel, EXI_EVENT_TC);
-		if (status & EXI_CSR_EXIINT)
-			exi_trigger_event(channel, EXI_EVENT_IRQ);
-	}
-
-	spin_unlock(&priv->lock);
-
-	return IRQ_HANDLED;
-}
-
-/**
- *
- */
-static inline int exi_trigger_event(int channel, int event_id)
-{
-	struct exi_bus_dev_private *priv = exi_bus_dev_priv(&exi_bus_dev);
-	struct exi_dev_event *event;
-
-	if (!priv)
-		return -EINVAL;
-
-	event = &priv->events[channel][event_id];
-	if (event->handler) {
-		return event->handler(channel, event_id, event->data);
-	}
-	return 0;
-}
-
-/**
- *
- */
-int exi_register_event(int channel, int event_id,
-		       int (*handler) (int, int, void *), void *data)
-{
-	struct exi_bus_dev_private *priv = exi_bus_dev_priv(&exi_bus_dev);
-	struct exi_dev_event *event;
-
-	if (channel < 0 || channel >= EXI_MAX_CHANNELS)
-		return -EINVAL;
-	if (event_id < 0 || event_id >= EXI_MAX_EVENTS)
-		return -EINVAL;
-	if (!priv)
-		return -EINVAL;
-
-	/* register event if free */
-	event = &priv->events[channel][event_id];
-	if (event->handler) {
-		return -EBUSY;
-	}
-	event->handler = handler;
-	event->data = data;
-
-	/* ack and enable interrupts */
-	unsigned long reg = EXI_CSR_BASE + channel * 0x14;
-	unsigned long csr = readl(reg);
-	switch (event_id) {
-	case EXI_EVENT_INSERT:
-		writel(csr | (EXI_CSR_EXTINT | EXI_CSR_EXTINTMASK), reg);
-		break;
-	case EXI_EVENT_TC:
-		writel(csr | (EXI_CSR_TCINT | EXI_CSR_TCINTMASK), reg);
-		break;
-	case EXI_EVENT_IRQ:
-		writel(csr | (EXI_CSR_EXIINT | EXI_CSR_EXIINTMASK), reg);
-		break;
-	}
-	return 0;
-}
-
-/**
- *
- */
-int exi_unregister_event(int channel, int event_id)
-{
-	struct exi_bus_dev_private *priv = exi_bus_dev_priv(&exi_bus_dev);
-	struct exi_dev_event *event;
-
-	if (channel < 0 || channel >= EXI_MAX_CHANNELS)
-		return -EINVAL;
-	if (event_id < 0 || event_id >= EXI_MAX_EVENTS)
-		return -EINVAL;
-	if (!priv)
-		return -EINVAL;
-
-	/* unregister event */
-	event = &priv->events[channel][event_id];
-	event->handler = 0;
-	event->data = 0;
-
-	/* ack and disable interrupts */
-	unsigned long reg = EXI_CSR_BASE + channel * 0x14;
-	unsigned long csr = readl(reg);
-	switch (event_id) {
-	case EXI_EVENT_INSERT:
-		writel((csr | EXI_CSR_EXTINT) & ~EXI_CSR_EXTINTMASK, reg);
-		break;
-	case EXI_EVENT_TC:
-		writel((csr | EXI_CSR_TCINT) & ~EXI_CSR_TCINTMASK, reg);
-		break;
-	case EXI_EVENT_IRQ:
-		writel((csr | EXI_CSR_EXIINT) & ~EXI_CSR_EXIINTMASK, reg);
-		break;
-	}
-	return 0;
-}
-
-/**
- *
- */
-static int exi_init()
-{
-	struct exi_bus_dev_private *priv = exi_bus_dev_priv(&exi_bus_dev);
-	int err = 0;
-
-	spin_lock_init(priv->lock);
-	spin_lock_init(priv->select_lock);
-
-	err = request_irq(IRQ_EXI, exi_irq_handler, SA_SHIRQ, "exi", NULL);
-	if (err) {
-		dev_dbg(&exi_bus_dev, "unable to get IRQ %d\n", IRQ_EXI);
-	}
-
-	return err;
-}
-
-/**
- *
- */
-static void exi_exit(void)
-{
-	free_irq(IRQ_EXI, NULL);
-}
-
-/* ----8<--------8<--------8<--------8<--------8<--------8<--------8<---- */
 
 
 /*
@@ -491,6 +158,7 @@ static void exi_exit(void)
 #define BBA_TX_MAX_PACKET_SIZE 1518	/* 14+1500+4 */
 #define BBA_RX_MAX_PACKET_SIZE 1536	/* 6 pages * 256 bytes */
 
+
 /*
  * EXpansion Interface glue for the Broadband Adapter.
  *
@@ -516,9 +184,8 @@ static inline void bba_cmd_ins_nosel(int reg, void *val, int len)
 {
 	u16 req;
 	req = reg << 8;
-	exi_imm(BBA_EXI_CHANNEL, &req, sizeof(req), EXI_WRITE, 0);
-	exi_sync(BBA_EXI_CHANNEL);
-	exi_imm_ex(BBA_EXI_CHANNEL, val, len, EXI_READ);
+	exi_write(BBA_EXI_CHANNEL, &req, sizeof(req));
+	exi_read(BBA_EXI_CHANNEL, val, len);
 }
 
 static void bba_cmd_ins(int reg, void *val, int len)
@@ -532,9 +199,8 @@ static inline void bba_cmd_outs_nosel(int reg, void *val, int len)
 {
 	u16 req;
 	req = (reg << 8) | 0x4000;
-	exi_imm(BBA_EXI_CHANNEL, &req, sizeof(req), EXI_WRITE, 0);
-	exi_sync(BBA_EXI_CHANNEL);
-	exi_imm_ex(BBA_EXI_CHANNEL, val, len, EXI_WRITE);
+	exi_write(BBA_EXI_CHANNEL, &req, sizeof(req));
+	exi_write(BBA_EXI_CHANNEL, val, len);
 }
 
 static void bba_cmd_outs(int reg, void *val, int len)
@@ -586,9 +252,8 @@ static inline void bba_ins_nosel(int reg, void *val, int len)
 {
 	u32 req;
 	req = (reg << 8) | 0x80000000;
-	exi_imm(BBA_EXI_CHANNEL, &req, sizeof(req), EXI_WRITE, 0);
-	exi_sync(BBA_EXI_CHANNEL);
-	exi_imm_ex(BBA_EXI_CHANNEL, val, len, EXI_READ);
+	exi_write(BBA_EXI_CHANNEL, &req, sizeof(req));
+	exi_read(BBA_EXI_CHANNEL, val, len);
 }
 
 static void bba_ins(int reg, void *val, int len)
@@ -602,9 +267,8 @@ static inline void bba_outs_nosel(int reg, void *val, int len)
 {
 	u32 req;
 	req = (reg << 8) | 0xC0000000;
-	exi_imm(BBA_EXI_CHANNEL, &req, sizeof(req), EXI_WRITE, 0);
-	exi_sync(BBA_EXI_CHANNEL);
-	exi_imm_ex(BBA_EXI_CHANNEL, val, len, EXI_WRITE);
+	exi_write(BBA_EXI_CHANNEL, &req, sizeof(req));
+	exi_write(BBA_EXI_CHANNEL, val, len);
 }
 
 static void bba_outs(int reg, void *val, int len)
@@ -619,20 +283,23 @@ static void bba_outs(int reg, void *val, int len)
  *
  */
 
-#define DRV_MODULE_NAME   "gc-net"
-#define DRV_DESCRIPTION   "Nintendo GameCube Broadband Adapter"
+#define DRV_MODULE_NAME   "gcn-bba"
+#define DRV_DESCRIPTION   "Nintendo GameCube Broadband Adapter driver"
 #define DRV_AUTHOR        "Albert Herranz"
 
 char bba_driver_name[] = DRV_MODULE_NAME;
 char bba_driver_string[] = DRV_DESCRIPTION;
-char bba_driver_version[] = "0.1-isobel";
+char bba_driver_version[] = "0.2-isobel";
 char bba_copyright[] = "Copyright (C) 2004 " DRV_AUTHOR;
 
 MODULE_AUTHOR(DRV_AUTHOR);
 MODULE_DESCRIPTION(DRV_DESCRIPTION);
 MODULE_LICENSE(GPL);
 
-#define PFX               DRV_MODULE_NAME ": "
+#define PFX DRV_MODULE_NAME ": "
+
+#define bba_printk(level, format, arg...) \
+        printk(level PFX format , ## arg)
 
 /**
  *
@@ -690,7 +357,7 @@ static int __devinit bba_probe(void);
 static int __devinit bba_init_one(void);
 static int __init bba_init_module(void);
 static void __exit bba_exit_module(void);
-int bba_event_handler(int channel, int event, void *dev0);
+static int bba_event_handler(int channel, int event, void *dev0);
 
 static int bba_reset(struct net_device *dev);
 
@@ -708,8 +375,8 @@ static int bba_open(struct net_device *dev)
 	 */
 	ret = exi_register_event(2, EXI_EVENT_IRQ, bba_event_handler, dev);
 	if (ret < 0) {
-		dev_dbg(&priv->edev->dev, "unable to register EXI event %d\n",
-			EXI_EVENT_IRQ);
+		bba_printk(KERN_ERR, "unable to register EXI event %d\n",
+			   EXI_EVENT_IRQ);
 		return ret;
 	}
 
@@ -727,6 +394,25 @@ static int bba_open(struct net_device *dev)
  */
 static int bba_close(struct net_device *dev)
 {
+	struct bba_private *priv = (struct bba_private *)dev->priv;
+	unsigned long flags;
+
+	netif_carrier_off(dev);
+
+	/* stop queue */
+	netif_stop_queue(dev);
+
+	spin_lock_irqsave(&priv->lock, flags);
+
+	/* stop receiver */
+	bba_out8(BBA_NCRA, bba_in8(BBA_NCRA) & ~BBA_NCRA_SR);
+
+	/* mask all interrupts */
+	bba_out8(BBA_IMR, 0x00);
+
+	spin_unlock_irqrestore(&priv->lock, flags);
+
+	/* unregister exi event */
 	exi_unregister_event(2, EXI_EVENT_IRQ);
 	return 0;
 }
@@ -830,8 +516,8 @@ static int bba_rx_err(u8 status, struct net_device *dev)
 
 	if (errors) {
 		if (netif_msg_rx_err(priv)) {
-			dev_dbg(&priv->edev->dev,
-				"rx errors, status %8.8x.\n", status);
+			bba_printk(KERN_DEBUG, "rx errors, status %8.8x.\n",
+				   status);
 		}
 
 		/* stop receiver */
@@ -860,6 +546,7 @@ static int bba_rx(struct net_device *dev, int budget)
 	unsigned short rrp, rwp;
 	int received = 0;
 
+	/* get current receiver pointers */
 	rwp = bba_in12(BBA_RWP);
 	rrp = bba_in12(BBA_RRP);
 
@@ -950,8 +637,8 @@ static int bba_tx_err(u8 status, struct net_device *dev)
 
 	if (errors) {
 		if (netif_msg_tx_err(priv)) {
-			dev_dbg(&priv->edev->dev, "tx errors, status %8.8x.\n",
-				status);
+			bba_printk(KERN_DEBUG, "tx errors, status %8.8x.\n",
+				   status);
 		}
 	}
 	return errors;
@@ -965,8 +652,8 @@ static void bba_weird(u8 status, struct net_device *dev)
 {
 	struct bba_private *priv = (struct bba_private *)dev->priv;
 
-	//priv->stats.rx_missed_errors += 0x06-0x07;
-	// write 0 to 0x06-0x07
+	/* XXX priv->stats.rx_missed_errors += 0x06-0x07; */
+	/* XXX write 0 to 0x06-0x07 */
 
 	if ((status & BBA_RX_STATUS_RERR) || (status & BBA_RX_STATUS_FAE)) {
 		bba_rx_err(status, dev);
@@ -995,6 +682,13 @@ static void inline bba_interrupt(struct net_device *dev)
 	ir = bba_in8(BBA_IR);
 	imr = bba_in8(BBA_IMR);
 	status = ir & imr;
+
+	/* close possible races with dev_close */
+	if (unlikely(!netif_running(dev))) {
+		bba_out8(BBA_IR, status);
+		bba_out8(BBA_IMR, 0x00);
+		return;
+        }
 
 	while (status) {
 		bba_out8(BBA_IR, status);
@@ -1083,7 +777,7 @@ static int bba_reset(struct net_device *dev)
 
 	udelay(1000);
 
-	/* accept broadcast, assert int for every packet received */
+	/* accept broadcast, assert int for every two packets received */
 	bba_out8(BBA_NCRB, BBA_NCRB_AB | BBA_NCRB_2_PACKETS_PER_INT);
 
 	/* setup receive interrupt time out, in 40ns units */
@@ -1118,14 +812,14 @@ static int bba_reset(struct net_device *dev)
 	memset(dev->broadcast, 0xff, ETH_ALEN);
 
 	/* clear all interrupts */
-	bba_out8(BBA_IR, 0xFF);	// clear all irqs
+	bba_out8(BBA_IR, 0xFF);
 
 	/* enable all interrupts */
 	bba_out8(BBA_IMR, 0xFF & ~BBA_IMR_FIFOEIM);
 
 	/* unknown, short command registers 0x02 */
 	/* XXX enable interrupts on the EXI glue logic */
-	bba_cmd_out8(0x2, BBA_CMD_IR_MASKNONE);
+	bba_cmd_out8(0x02, BBA_CMD_IR_MASKNONE);
 
 	/* DO NOT clear interrupts on the EXI glue logic !!! */
 	/* we need that initial interrupts for the challenge/response */
@@ -1165,12 +859,12 @@ unsigned long bba_calc_response(unsigned long val, struct bba_private *priv)
 /**
  *
  */
-int bba_event_handler(int channel, int event, void *dev0)
+static int bba_event_handler(int channel, int event, void *dev0)
 {
 	struct net_device *dev = (struct net_device *)dev0;
 	struct bba_private *priv = (struct bba_private *)dev->priv;
 	unsigned long flags;
-	u8 status;
+	register u8 status, mask;
 
 	/* get interrupt status from EXI glue */
 	status = bba_cmd_in8(0x03);
@@ -1178,41 +872,36 @@ int bba_event_handler(int channel, int event, void *dev0)
 	/* XXX mask all EXI glue interrupts */
 	bba_cmd_out8(0x02, BBA_CMD_IR_MASKALL);
 
+	/* start with the usual case */
+	mask = (1<<7);
+
 	/* normal interrupt from the macronix chip */
-	if (status & 0x80) {
-		/* assert interrupt */
-		bba_cmd_out8(0x03, 0x80);
+	if (status & mask) {
 		/* call our interrupt handler */
 		bba_interrupt(dev);
-		/* enable interrupts again */
-		bba_cmd_out8(0x02, BBA_CMD_IR_MASKNONE);
-		return 1;
+		goto out;
 	}
 
 	/* "killing" interrupt, try to not get one of these! */
-	if (status & 0x40) {
-		/* assert interrupt, although in this case doesn't help */
-		bba_cmd_out8(0x03, 0x40);
+	mask >>= 1;
+	if (status & mask) {
+		DPRINTK("bba: killing interrupt!\n");
 		/* reset the adapter so that we can continue working */
 		spin_lock_irqsave(&priv->lock, flags);
 		bba_reset(dev);
 		spin_unlock_irqrestore(&priv->lock, flags);
-		/* enable interrupts again */
-		bba_cmd_out8(0x02, BBA_CMD_IR_MASKNONE);
-		return 1;
+		goto out;
 	}
 
 	/* command error interrupt, haven't seen one yet */
-	if (status & 0x20) {
-		/* assert interrupt */
-		bba_cmd_out8(0x03, 0x20);
-		/* enable interrupts again */
-		bba_cmd_out8(0x02, BBA_CMD_IR_MASKNONE);
-		return 1;
+	mask >>= 1;
+	if (status & mask) {
+		goto out;
 	}
 
 	/* challenge/response interrupt */
-	if (status & 0x10) {
+	mask >>= 1;
+	if (status & mask) {
 		unsigned long response;
 		unsigned long challenge;
 
@@ -1222,36 +911,30 @@ int bba_event_handler(int channel, int event, void *dev0)
 		response = bba_calc_response(challenge, priv);
 		bba_cmd_outs(0x09, &response, sizeof(response));
 
-		/* assert interrupt */
-		bba_cmd_out8(3, 0x10);
-		/* enable interrupts again */
-		bba_cmd_out8(2, BBA_CMD_IR_MASKNONE);
-		return 1;
+		goto out;
 	}
 
 	/* challenge/response status interrupt */
-	if (status & 0x08) {
+	mask >>= 1;
+	if (status & mask) {
 		/* better get a "1" here ... */
 		u8 result = bba_cmd_in8(0x0b);
 		if (result != 1) {
-			dev_dbg(&priv->edev->dev,
-				"challenge failed! (result=%d)\n", result);
+			bba_printk(KERN_DEBUG,
+				   "challenge failed! (result=%d)\n", result);
 		}
-
-		/* assert interrupt */
-		bba_cmd_out8(3, 0x08);
-		/* enable interrupts again */
-		bba_cmd_out8(2, BBA_CMD_IR_MASKNONE);
-		return 1;
+		goto out;
 	}
 
-	printk("GCIF - EXI - ?? %02x\n", status);
-
 	/* should not happen, treat as normal interrupt in any case */
-	bba_interrupt(dev);
+	DPRINTK("bba: unknown interrupt type = %d\n", status);
+
+out:
+	/* assert interrupt */
+	bba_cmd_out8(0x03, mask);
 
 	/* enable interrupts again */
-	bba_cmd_out8(2, BBA_CMD_IR_MASKNONE);
+	bba_cmd_out8(0x02, BBA_CMD_IR_MASKNONE);
 
 	return 1;
 }
@@ -1281,7 +964,7 @@ static int __devinit bba_init_one(void)
 	dev->stop = bba_close;
 	dev->hard_start_xmit = bba_start_xmit;
 	dev->get_stats = bba_get_stats;
-	//dev->tx_timeout = bba_tx_timeout;
+	/* XXX dev->tx_timeout = bba_tx_timeout; */
 
 	SET_MODULE_OWNER(dev);
 
@@ -1330,11 +1013,12 @@ static int __devinit bba_probe(void)
 	long exi_id;
 
 	bba_select();
-	exi_imm_ex(0, &cmd, 2, EXI_WRITE);
-	exi_imm_ex(0, &exi_id, 4, EXI_READ);
+	exi_write(0, &cmd, 2);
+	exi_read(0, &exi_id, 4);
 	bba_deselect();
 	if (exi_id != BBA_EXI_ID) {
-		dev_dbg(&exi_bus_dev, "GameCube Broadband Adapter not found\n");
+		bba_printk(KERN_WARNING, "Nintendo GameCube Broadband Adapter"
+			   " not found\n");
 		return -ENODEV;
 	}
 
@@ -1352,12 +1036,12 @@ static int __init bba_init_module(void)
 {
 	int ret = 0;
 
-	printk(KERN_INFO "%s - version %s\n",
-	       bba_driver_string, bba_driver_version);
+	bba_printk(KERN_INFO, "%s - version %s\n",
+		   bba_driver_string, bba_driver_version);
+	/* bba_printk(KERN_INFO, "%s\n", bba_copyright); */
 
-	printk(KERN_INFO "%s\n", bba_copyright);
-
-	exi_init();
+	/* only one should call exi_lite_init()/exi_lite_exit() */
+	exi_lite_init();
 
 	ret = bba_probe();
 
@@ -1370,7 +1054,7 @@ static int __init bba_init_module(void)
 static void __exit bba_exit_module(void)
 {
 	unregister_netdev(bba_dev);
-	exi_exit();
+	exi_lite_exit();
 }
 
 module_init(bba_init_module);
