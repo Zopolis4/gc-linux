@@ -412,7 +412,8 @@ static int __init gcn_si_init(void)
 		port[i].idev.open = gcn_si_open;
 		port[i].idev.close = gcn_si_close;
 		port[i].idev.private = (unsigned int *)i;
-
+		port[i].idev.name = port[i].name;
+		
 		switch (port[i].id) {
 		case CTL_PAD:
 			set_bit(EV_KEY, port[i].idev.evbit);
@@ -497,8 +498,10 @@ static int __init gcn_si_init(void)
 			input_register_device(&port[i].idev);
 
 			break;
+		default:
+			/* this is here to avoid compiler warnings */
+			break;
 		}
-		port[i].idev.name = port[i].name;
 		si_printk(KERN_INFO, "Port %d: %s\n", i, port[i].name);
 	}
 
