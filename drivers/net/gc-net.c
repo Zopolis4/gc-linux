@@ -41,6 +41,19 @@
 
 #define BBA_IRQ 4
 #define IRQ_EXI 4
+#define PKT_BUF_SZ		1536	/* Size of each temporary Rx buffer. */
+
+struct gc_private {
+	int linkup;                     /* Link state */
+	int linkspeed;                 /* Link speed */
+	int fullduplex;                /* Duplex mode */
+	int promisc;                   /* Promiscuous status */
+	
+	// Statistical Data
+	struct net_device_stats stats;
+};
+
+
 
 void gcif_irq_handler(int channel, int event, void *ct);
 
@@ -438,9 +451,10 @@ static int gc_bba_close(struct net_device *dev)
 }
 
 
-static struct net_device_stats *get_stats(struct net_device *dev)
+static struct net_device_stats *gc_stats(struct net_device *dev)
 {
-	return (struct net_device_stats *)(dev->priv);
+	struct gc_private *priv = (struct gc_private *)dev->priv;
+	return &priv->stats;
 }
 
 static inline void trigger_interrupt(struct net_device *dev)
@@ -459,34 +473,38 @@ static inline void trigger_interrupt(struct net_device *dev)
 
 static int gc_bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
 {
+	struct gc_private *priv = (struct gc_private *)dev->priv;
 	unsigned long flags;
 	int	transmit_from;
 	int	len;
 	int	tickssofar;
-	u8	*buffer = skb->data;
 	int	i;
 
 	if (free_tx_pages <= 0) {	/* Do timeouts, to avoid hangs. */
 		tickssofar = jiffies - dev->trans_start;
-		if (tickssofar < 5)
+		if (tickssofar < 5) {
+			priv->stats.tx_carrier_errors++;
 			return 1;
+		}
 		/* else */
 		printk(KERN_WARNING "%s: transmit timed out (%d), %s?\n", dev->name, tickssofar, "network cable problem");
 		/* Restart the adapter. */
 		spin_lock_irqsave(&gc_bba_lock, flags);
 		if (adapter_init(dev)) {
 			spin_unlock_irqrestore(&gc_bba_lock, flags);
+			priv->stats.tx_carrier_errors++;
 			return 1;
 		}
 		spin_unlock_irqrestore(&gc_bba_lock, flags);
 	}
 
-//	netif_stop_queue(dev);
+	netif_stop_queue(dev);
 
 	/* Start real output */
 //	printk("gc_bba_start_xmit:len=%d, page %d/%d\n", skb->len, tx_fifo_in, free_tx_pages);
 
-	if ((len = skb->len) < RUNT)
+	len = skb->len;
+	if ( len < RUNT) 	
 		len = RUNT;
 
 	spin_lock_irqsave(&gc_bba_lock, flags);
@@ -495,28 +513,31 @@ static int gc_bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	unsigned int val=0xC0004800;	// register 0x48 is the output queue
 
-	struct pbuf *q;
-
 	exi_select(0, 2, 5);
 	exi_imm(0, &val, 4, EXI_WRITE, 0);
 	exi_sync(0);
 
-	exi_imm_ex(0, buffer, skb->len, EXI_WRITE);
+	// Send Data from skb buffer to Network Driver now
+	exi_imm_ex(0, skb->data, skb->len, EXI_WRITE);	
 
-	char buf0[1024];
-	memset(buf0, 0, 1024);
-
-	if (len != skb->len)
-		exi_imm_ex(0, buf0, len-skb->len, EXI_WRITE);
+	/*
+	The Network Drivers wants a minium of 60bytes to be filled into,
+	so we check if we have at leaset 60 bytes
+	*/
+	if ( skb->len < RUNT) {
+		char buf0[60+4];
+		memset(buf0, 0, 60+4);
+		exi_imm_ex(0, buf0, RUNT - skb->len, EXI_WRITE);
+	}
 
 	exi_deselect(0);
 
-//	netif_start_queue(dev);
 
 	val = eth_inb(0);
 	if (val & 4)
 	{
 		printk("err USE!\n");
+		netif_start_queue(dev);		/* allow more packets into adapter */
 		spin_unlock_irqrestore(&gc_bba_lock, flags);
 		dev_kfree_skb(skb);
 		return 1;
@@ -531,6 +552,7 @@ static int gc_bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	if (eth_inb(9) & 0x10)
 	{
 		printk("TRANSMIT ERROR!\n");
+		priv->stats.tx_errors++;
 //		eth_outb(9, 0x10);
 	}
 
@@ -543,8 +565,14 @@ static int gc_bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
 //	if (s)
 //		printk("tx error %02x\n", s);
 
+	netif_start_queue(dev);		/* allow more packets into adapter */
+	
 	spin_unlock_irqrestore(&gc_bba_lock, flags);
 	dev_kfree_skb(skb);
+	
+	priv->stats.tx_bytes++;
+ 	priv->stats.tx_packets++;
+
 	return 0;
 }
 
@@ -552,10 +580,11 @@ static int gc_bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
 static char *gc_input(struct net_device *dev)
 {
 //	struct gcif *gcif=(struct gcif*)netif->state;
+	struct gc_private *priv  = dev->priv;
 	struct sk_buff	*skb;
 	char *p, *q;
 	unsigned char *buffer;
-	unsigned short len, p_read, p_write;
+	unsigned short size, p_read, p_write;
 	int i;
 	int ptr;
 
@@ -569,6 +598,7 @@ static char *gc_input(struct net_device *dev)
 	if (p_read == p_write)
 	{
 		printk("nothing left.\n");
+		priv->stats.rx_missed_errors++;
 		return 0;
 	}
 
@@ -577,27 +607,41 @@ static char *gc_input(struct net_device *dev)
 	if (eth_inb(0x3a) & 2)
 	{
 		printk("NO DATA AVAILABLE!\n");
+		priv->stats.rx_missed_errors++;
 		return 0;
 	}
 
-	len=0;
+	size=0;
 
 	eth_ins(p_read << 8, descr, 4);
+//??????????????????????????????????
+//	size = (descr[1] >> 4) | (descr[2]<<4);
+	
+	size = descr[1];		/* low byte */
+	size += (descr[2] << 8);	/* high byte */
+	size -= 4;			/* Ignore trailing 4 CRC-bytes */
+	
 
-	len = (descr[1] >> 4) | (descr[2]<<4);
-
-	len-=4; //???
-
-	if ((len < 32)  ||  (len > 1535)) {
-		printk(KERN_WARNING "%s: Bogus packet size %d.\n", dev->name, len);
-		if (len > 10000)
+	if ((size < 32)  ||  (size > 1535)) {
+		printk(KERN_WARNING "%s: Bogus packet size %d.\n", dev->name, size);
+		if (size > 10000) {
 			adapter_init(dev);
+			priv->stats.rx_length_errors++;
+		}
 		return;
 	}
 
-	skb = dev_alloc_skb(len+2);
+	// HOTFIX (for to be sure:)
+	#if 1
+	if (size<2002) skb = dev_alloc_skb(2002);	// enough for Standart MTU of 1500
+	#else
+	skb = dev_alloc_skb(size+2);
+	#endif
+	
+	
 	if (skb == NULL) {
-		printk("%s: Couldn't allocate a sk_buff of size %d.\n", dev->name, len);
+		printk("%s: Couldn't allocate a sk_buff of size %d.\n", dev->name, size);
+		priv->stats.rx_errors++;
 		return;
 	}
 	/* else */
@@ -606,19 +650,19 @@ static char *gc_input(struct net_device *dev)
 	skb_reserve(skb,2);	/* Align */
 
 	/* 'skb->data' points to the start of sk_buff data area. */
-	buffer = skb_put(skb,len);
+	buffer = skb_put(skb,size);
 
-//	printk("There are %u bytes data\n", len);
+//	printk("There are %u bytes data\n", size);
 
 	ptr = (p_read << 8) + 4;
 
-	if (ptr + len > 0x1000)
+	if (ptr + size > 0x1000)
 	{
-		int len1 = 0x1000 - ptr - len;
+		int len1 = 0x1000 - ptr - size;
 		eth_ins(ptr, buffer, len1);
-		eth_ins(ptr, buffer + len1, len - len1);
+		eth_ins(ptr, buffer + len1, size - len1);
 	} else
-		eth_ins(ptr, buffer, len);
+		eth_ins(ptr, buffer, size);
 
 	eth_outb(0x18, descr[0] & 0xFF);
 	eth_outb(0x19, descr[1] & 0xFF);
@@ -629,9 +673,10 @@ static char *gc_input(struct net_device *dev)
 
 	/* update stats */
 	dev->last_rx = jiffies;
-	((struct net_device_stats *)(dev->priv))->rx_packets++; /* count all receives */
-	((struct net_device_stats *)(dev->priv))->rx_bytes += len; /* count all received bytes */
 
+	priv->stats.rx_packets ++;	/* count all receives */
+	priv->stats.rx_bytes ++;	/* count all received bytes */
+	
 	return p;
 }
 
@@ -718,10 +763,16 @@ static void inline gcif_service(struct net_device *dev)
 
 static irqreturn_t gc_bba_interrupt(int irq, void *dev_id, struct pt_regs * regs)
 {
-	struct net_device	*dev = dev_id;
+	struct net_device	*dev;
+    	struct gc_private 	*priv;
+
 	u8		irq_status;
 	int		retrig = 0;
 	int		boguscount = 0;
+
+    	dev     = (struct net_device *)dev_id;
+    	priv    = (struct gc_private *)dev->priv;
+
 
 	/* This might just as well be deleted now, no crummy drivers present :-) */
 	if ((dev == NULL) || (BBA_IRQ != irq)) {
@@ -757,13 +808,15 @@ static irqreturn_t gc_bba_interrupt(int irq, void *dev_id, struct pt_regs * regs
 
 int __init gc_bba_probe(struct net_device *dev)
 {
+	struct gc_private *priv;
 	int	i;
-	static struct net_device_stats gc_bba_netstats;
 	short s=0;
 	long l;
-	/*dev->priv = kmalloc(sizeof(struct net_device_stats), GFP_KERNEL);*/
+
+
 	//printk("gc_bba_probe\n");
 
+	
 	SET_MODULE_OWNER(dev);
 
 	/* probe for adapter */
@@ -845,18 +898,18 @@ int __init gc_bba_probe(struct net_device *dev)
 //	printk("after all: irq mask %x %x\n", eth_inb(8), eth_inb(9));
 
 	/* Initialize the device structure. */
-	dev->priv = &gc_bba_netstats;
 
-	memset(dev->priv, 0, sizeof(struct net_device_stats));
-	dev->get_stats = get_stats;
+
+	dev->priv = (struct gc_private *)kmalloc(sizeof(struct net_device_stats), GFP_KERNEL);
+	priv = (struct gc_private *)dev->priv;
+	
+	dev->get_stats = gc_stats;
 
 	dev->open = gc_bba_open;
 	dev->stop = gc_bba_close;
-	dev->hard_start_xmit = &gc_bba_start_xmit;
-
+	dev->hard_start_xmit = gc_bba_start_xmit;
 
 	ether_setup(dev);
-
 
 	dev->flags&=~IFF_MULTICAST;
 
@@ -925,8 +978,12 @@ static int adapter_init(struct net_device *dev)
 //	printk("MAC ADDRESS %02x:%02x:%02x:%02x:%02x:%02x\n",
 //		gcif->ethaddr->addr[0], gcif->ethaddr->addr[1], gcif->ethaddr->addr[2],
 //		gcif->ethaddr->addr[3], gcif->ethaddr->addr[4], gcif->ethaddr->addr[5]);
-
-        exi_request_irq(2, EXI_EVENT_IRQ, gcif_irq_handler, NULL);
+	
+	strncpy(dev->name,"GameCube BBA",IFNAMSIZ);
+	dev->name[IFNAMSIZ-1]= 0;
+	
+	dev->irq = 2;
+        exi_request_irq(dev->irq, EXI_EVENT_IRQ, gcif_irq_handler, NULL);
 
 	eth_exi_outb(0x2, 0xFF);
 	eth_exi_outb(0x3, 0xFF);
@@ -945,6 +1002,8 @@ static struct net_device gc_bba_dev;
 
 static int __init gc_bba_init(void)
 {
+	memset(gc_bba_dev,0,sizeof(struct net_device));
+	
 	//printk("gc_bba_init\n");
 	spin_lock_init(&gc_bba_lock);
 
