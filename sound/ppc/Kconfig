@@ -15,10 +15,11 @@ config SND_POWERMAC
 	select SND_PCM
 
 config SND_GAMECUBE
-	tristate "GameCube audio"
+	tristate "Nintendo GameCube audio"
 	depends on SND
 	help
-	  Say 'Y' or 'M' to include support for non-working looping random noise.
+	  Say 'Y' or 'M' to include support for the Nintendo GameCube
+	  audio system.
 
 endmenu
 
