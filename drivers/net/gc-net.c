@@ -614,10 +614,11 @@ static char *gc_input(struct net_device *dev)
 
 	eth_ins(p_read << 8, descr, 4);
 //??????????????????????????????????
-//	size = (descr[1] >> 4) | (descr[2]<<4);
+	size = (descr[1] >> 4) | (descr[2]<<4);
 	
-	size = descr[1];		/* low byte */
-	size += (descr[2] << 8);	/* high byte */
+//	size = descr[1];		/* low byte */
+//	size += (descr[2] << 8);	/* high byte */
+
 	size -= 4;			/* Ignore trailing 4 CRC-bytes */
 	
 
@@ -907,7 +908,7 @@ int __init gc_bba_probe(struct net_device *dev)
 	dev->open = gc_bba_open;
 	dev->stop = gc_bba_close;
 	//&gc_bba_start_xmit ( i am confused)
-	dev->hard_start_xmit = gc_bba_start_xmit;
+	dev->hard_start_xmit = &gc_bba_start_xmit;
 	
 	spin_lock_init(&priv->lock);
 	
@@ -1003,7 +1004,7 @@ static struct net_device gc_bba_dev;
 
 static int __init gc_bba_init(void)
 {
-	memset(gc_bba_dev,0,sizeof(struct net_device));
+	memset(&gc_bba_dev,0,sizeof(struct net_device));
 	
 	
 	//printk("gc_bba_init\n");
