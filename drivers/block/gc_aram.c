@@ -42,16 +42,13 @@
 	unsigned char *RAMDISKBuffer;
 	#define ARAM_BUFFERSIZE 10*1024
 #else
-	#define ARAM_BUFFERSIZE 14*1024*1024
+	#define ARAM_BUFFERSIZE 15*1024*1024
 	//#define ARAM_BUFFERSIZE 10*1024
 	#define ARAM_SOUNDMEMORYOFFSET	1024*1024
 #endif
 
 
 
-
-
-#define ARAM_CHUNKMASK		0xff
 
 
 static int current_device   = -1;
@@ -67,7 +64,7 @@ static struct gendisk *aram_gendisk;
 #define AR_DMA_ARADDR_L			*(unsigned short*)0xCC005026
 #define AR_DMA_CNT_H			*(unsigned short*)0xCC005028
 #define AR_DMA_CNT_L			*(unsigned short*)0xCC00502A
-#define AI_DSP_STATUS	 		*(unsigned short*)0xCC00500A
+#define AI_DSP_STATUS	 		*(volatile unsigned short*)0xCC00500A
 
 #define ARAM_READ				1
 #define ARAM_WRITE				0
@@ -87,10 +84,7 @@ void ARAM_StartDMA (unsigned long mmAddr, unsigned long arAddr, unsigned long le
 	AR_DMA_CNT_L = length & 0xFFFF;
 	
 	// Without the Break, the While loop loops endless
-	int counter=0;
 	while (AI_DSP_STATUS & 0x200) {
-		counter++;
-		if (counter>0xfffff) break;
 	};
 
 }
