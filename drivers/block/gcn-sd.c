@@ -2,9 +2,8 @@
  * drivers/block/gcn-sd.c
  *
  * Nintendo GameCube SD/MMC memory card driver
- * Copyright (C) 2004 The GameCube Linux Team
- *
- * Copyright (C) 2004 by Rob Reilink (rob@reilink.net)
+ * Copyright (C) 2004-2005 The GameCube Linux Team
+ * Copyright (C) 2004,2005 by Rob Reilink (rob@reilink.net)
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -225,6 +224,7 @@ static int gcn_sd_init(void) {
 	return FAIL;
 }
 
+#if 0
 static int gcn_sd_read_csd(void) {
 	unsigned char c;
 	unsigned char data[16];
@@ -252,6 +252,7 @@ static int gcn_sd_read_csd(void) {
 
 	return SUCCESS;
 }
+#endif
 
 static int gcn_sd_block_read(unsigned long sector,void * data) {
 	unsigned char c;
