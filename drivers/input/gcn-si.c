@@ -60,12 +60,8 @@ MODULE_LICENSE("GPL");
 
 #define ID_PAD		0x0900
 #define ID_KEYBOARD	0x0820
-#define ID_GBA		0x0004
-#define ID_GBA_NA	0x0800
-#define ID_WAVEBIRD1	0xA800
-#define ID_WAVEBIRD2	0xEBB0
-#define ID_WAVEBIRD3    0xE9A0
-#define ID_WAVEBIRD_RCV 0xE960
+#define ID_WIRELESS_BIT (1 << 15)
+#define ID_WAVEBIRD_BIT (1 << 8)
 
 #define PAD_START	(1 << 28)
 #define PAD_Y		(1 << 27)
@@ -91,8 +87,11 @@ typedef struct {
 	unsigned char old[3];
 } keyboard_status;
 
+typedef enum {CTL_PAD,CTL_KEYBOARD,CTL_UNKNOWN} control_type;
+
 struct {
-	unsigned int id;
+	control_type id;
+	int si_id;
 	unsigned int raw[2];
 
 #if 0
@@ -193,16 +192,14 @@ static void gcn_si_set_polling(void)
 
 	for (i = 0; i < 4; ++i) {
 		switch (port[i].id) {
-		case ID_PAD:
-		case ID_WAVEBIRD1:
-		case ID_WAVEBIRD2:
-		case ID_WAVEBIRD3:
+		case CTL_PAD:
 			writel(0x00400300, SICOUTBUF(i));
 			break;
-
-		case ID_KEYBOARD:
+		case CTL_KEYBOARD:
 			writel(0x00540000, SICOUTBUF(i));
 			break;
+		default:
+			continue;
 		}
 		pad_bits |= 1 << (7 - i);
 	}
@@ -242,10 +239,7 @@ static void gcn_si_timer(unsigned long portno)
 	raw[1] = readl(SICINBUFL(portno));
 
 	switch (port[portno].id) {
-	case ID_PAD:
-	case ID_WAVEBIRD1:
-	case ID_WAVEBIRD2:
-	case ID_WAVEBIRD3:
+	case CTL_PAD:
 		/* buttons */
 		input_report_key(&port[portno].idev, BTN_A, raw[0] & PAD_A);
 		input_report_key(&port[portno].idev, BTN_B, raw[0] & PAD_B);
@@ -294,8 +288,8 @@ static void gcn_si_timer(unsigned long portno)
 				 raw[1] >> 0 & 0xFF);
 
 		break;
-
-	case ID_KEYBOARD:
+		
+	case CTL_KEYBOARD:
 		key[0] = (raw[0] >> 12) & 0xFF;
 		key[1] = (raw[0] >> 4) & 0xFF;
 		key[2] = (raw[0] << 4) & 0xFF;
@@ -315,18 +309,18 @@ static void gcn_si_timer(unsigned long portno)
 			if (key[i])
 				input_report_key(&port[portno].idev,
 						 gamecube_keymap[key[i]], 1);
-
+			
 			port[portno].keyboard.old[i] = key[i];
 		}
-
+		
 		break;
-
+		
 	default:
 		break;
 	}
-
+	
 	input_sync(&port[portno].idev);
-
+	
 	mod_timer(&port[portno].timer, jiffies + REFRESH_TIME);
 }
 
@@ -363,7 +357,7 @@ static int gcn_si_event(struct input_dev *dev, unsigned int type,
 			unsigned int code, int value)
 {
 	int portno = (int)dev->private;
-
+	
 	if (type == EV_FF) {
 		if (code == FF_RUMBLE) {
 			gcn_si_set_rumbling(portno, value);
@@ -379,23 +373,42 @@ static int gcn_si_event(struct input_dev *dev, unsigned int type,
 static int __init gcn_si_init(void)
 {
 	int i;
-
+	int j;
         si_printk(KERN_INFO, "%s\n", DRV_DESCRIPTION);
 
 	if (request_resource(&iomem_resource, &gcn_si_resources) < 0) {
 		printk(KERN_WARNING PFX "resource busy\n");
 		return -EBUSY;
 	}
-
+	
 	for (i = 0; i < 4; ++i) {
-		int j;
-
 		memset(&port[i], 0, sizeof(port[i]));
-
+		
 		/* probe ports */
-		port[i].id = gcn_si_get_controller_id(i) >> 16;
-		DPRINTK("port[%d] = 0x%x\n", i, port[i].id);
-
+		port[i].si_id = gcn_si_get_controller_id(i) >> 16;
+		/* convert si_id to id */
+		if (port[i].si_id == ID_PAD)
+		{
+			port[i].id = CTL_PAD;
+			strcpy(port[i].name,"Standard Pad");
+		}
+		else if (port[i].si_id & ID_WIRELESS_BIT)
+		{
+			port[i].id = CTL_PAD;
+			strcpy(port[i].name,(port[i].si_id & ID_WAVEBIRD_BIT) ?
+			       "Nintendo Wavebird" : "Wireless Pad");
+		}
+		else if (port[i].si_id == ID_KEYBOARD)
+		{
+			port[i].id = CTL_KEYBOARD;
+		}
+		else
+		{
+			port[i].id = CTL_UNKNOWN;
+		}
+		
+		DPRINTK("port[%d] = 0x%x\n", i, id);
+		
 		init_input_dev(&port[i].idev);
 
 		port[i].idev.open = gcn_si_open;
@@ -403,14 +416,7 @@ static int __init gcn_si_init(void)
 		port[i].idev.private = (unsigned int *)i;
 
 		switch (port[i].id) {
-		case ID_PAD:
-		case ID_WAVEBIRD1:
-		case ID_WAVEBIRD2:
-		case ID_WAVEBIRD3:
-			sprintf(port[i].name, 
-                                port[i].id == ID_PAD ? 
-                                "standard pad" : "Wavebird");
-
+		case CTL_PAD:
 			/* sprintf (port[i].phys, "gcsi/port%d", i); */
 			/* port[i].idev.phys = port[i].phys; */
 
@@ -485,9 +491,9 @@ static int __init gcn_si_init(void)
 
 			break;
 
-		case ID_KEYBOARD:
-			sprintf(port[i].name, "keyboard");
-
+		case CTL_KEYBOARD:
+			strcpy(port[i].name, "keyboard");
+			
 			set_bit(EV_KEY, port[i].idev.evbit);
 			set_bit(EV_REP, port[i].idev.evbit);
 
@@ -501,10 +507,11 @@ static int __init gcn_si_init(void)
 
 		default:
 			/* unknown device */
-			if (port[i].id)
-				sprintf(port[i].name, "unknown (%x)", port[i].id);
+			if (port[i].si_id)
+				sprintf(port[i].name, "Unknown (%x)", 
+					port[i].si_id);
 			else
-				sprintf(port[i].name, "not present");
+				strcpy(port[i].name, "Not Present");
 			break;
 		}
 		port[i].idev.name = port[i].name;
@@ -522,15 +529,11 @@ static int __init gcn_si_init(void)
 static void __exit gcn_si_exit(void)
 {
 	int i;
-
+	
 	si_printk(KERN_INFO, "exit\n");
-
+	
 	for (i = 0; i < 4; ++i) {
-		if (port[i].id == ID_PAD || 
-		    port[i].id == ID_WAVEBIRD1 ||
-		    port[i].id == ID_WAVEBIRD2 ||
-		    port[i].id == ID_WAVEBIRD3 ||
-		    port[i].id == ID_KEYBOARD) {
+		if (port[i].id != CTL_UNKNOWN) {
 			input_unregister_device(&port[i].idev);
 		}
 	}
