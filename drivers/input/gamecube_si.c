@@ -210,8 +210,8 @@ static void gcSiTimer (unsigned long portNo) {
 
 			// axis
 			// a stick
-			input_report_abs (&port[portNo].inputDev, ABS_X, raw[0] >>  8 & 0xFF);
-			input_report_abs (&port[portNo].inputDev, ABS_Y, raw[0] >>  0 & 0xFF);
+			input_report_abs (&port[portNo].inputDev, ABS_X, (raw[0] >>  8) & 0xFF);
+			input_report_abs (&port[portNo].inputDev, ABS_Y, -(raw[0] >>  0) & 0xFF);
 
 			// b pad
 			if (raw[0] & PAD_RIGHT)
