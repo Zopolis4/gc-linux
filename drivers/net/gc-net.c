@@ -483,37 +483,20 @@ static inline void trigger_interrupt(struct net_device *dev)
 static int gc_bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	struct gc_private *priv = (struct gc_private *)dev->priv;
-	int	transmit_from;
-	int	tickssofar;
-	int	i;
-
-	if (free_tx_pages <= 0) {	/* Do timeouts, to avoid hangs. */
-		tickssofar = jiffies - dev->trans_start;
-		if (tickssofar < 5) {
-			priv->stats.tx_carrier_errors++;
-			return 1;
-		}
-		/* else */
-		BBA_DBG(KERN_WARNING "%s: transmit timed out (%d), %s?\n", dev->name, tickssofar, "network cable problem");
-		/* Restart the adapter. */
-		spin_lock_irqsave(&priv->lock, priv->lockflags);
-		if (adapter_init(dev)) {
-			spin_unlock_irqrestore(&priv->lock, priv->lockflags);
-			priv->stats.tx_carrier_errors++;
-			return 1;
-		}
-		spin_unlock_irqrestore(&priv->lock, priv->lockflags);
-	}
-
+	unsigned char Reg0;
+	
+	spin_lock_irqsave(&priv->lock, priv->lockflags);
 	netif_stop_queue(dev);
-
+	
+	//printk("XMIT packet : len %d\n",skb->len);
+	/*
+		We send using the FIFO mode
+	*/
 	/* Start real output */
 	BBA_DBG("gc_bba_start_xmit:len=%d, page %d/%d\n", skb->len, tx_fifo_in, free_tx_pages);
 
-	spin_lock_irqsave(&priv->lock, priv->lockflags);
-
-	dev->trans_start = jiffies;
-
+	// We set the packetbuffer to beginning...
+	
 	unsigned int val=0xC0004800;	// register 0x48 is the output queue
 
 	exi_select(0, 2, 5);
@@ -527,6 +510,7 @@ static int gc_bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	The Network Drivers wants a minium of 60bytes to be filled into,
 	so we check if we have at leaset 60 bytes
 	*/
+
 	if ( skb->len < RUNT) {
 		char buf0[60+4];
 		memset(buf0, 0, 60+4);
@@ -535,45 +519,16 @@ static int gc_bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	exi_deselect(0);
 
-
+	// Start Hard Send
 	val = eth_inb(0);
-	if (val & 4)
-	{
-		BBA_DBG("err USE!\n");
-		netif_start_queue(dev);		/* allow more packets into adapter */
-		spin_unlock_irqrestore(&priv->lock, priv->lockflags);
-		dev_kfree_skb(skb);
-		return 1;
-	}
-	val|=4;
+	val |=4;
 	eth_outb(0, val);
 
-	BBA_DBG("DEBUG: waiting for tx done!\n");
 
-	while (!(eth_inb(9)&0x14));
-
-	if (eth_inb(9) & 0x10)
-	{
-		BBA_DBG("TRANSMIT ERROR!\n");
-		priv->stats.tx_errors++;
-//		eth_outb(9, 0x10);
-	}
-
-//	if (eth_inb(9) & 0x4)
-//		eth_outb(9, 0x4);
-
-//	while (!(eth_inb(0)&0x02));
-
-//	int s = eth_inb(4);
-//	if (s)
-	
-	BBA_DBG("tx error %02x\n", s);
-
-	netif_start_queue(dev);		/* allow more packets into adapter */
-	
 	spin_unlock_irqrestore(&priv->lock, priv->lockflags);
+	dev->trans_start = jiffies;
 	dev_kfree_skb(skb);
-	
+	 	
 	priv->stats.tx_bytes++;
  	priv->stats.tx_packets++;
 
@@ -590,13 +545,20 @@ static void gc_input(struct net_device *dev)
 	unsigned short size, p_read, p_write;
 	unsigned short next_receive_frame;
 	
-	int i;
 	int ptr;
-
+	
 	/*
 	Input Flow concept: Take a look to Hardware spec page 35
 	*/
 	
+	eth_outb(0x3a, 2);
+	if (eth_inb(0x3a) & 2)
+	{
+		BBA_DBG("NO DATA AVAILABLE!\n");
+		priv->stats.rx_missed_errors++;
+		return ;
+	}
+		
 	/*
 		Receive Buffer Write Page Pointer: Current receive write page pointer. The MSB
 		is the Reg17h.3 bit. The LSB is the Reg16h.0 bit. This register is controlled by
@@ -615,24 +577,14 @@ static void gc_input(struct net_device *dev)
 	
 	p_read  = eth_inb(0x18);
 	p_read |= (eth_inb(0x19)&0x0f) << 8;
-
+	
+	if (p_read == p_write) return;
+	
+	//printk("Received a packet .. (start)\n");
+	
 	BBA_DBG("Receive Buffer Page Pointer: %x\n", p_read);
 
-	if (p_read == p_write)
-	{
-		BBA_DBG("nothing left.\n");
-		priv->stats.rx_missed_errors++;
-		return ;
-	}
-
 	unsigned char descr[4];
-	eth_outb(0x3a, 2);
-	if (eth_inb(0x3a) & 2)
-	{
-		BBA_DBG("NO DATA AVAILABLE!\n");
-		priv->stats.rx_missed_errors++;
-		return ;
-	}
 
 	size=0;
 
@@ -697,12 +649,10 @@ static void gc_input(struct net_device *dev)
 	next_receive_frame  = descr[0];
 	next_receive_frame |= (descr[1] & 0x0f) << 8;
 	
-	/*
-		do we have additional packages ?
-		Hopefully, i understood the documentation correct.
-		We call Recurse the compleate gc_input() again, and do as long
-	*/
-	if (next_receive_frame != p_write) gc_input(dev);
+	//printk("Current Framepointer: %d\n",p_read);
+	//printk("Next    Framepointer: %d\n",next_receive_frame);
+	//printk("Write   Framepointer: %d\n",p_write);
+	//printk("Recieved Len: %d\n",skb->len);
 	
 	return ;
 }
@@ -710,11 +660,8 @@ static void gc_input(struct net_device *dev)
 
 static void inline gcif_service(struct net_device *dev)
 {
-//	struct gcif *gcif;
-//	gcif = netif->state;
+
 	struct gc_private *priv = (struct gc_private *)dev->priv;
-	
-	unsigned short  p_read, p_write;
 
 	int inb9 = eth_inb(9);
 	int inb8 = eth_inb(8);
@@ -731,38 +678,39 @@ static void inline gcif_service(struct net_device *dev)
 	if (status & 4)
 	{
 		eth_outb(9, 4);
+		// We clear the IRQ
+		netif_wake_queue(dev);		/* allow more packets into adapter */
 
+		
+		// TX Transmisstion compleated ...
+
+		/*
 		int s = eth_inb(4);
 		if (s)   // should not occur, since 4 == TX OK
 			BBA_DBG("tx error %02x\n", s);
+		*/
 	}
 
 	if (status & 2)
 	{
+		// We clear the IRQ
 		eth_outb(9, 2);
-		while (1)
-		{
-			p_write  = eth_inb(0x16);
-			p_write |= eth_inb(0x17) << 8;
-
-			p_read  = eth_inb(0x18);
-			p_read |= eth_inb(0x19) << 8;
-
-			if (p_write == p_read)
-				break;
-			gc_input(dev);
-		}
+		
+		gc_input(dev);
+		
 	}
+
 	if (status & 8)
 	{
 		eth_outb(9, 8);
-		BBA_DBG("receive error :(\n");
+		//printk("receive error :(\n");
 	}
 
 	if (status & 0x10)
 	{
 		eth_outb(9, 0x10);
-		BBA_DBG("tx error\n");
+		netif_wake_queue(dev);		/* allow more packets into adapter */
+		//printk("tx error\n");
 	}
 	if (status & 0x20)
 	{
@@ -773,6 +721,20 @@ static void inline gcif_service(struct net_device *dev)
 	{
 		eth_outb(9, 0x80);
 		BBA_DBG("rx overflow!\n");
+		
+		// RWP
+		eth_outb(0x16, 0x1);
+		eth_outb(0x17, 0x0);
+	
+		// RRP
+		eth_outb(0x18, 0x1);
+		eth_outb(0x19, 0x0);
+	
+		// RHBP
+		eth_outb(0x1a, 0xF);
+		eth_outb(0x1b, 0);
+		
+
 	}
 
 	if (status & ~(0xBE))
@@ -795,9 +757,7 @@ static irqreturn_t gc_bba_interrupt(int irq, void *dev_id, struct pt_regs * regs
 	struct net_device *dev  = (struct net_device *)dev_id;
     	struct gc_private *priv = (struct gc_private *)dev->priv;
 
-	u8		irq_status;
 	int		retrig = 0;
-	int		boguscount = 0;
 
 	/* This might just as well be deleted now, no crummy drivers present :-) */
 	if ((dev == NULL) || (dev->irq != irq)) {
@@ -806,8 +766,7 @@ static irqreturn_t gc_bba_interrupt(int irq, void *dev_id, struct pt_regs * regs
 	}
 
 	spin_lock(&priv->lock);
-
-
+	
 	int ch;
 	for (ch = 0; ch < 3; ++ch)
 	{
@@ -825,7 +784,9 @@ static irqreturn_t gc_bba_interrupt(int irq, void *dev_id, struct pt_regs * regs
 
 	if (retrig)
 		trigger_interrupt(dev);
+
 	spin_unlock(&priv->lock);
+	
 	return IRQ_HANDLED;
 
 }
@@ -886,14 +847,22 @@ int __init gc_bba_probe(struct net_device *dev)
 
 	udelay(10000);
 
-	// recvinit
+	
+
+	
+	// BP
 	eth_outb(0xA,  0x1);
 	eth_outb(0xB,  0x0);
+	
+	// RWP
 	eth_outb(0x16, 0x1);
 	eth_outb(0x17, 0x0);
+	
+	// RRP
 	eth_outb(0x18, 0x1);
 	eth_outb(0x19, 0x0);
-
+	
+	// RHBP
 	eth_outb(0x1a, 0xF);
 	eth_outb(0x1b, 0);
 
@@ -949,12 +918,16 @@ int __init gc_bba_probe(struct net_device *dev)
 static int adapter_init(struct net_device *dev)
 {
 	int	i;
-
+	
+	struct gc_private *priv = (struct gc_private *)dev->priv;
+	
 	//select_nic();
 	rx_page = 0; /* used by RESET */
 
 	BBA_DBG("initializing BBA...\n");
 
+	
+	
 	eth_outb(0x60, 0);	// unknown
 	udelay(10000);
 	eth_exi_inb_slow(0xF);
@@ -979,17 +952,23 @@ static int adapter_init(struct net_device *dev)
 
 	udelay(10000);
 
-	// recvinit
+	
+	// BP
 	eth_outb(0xA,  0x1);
 	eth_outb(0xB,  0x0);
+	
+	// RWP
 	eth_outb(0x16, 0x1);
 	eth_outb(0x17, 0x0);
+	
+	// RRP
 	eth_outb(0x18, 0x1);
 	eth_outb(0x19, 0x0);
-
+	
+	// RHBP
 	eth_outb(0x1a, 0xF);
 	eth_outb(0x1b, 0);
-
+	
 	eth_outb(1, (eth_inb(1) & 0xFE) | 0x12);
 
 	eth_outb(0, 8);
@@ -1010,9 +989,10 @@ static int adapter_init(struct net_device *dev)
 	BBA_DBG("MAC ADDRESS %02x:%02x:%02x:%02x:%02x:%02x\n",
 		gcif->ethaddr->addr[0], gcif->ethaddr->addr[1], gcif->ethaddr->addr[2],
 		gcif->ethaddr->addr[3], gcif->ethaddr->addr[4], gcif->ethaddr->addr[5]);
-	
+	/*
 	strncpy(dev->name,"GameCube BBA",IFNAMSIZ);
 	dev->name[IFNAMSIZ-1]= 0;
+	*/
 	
         exi_request_irq(2, EXI_EVENT_IRQ, gcif_irq_handler, NULL);
 
@@ -1022,9 +1002,12 @@ static int adapter_init(struct net_device *dev)
 	eth_outb(8, 0xFF); // enable all IRQs
 	eth_outb(9, 0xFF); // clear all irqs
 
+//	eth_outb(0x30, (eth_inb(0x30) | 0x2));	// 100 Mbit ?
+
+	
 	BBA_DBG("after all: irq mask %x %x\n", eth_inb(8), eth_inb(9));
 
-//	netif_start_queue(dev);
+	netif_start_queue(dev);
 
 	return 0; /* OK */
 }
