@@ -19,9 +19,12 @@
 /* ------------------------------------------------------------------------- */
 
 /*
- * $Id: gc-net.c,v 1.17 2004/02/11 20:15:27 hamtitampti Exp $
+ * $Id: gc-net.c,v 1.18 2004/02/26 22:33:51 hamtitampti Exp $
  *
  * $Log: gc-net.c,v $
+ * Revision 1.18  2004/02/26 22:33:51  hamtitampti
+ * 0% packet loss now :-)
+ *
  * Revision 1.17  2004/02/11 20:15:27  hamtitampti
  * small changes, little bit better now
  *
@@ -390,15 +393,12 @@ void eth_outs(int reg, void *res, int len)
  * D-Link driver variables:
  */
 
-static volatile int		rx_page;
 
-#define TX_PAGES 2
-static volatile int		tx_fifo[TX_PAGES];
-static volatile int		tx_fifo_in;
-static volatile int		tx_fifo_out;
-static volatile int		free_tx_pages = TX_PAGES;
-static int			was_down;
-
+#define GBA_IRQ_MASK	0xFF
+#define GBA_RX_BP	0x1
+#define GBA_RX_RWP	0x1
+#define GBA_RX_RRP	0x1
+#define GBA_RX_RHBP	0xf
 
 static irqreturn_t gc_bba_interrupt(int irq, void *dev_id, struct pt_regs * regs);
 static int	adapter_init(struct net_device *dev);
@@ -466,7 +466,6 @@ static int gc_bba_close(struct net_device *dev)
 	BBA_DBG("gc_bba_close\n");
 
 //	//select_nic();
-	rx_page = 0;
 //	de600_put_command(RESET);
 //	de600_put_command(STOP_RESET);
 //	de600_put_command(0);
@@ -503,6 +502,9 @@ static int gc_bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	
 	spin_lock_irqsave(&priv->lock, priv->lockflags);
 	netif_stop_queue(dev);
+	// TX Fifo Page to 0
+	eth_outb(0xf, 0);
+	eth_outb(0xe, 0);
 	
 	//printk("XMIT packet : len %d\n",skb->len);
 	/*
@@ -650,13 +652,29 @@ static void gc_input(struct net_device *dev)
 
 	/* 'skb->data' points to the start of sk_buff data area. */
 	skb_put(skb,size);
-	
+
 	// We calculate the DMA position
 	ptr = (p_read << 8) + 4;
-	// We read the Network buffer into the skb->data
-	eth_ins(ptr, skb->data, size);
-	skb->protocol=eth_type_trans(skb,dev);
+	//printk("Packet: %d %d\n",p_read,size);
+	
+	if ((ptr + size) < ((GBA_RX_RHBP+1)<<8)) {
+		// Full packet is linear to read
+		eth_ins(ptr, skb->data, size);
+		skb->protocol=eth_type_trans(skb,dev);
+	} else {
+		int temp_size = ((GBA_RX_RHBP+1)<<8) - ptr;
+		
+		// Full packet is Fragmentet to read
+		eth_ins(ptr, skb->data, temp_size);
 
+		p_read = GBA_RX_BP;
+		
+		eth_ins(p_read<<8, &skb->data[temp_size], size-temp_size);
+		skb->protocol=eth_type_trans(skb,dev);		
+		
+	}
+
+	
 	/*
 		We update the  Read Page Pointer with the next pointer, which was given to us
 	*/
@@ -753,15 +771,15 @@ static void inline gcif_service(struct net_device *dev)
 		gc_input(dev);
 		
 		// RWP
-		eth_outb(0x16, 0x1);
+		eth_outb(0x16, GBA_RX_RWP);
 		eth_outb(0x17, 0x0);
 	
 		// RRP
-		eth_outb(0x18, 0x1);
+		eth_outb(0x18, GBA_RX_RRP);
 		eth_outb(0x19, 0x0);
 	
 		// RHBP
-		eth_outb(0x1a, 0xF);
+		eth_outb(0x1a, GBA_RX_RHBP);
 		eth_outb(0x1b, 0);
 		
 
@@ -835,8 +853,7 @@ int __init gc_bba_probe(struct net_device *dev)
 	
 	SET_MODULE_OWNER(dev);
 
-	/* probe for adapter */
-	rx_page = 0;
+
 	//select_nic();
 
 	exi_select(0, 2, 5);
@@ -879,21 +896,20 @@ int __init gc_bba_probe(struct net_device *dev)
 
 	
 
-	
 	// BP
-	eth_outb(0xA,  0x1);
-	eth_outb(0xB,  0x0);
-	
+	eth_outb(0xA, GBA_RX_BP);
+	eth_outb(0xB, 0x0);
+
 	// RWP
-	eth_outb(0x16, 0x1);
+	eth_outb(0x16, GBA_RX_RWP);
 	eth_outb(0x17, 0x0);
 	
 	// RRP
-	eth_outb(0x18, 0x1);
+	eth_outb(0x18, GBA_RX_RRP);
 	eth_outb(0x19, 0x0);
 	
 	// RHBP
-	eth_outb(0x1a, 0xF);
+	eth_outb(0x1a, GBA_RX_RHBP);
 	eth_outb(0x1b, 0);
 
 	eth_outb(1, (eth_inb(1) & 0xFE) | 0x12| PACKETS_PER_IRQ);
@@ -951,9 +967,6 @@ static int adapter_init(struct net_device *dev)
 	
 	struct gc_private *priv = (struct gc_private *)dev->priv;
 	
-	//select_nic();
-	rx_page = 0; /* used by RESET */
-
 	BBA_DBG("initializing BBA...\n");
 
 	
@@ -984,19 +997,19 @@ static int adapter_init(struct net_device *dev)
 
 	
 	// BP
-	eth_outb(0xA,  0x1);
-	eth_outb(0xB,  0x0);
-	
+	eth_outb(0xA, GBA_RX_BP);
+	eth_outb(0xB, 0x0);
+
 	// RWP
-	eth_outb(0x16, 0x1);
+	eth_outb(0x16, GBA_RX_RWP);
 	eth_outb(0x17, 0x0);
 	
 	// RRP
-	eth_outb(0x18, 0x1);
+	eth_outb(0x18, GBA_RX_RRP);
 	eth_outb(0x19, 0x0);
 	
 	// RHBP
-	eth_outb(0x1a, 0xF);
+	eth_outb(0x1a, GBA_RX_RHBP);
 	eth_outb(0x1b, 0);
 	
 	eth_outb(1, (eth_inb(1) & 0xFE) | 0x12| PACKETS_PER_IRQ);
