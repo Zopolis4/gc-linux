@@ -2,8 +2,8 @@
  * drivers/net/gcn-bba.c
  *
  * Nintendo GameCube Broadband Adapter driver
- * Copyright (C) 2004 The GameCube Linux Team
- * Copyright (C) 2004 Albert Herranz
+ * Copyright (C) 2004-2005 The GameCube Linux Team
+ * Copyright (C) 2004,2005 Albert Herranz
  *
  * Based on previous work by Stefan Esser, Franz Lehner, Costis and tmbinc.
  *
@@ -1018,10 +1018,10 @@ static int __devinit bba_init_one(void)
 
 	return 0;
 
-      err_out_free_dev:
+err_out_free_dev:
 	free_netdev(dev);
 
-      err_out:
+err_out:
 	return err;
 }
 
