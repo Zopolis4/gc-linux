@@ -1,5 +1,5 @@
 /* ------------------------------------------------------------------------- */
-/* gc-bba.c GameCube BroadBand Adaptor Driver                                */
+/* gc-net.c GameCube BroadBand Adaptor Driver                                */
 /* ------------------------------------------------------------------------- */
 /*   Copyright (C) 2004 Stefan Esser
 
@@ -505,17 +505,59 @@ static int gc_bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	spin_lock_irqsave(&gc_bba_lock, flags);
 
+	unsigned int val=0xC0004800;	// register 0x48 is the output queue
+	
+	struct pbuf *q;
+	
+	exi_select(0, 2, 5);
+	exi_imm(0, &val, 4, EXI_WRITE, 0);
+	exi_sync(0);
+	
+	exi_imm_ex(0, buffer, skb->len, EXI_WRITE);
+
+	exi_deselect(0);
+
+	val = eth_inb(0);
+	if (val & 4)
+	{
+		printk("err USE!\n");
+	spin_unlock_irqrestore(&gc_bba_lock, flags);
+	dev_kfree_skb(skb);
+		return 1;
+	}
+	val|=4;
+	eth_outb(0, val);
+	
+//	printk("DEBUG: waiting for tx done!\n");
+
+	while (!(eth_inb(9)&0x14));
+	
+	if (eth_inb(9) & 0x10)
+	{
+		printk("TRANSMIT ERROR!\n");
+		eth_outb(9, 0x10);
+	}
+	
+	if (eth_inb(9) & 0x4)
+		eth_outb(9, 0x4);
+	
+	int s = eth_inb(4);
+	if (s)
+		printk("tx error %02x\n", s);
+	
 
 	spin_unlock_irqrestore(&gc_bba_lock, flags);
 	dev_kfree_skb(skb);
 	return 0;
 }
 
-char buffer[3500];
-static char *gc_input(void *v)
+
+static char *gc_input(struct net_device *dev)
 {
 //	struct gcif *gcif=(struct gcif*)netif->state;
+	struct sk_buff	*skb;
 	char *p, *q;
+	unsigned char *buffer;
 	unsigned short len, p_read, p_write;
 	int i;
 	int ptr;
@@ -550,6 +592,30 @@ static char *gc_input(void *v)
 	
 	len = (descr[1] >> 4) | (descr[2]<<4);
 	
+	len-=4; //???
+
+	if ((len < 32)  ||  (len > 1535)) {
+		printk(KERN_WARNING "%s: Bogus packet size %d.\n", dev->name, len);
+		if (len > 10000)
+			adapter_init(dev);
+		return;
+	}
+
+	skb = dev_alloc_skb(len+2);
+	if (skb == NULL) {
+		printk("%s: Couldn't allocate a sk_buff of size %d.\n", dev->name, len);
+		return;
+	}
+	/* else */
+
+	skb->dev = dev;
+	skb_reserve(skb,2);	/* Align */
+
+	/* 'skb->data' points to the start of sk_buff data area. */
+	buffer = skb_put(skb,len);
+	
+	printk("There are %u bytes data\n", len);
+	
 	ptr = (p_read << 8) + 4;
 	for (i=0; i<len; ++i)
 	{
@@ -560,6 +626,16 @@ static char *gc_input(void *v)
 	
 	eth_outb(0x18, descr[0] & 0xFF);
 	eth_outb(0x19, descr[1] & 0xFF);
+
+	skb->protocol=eth_type_trans(skb,dev);
+
+	netif_rx(skb);
+
+	/* update stats */
+	dev->last_rx = jiffies;
+	((struct net_device_stats *)(dev->priv))->rx_packets++; /* count all receives */
+	((struct net_device_stats *)(dev->priv))->rx_bytes += len; /* count all received bytes */
+
 	
 //	i=0;
 //	p = pbuf_alloc(PBUF_LINK, len, PBUF_POOL);
@@ -581,7 +657,7 @@ static char *gc_input(void *v)
 }
 
 
-static void inline gcif_service(void *netif)
+static void inline gcif_service(struct net_device *dev)
 {
 //	struct gcif *gcif;
 //	gcif = netif->state;
@@ -608,7 +684,7 @@ static void inline gcif_service(void *netif)
 
 			if (p_write == p_read)
 				break;
-			gc_input(NULL);
+			gc_input(dev);
 printk("Break\n");
 			break;
 		}
@@ -653,6 +729,7 @@ static irqreturn_t gc_bba_interrupt(int irq, void *dev_id, struct pt_regs * regs
 	{
 		unsigned long v = (*(unsigned long*)(0xcc006800 + ch * 0x14)); //  & 0xC0F;
 		v &= v<<1;
+		exi_handler_context[ch * 3 + EXI_EVENT_IRQ] = dev;
 		if (v & 0x800)
 			have_irq(ch * 3 + EXI_EVENT_INSERT);
 		if (v & 8)
@@ -678,7 +755,7 @@ static irqreturn_t gc_bba_interrupt(int irq, void *dev_id, struct pt_regs * regs
 	if (s & 0x80)
 	{
 		eth_exi_outb(3, 0x80);
-		gcif_service(NULL);
+		gcif_service(dev);
 		eth_exi_outb(2, 0xF8);
 		return;
 	}
@@ -928,6 +1005,7 @@ void gcif_irq_handler(int channel, int event, void *ct)
 {
 //	struct netif *netif = (struct netif*)ct;
 	int s;
+	struct net_device *dev = (struct net_device *)ct;
 	
 	eth_exi_outb(2, 0);
 	s = eth_exi_inb(3);
@@ -935,7 +1013,7 @@ void gcif_irq_handler(int channel, int event, void *ct)
 	if (s & 0x80)
 	{
 		eth_exi_outb(3, 0x80);
-		gcif_service(NULL);
+		gcif_service(dev);
 		eth_exi_outb(2, 0xF8);
 		return;
 	}
