@@ -24,33 +24,39 @@
  *	  sometimes during kernel init.
  */
 
-#include <linux/kernel.h>
-#include <linux/ioport.h>
-#include <linux/module.h>
-#include <linux/delay.h>
-#include <linux/slab.h>
 #include <linux/init.h>
+#include <linux/kernel.h>
+#include <linux/module.h>
 #include <linux/interrupt.h>
-#include <linux/wait.h>
 
+#include <asm/io.h>
 #include <asm/irq.h>
-#include "gamecube.h"
 
-#define DVD_IRQ 2
+#define DVD_IRQ			2
+
+#define GAMECUBE_DICVR          0xcc006004 /* DI Cover Register */
+#define GC_DI_DISR              0xcc006000 /* DI Status Register */
+#define GC_DI_DISR_BRKINT       (1<<6)
+#define GC_DI_DISR_BRKINTMASK   (1<<5)
+#define GC_DI_DISR_TCINT        (1<<4)
+#define GC_DI_DISR_TCINTMASK    (1<<3)
+#define GC_DI_DISR_DEINT        (1<<2)
+#define GC_DI_DISR_DEINTMASK    (1<<1)
+#define GC_DI_DISR_BRK          (1<<0)
+
 
 static irqreturn_t gc_dvdcover_handler(int this_irq, void *dev_id, struct pt_regs *regs) {
 
-	unsigned long reason = GAMECUBE_IN(GAMECUBE_DICVR);
+	unsigned long reason = readl(GAMECUBE_DICVR);
 
 	// really a DVD cover interrupt?
 	if (reason & 4) {
-		GAMECUBE_OUT(GAMECUBE_DICVR, reason | 4);
-		printk(KERN_ERR "gc_dvdcover: DVD cover was closed\n");
+		writel(reason | 4, GAMECUBE_DICVR);
+		printk(KERN_INFO "gc_dvdcover: DVD cover was closed\n");
 		return IRQ_HANDLED;
 	}
 	return IRQ_NONE;
 }
-
 
 static int gc_dvdcover_init(void)
 {
@@ -62,13 +68,13 @@ static int gc_dvdcover_init(void)
                         GC_DI_DISR_DEINT;
         outval &= ~(GC_DI_DISR_BRKINTMASK | GC_DI_DISR_TCINTMASK |
                         GC_DI_DISR_DEINTMASK);
-        GAMECUBE_OUT(GC_DI_DISR, outval);
-                                                                                
+        writel(outval, GC_DI_DISR);
+
 	if (request_irq(DVD_IRQ, gc_dvdcover_handler, 0, "GameCube DVD Cover", 0) < 0) {
 		printk(KERN_ERR "gc_dvdcover: Request irq%d failed\n", DVD_IRQ);
 	} else {
 		enable_irq(DVD_IRQ);
-		GAMECUBE_OUT(GAMECUBE_DICVR, GAMECUBE_IN(GAMECUBE_DICVR) | 2);
+		writel(readl(GAMECUBE_DICVR) | 2, GAMECUBE_DICVR);
 	}
 	return 0;
 }
