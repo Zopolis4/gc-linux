@@ -1110,7 +1110,6 @@ config BOOT_LOAD
 	hex "Link/load address for booting" if BOOT_LOAD_BOOL
 	default "0x00400000" if 40x || 8xx || 8260
 	default "0x01000000" if 44x
-	default "0x80003100" if GAMECUBE
 	default "0x00800000"
 
 config PIN_TLB
