@@ -69,14 +69,6 @@ start_:
 
 	/* The following functions we call must not modify r3 or r4.....
 	*/
-#ifdef CONFIG_GAMECUBE_CONSOLE
-	/* setup the framebuffer for the debug console */
-	lis	r8, 0xcc00
-	lis	r5, 0x00c0
-	stw	r5, 0x201c(r8)
-	addi	r5, r5, 1280
-	stw	r5, 0x2024(r8)
-#endif
 #ifdef CONFIG_6xx
 	/* On PReP we must look at the OpenFirmware pointer and sanity
 	 * test it.  On other platforms, we disable the MMU right now
@@ -108,11 +100,25 @@ haveOF:
 #else
 	bl	disable_6xx_mmu
 #endif
-#ifndef CONFIG_GAMECUBE
+
+#ifdef CONFIG_GAMECUBE
+	/* convert our starting address to physical layout format */
+	clrlwi r3, r3, 3
+#else
 	bl	disable_6xx_l1cache
 
 	CLEAR_CACHES
-#endif
+#endif /* CONFIG_GAMECUBE */
+
+#ifdef CONFIG_GAMECUBE_CONSOLE
+	/* setup the framebuffer address for the early debug console */
+	lis	r8, 0xcc00
+	lis	r5, 0x00c0
+	stw	r5, 0x201c(r8)
+	addi	r5, r5, 1280
+	stw	r5, 0x2024(r8)
+#endif /* CONFIG_GAMECUBE_CONSOLE */
+
 #endif
 
 #ifdef CONFIG_8xx
@@ -152,9 +158,6 @@ haveOF:
 
 	/* Get the load address.
 	*/
-#ifdef CONFIG_GAMECUBE
-	clrlwi r3, r3, 3
-#endif
-	subi    r3, r3, 4	/* Get the actual IP, not NIP */
+	subi	r3, r3, 4	/* Get the actual IP, not NIP */
 	b	relocate
 
