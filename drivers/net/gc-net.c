@@ -41,7 +41,7 @@
 
 #define BBA_IRQ 4
 #define IRQ_EXI 4
-#define PKT_BUF_SZ		1536	/* Size of each temporary Rx buffer. */
+//#define PKT_BUF_SZ		1536	/* Size of each temporary Rx buffer. */
 
 struct gc_private {
 	int linkup;                     /* Link state */
@@ -49,6 +49,10 @@ struct gc_private {
 	int fullduplex;                /* Duplex mode */
 	int promisc;                   /* Promiscuous status */
 	
+	spinlock_t lock;
+	spinlock_t phylock;             /* phy lock */
+	unsigned long lockflags;        /* Lock flags */
+    	
 	// Statistical Data
 	struct net_device_stats stats;
 };
@@ -360,7 +364,6 @@ void eth_outs(int reg, void *res, int len)
 }
 
 
-static spinlock_t		gc_bba_lock;
 #define RUNT 60		/* Too small Ethernet packet */
 #define ETH_LEN 6
 
@@ -417,17 +420,19 @@ static inline u8 de600_read_byte(unsigned char type, struct net_device *dev)
 
 static int gc_bba_open(struct net_device *dev)
 {
-	unsigned long flags;
+	struct gc_private *priv = (struct gc_private *)dev->priv;
 	//printk("gc_bba_open\n");
 
-	int ret = request_irq(BBA_IRQ, gc_bba_interrupt, 0, dev->name, dev);
+	int ret = request_irq(dev->irq, gc_bba_interrupt, 0, dev->name, dev);
 	if (ret) {
-		printk(KERN_ERR "%s: unable to get IRQ %d\n", dev->name, BBA_IRQ);
+		printk(KERN_ERR "%s: unable to get IRQ %d\n", dev->name, dev->irq);
 		return ret;
 	}
-	spin_lock_irqsave(&gc_bba_lock, flags);
+
+	spin_lock_irqsave(&priv->lock, priv->lockflags);
 	ret = adapter_init(dev);
-	spin_unlock_irqrestore(&gc_bba_lock, flags);
+	spin_unlock_irqrestore(&priv->lock, priv->lockflags);
+
 	return ret;
 }
 
@@ -446,7 +451,7 @@ static int gc_bba_close(struct net_device *dev)
 //	de600_put_command(STOP_RESET);
 //	de600_put_command(0);
 //	//select_prn();
-	free_irq(BBA_IRQ, dev);
+	free_irq(dev->irq, dev);
 	return 0;
 }
 
@@ -474,9 +479,7 @@ static inline void trigger_interrupt(struct net_device *dev)
 static int gc_bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	struct gc_private *priv = (struct gc_private *)dev->priv;
-	unsigned long flags;
 	int	transmit_from;
-	int	len;
 	int	tickssofar;
 	int	i;
 
@@ -489,13 +492,13 @@ static int gc_bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
 		/* else */
 		printk(KERN_WARNING "%s: transmit timed out (%d), %s?\n", dev->name, tickssofar, "network cable problem");
 		/* Restart the adapter. */
-		spin_lock_irqsave(&gc_bba_lock, flags);
+		spin_lock_irqsave(&priv->lock, priv->lockflags);
 		if (adapter_init(dev)) {
-			spin_unlock_irqrestore(&gc_bba_lock, flags);
+			spin_unlock_irqrestore(&priv->lock, priv->lockflags);
 			priv->stats.tx_carrier_errors++;
 			return 1;
 		}
-		spin_unlock_irqrestore(&gc_bba_lock, flags);
+		spin_unlock_irqrestore(&priv->lock, priv->lockflags);
 	}
 
 	netif_stop_queue(dev);
@@ -503,11 +506,7 @@ static int gc_bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	/* Start real output */
 //	printk("gc_bba_start_xmit:len=%d, page %d/%d\n", skb->len, tx_fifo_in, free_tx_pages);
 
-	len = skb->len;
-	if ( len < RUNT) 	
-		len = RUNT;
-
-	spin_lock_irqsave(&gc_bba_lock, flags);
+	spin_lock_irqsave(&priv->lock, priv->lockflags);
 
 	dev->trans_start = jiffies;
 
@@ -538,7 +537,7 @@ static int gc_bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	{
 		printk("err USE!\n");
 		netif_start_queue(dev);		/* allow more packets into adapter */
-		spin_unlock_irqrestore(&gc_bba_lock, flags);
+		spin_unlock_irqrestore(&priv->lock, priv->lockflags);
 		dev_kfree_skb(skb);
 		return 1;
 	}
@@ -567,7 +566,7 @@ static int gc_bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	netif_start_queue(dev);		/* allow more packets into adapter */
 	
-	spin_unlock_irqrestore(&gc_bba_lock, flags);
+	spin_unlock_irqrestore(&priv->lock, priv->lockflags);
 	dev_kfree_skb(skb);
 	
 	priv->stats.tx_bytes++;
@@ -580,7 +579,7 @@ static int gc_bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
 static char *gc_input(struct net_device *dev)
 {
 //	struct gcif *gcif=(struct gcif*)netif->state;
-	struct gc_private *priv  = dev->priv;
+	struct gc_private *priv = (struct gc_private *)dev->priv;
 	struct sk_buff	*skb;
 	char *p, *q;
 	unsigned char *buffer;
@@ -685,7 +684,8 @@ static void inline gcif_service(struct net_device *dev)
 {
 //	struct gcif *gcif;
 //	gcif = netif->state;
-
+	struct gc_private *priv = (struct gc_private *)dev->priv;
+	
 	unsigned short  p_read, p_write;
 
 	int inb9 = eth_inb(9);
@@ -763,24 +763,21 @@ static void inline gcif_service(struct net_device *dev)
 
 static irqreturn_t gc_bba_interrupt(int irq, void *dev_id, struct pt_regs * regs)
 {
-	struct net_device	*dev;
-    	struct gc_private 	*priv;
+	
+	struct net_device *dev  = (struct net_device *)dev_id;
+    	struct gc_private *priv = (struct gc_private *)dev->priv;
 
 	u8		irq_status;
 	int		retrig = 0;
 	int		boguscount = 0;
 
-    	dev     = (struct net_device *)dev_id;
-    	priv    = (struct gc_private *)dev->priv;
-
-
 	/* This might just as well be deleted now, no crummy drivers present :-) */
-	if ((dev == NULL) || (BBA_IRQ != irq)) {
+	if ((dev == NULL) || (dev->irq != irq)) {
 		printk(KERN_ERR "%s: bogus interrupt %d\n", dev?dev->name:"GC_BBA", irq);
 		return IRQ_NONE;
 	}
 
-	spin_lock(&gc_bba_lock);
+	spin_lock(&priv->lock);
 
 
 	int ch;
@@ -800,7 +797,7 @@ static irqreturn_t gc_bba_interrupt(int irq, void *dev_id, struct pt_regs * regs
 
 	if (retrig)
 		trigger_interrupt(dev);
-	spin_unlock(&gc_bba_lock);
+	spin_unlock(&priv->lock);
 	return IRQ_HANDLED;
 
 }
@@ -902,13 +899,18 @@ int __init gc_bba_probe(struct net_device *dev)
 
 	dev->priv = (struct gc_private *)kmalloc(sizeof(struct net_device_stats), GFP_KERNEL);
 	priv = (struct gc_private *)dev->priv;
+	dev->irq = BBA_IRQ;
+	
 	
 	dev->get_stats = gc_stats;
 
 	dev->open = gc_bba_open;
 	dev->stop = gc_bba_close;
+	//&gc_bba_start_xmit ( i am confused)
 	dev->hard_start_xmit = gc_bba_start_xmit;
-
+	
+	spin_lock_init(&priv->lock);
+	
 	ether_setup(dev);
 
 	dev->flags&=~IFF_MULTICAST;
@@ -982,8 +984,7 @@ static int adapter_init(struct net_device *dev)
 	strncpy(dev->name,"GameCube BBA",IFNAMSIZ);
 	dev->name[IFNAMSIZ-1]= 0;
 	
-	dev->irq = 2;
-        exi_request_irq(dev->irq, EXI_EVENT_IRQ, gcif_irq_handler, NULL);
+        exi_request_irq(2, EXI_EVENT_IRQ, gcif_irq_handler, NULL);
 
 	eth_exi_outb(0x2, 0xFF);
 	eth_exi_outb(0x3, 0xFF);
@@ -1004,8 +1005,8 @@ static int __init gc_bba_init(void)
 {
 	memset(gc_bba_dev,0,sizeof(struct net_device));
 	
+	
 	//printk("gc_bba_init\n");
-	spin_lock_init(&gc_bba_lock);
 
 //	exi_init();
 
