@@ -104,7 +104,7 @@ static const u32 VIDEO_Mode640X480Pal60YUV16[32] = {
 
 static struct vi_video_mode gcnfb_video_modes[] = {
 	{
-		.name = "NTSC 480i",
+		.name = "NTSC/PAL60 480i",
 		.regs = VIDEO_Mode640X480NtscYUV16,
 		.width = 640,
 		.height = 480,
@@ -125,6 +125,7 @@ static struct vi_video_mode gcnfb_video_modes[] = {
 		.lines = 625,
 	},
 	{
+		/* this seems to be actually the same as NTSC 480i */
 		.name = "PAL60 480i",
 		.regs = VIDEO_Mode640X480Pal60YUV16,
 		.width = 640,
@@ -422,8 +423,8 @@ static int gcnfb_check_var(struct fb_var_screeninfo *var, struct fb_info *info)
 	    var->xres_virtual != gcnfb_current_video_mode->width ||
 	    var->xres != gcnfb_current_video_mode->width ||
 	    /* XXX isobel, do not break old sdl */
-	    /* var->yres_virtual != gcnfb_info.var.yres || *//* check for y */
-	    /* var->yres != gcnfb_info.var.yres || */
+	    var->yres_virtual > gcnfb_current_video_mode->height ||
+	    var->yres > gcnfb_current_video_mode->height ||
 	    (gcnfb_is_progressive(var->vmode) && !gcnfb_can_do_progressive())) {	/* trying to set progressive? */
 		return -EINVAL;
 	}
@@ -578,9 +579,11 @@ void gcnfb_video_mode_select(void)
 	if (gcnfb_current_video_mode == NULL) {
 		/* auto detection */
 		if (vi_regs[1] == 0x4B6A01B0) {
+			/* PAL50 */
 			gcnfb_current_video_mode = 
 				gcnfb_video_modes + GCNFB_VM_PAL50;
 		} else {
+			/* NTSC/PAL60 */
 			mode = (((u16*)vi_regs)[1] >> 8) & 3;
 			switch (mode)
 			{
@@ -592,6 +595,7 @@ void gcnfb_video_mode_select(void)
 					 GCNFB_VM_NTSC_PROGRESSIVE : 
 					 GCNFB_VM_NTSC);
 				break;
+			/* XXX this code is never reached */
 			case 1:	/* PAL60 */
 				gcnfb_current_video_mode = 
 					gcnfb_video_modes + GCNFB_VM_PAL60;
@@ -779,14 +783,6 @@ static int __init gcnfb_init(void)
 	/* setup the framebuffer address */
 	gcnfb_restorefb(&gcnfb_info);
 
-	/* XXX isobel */
-#if 0
-	/* fill framebuffer memory with black color */
-	for (i = 0; i < (gcnfb_info.var.xres * gcnfb_info.var.yres / 2); ++i) {
-		writel(0x00800080, ((u32 *) gcnfb_info.screen_base) + i);
-	}
-#endif
-
 	/* now register us */
 	if (register_framebuffer(&gcnfb_info) < 0) {
 		err = -EINVAL;
@@ -807,14 +803,14 @@ static int __init gcnfb_init(void)
 
 	return 0;
 
-      err_gcngx_init:
+err_gcngx_init:
 	free_irq(VI_IRQ, 0);
 	unregister_framebuffer(&gcnfb_info);
-      err_register_framebuffer:
+err_register_framebuffer:
 	fb_dealloc_cmap(&gcnfb_info.cmap);
-      err_alloc_cmap:
+err_alloc_cmap:
 	iounmap(gcnfb_info.screen_base);
-      err_ioremap:
+err_ioremap:
 	release_mem_region(gcnfb_info.fix.smem_start, gcnfb_info.fix.smem_len);
 	return err;
 }
