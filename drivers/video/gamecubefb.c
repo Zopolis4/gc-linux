@@ -262,11 +262,16 @@ int __init gamecubefb_setup(char *options)
 	return 0;
 }
 
-int __init gamecubefb_init(void)
+static int __init gamecubefb_init(void)
 {
 	int video_cmap_len;
 	int i;
 	int err = 0;
+	char *option = NULL;
+
+	if (fb_get_options("gamecubefb", &option))
+		return -ENODEV;
+	gamecubefb_setup(option);
 
 	// detect current video mode
 	if (tv_encoding == TV_ENC_DETECT) {
@@ -417,6 +422,14 @@ out:
 	return err;
 }
 
+static void __exit gamecubefb_exit(void)
+{
+	release_mem_region(gcfb_fix.smem_start, gcfb_fix.smem_len);
+	iounmap(gcfb_info.screen_base);
+	fb_dealloc_cmap(&gcfb_info.cmap);
+	unregister_framebuffer(&gcfb_info);
+}
+
 /*
  * Overrides for Emacs so that we follow Linus's tabbing style.
  * ---------------------------------------------------------------------------
@@ -425,4 +438,6 @@ out:
  * End:
  */
 
+module_init(gamecubefb_init);
+module_exit(gamecubefb_exit);
 MODULE_LICENSE("GPL");

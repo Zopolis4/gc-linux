@@ -14,6 +14,7 @@
 #include <asm/bitops.h>
 #include <asm/bootinfo.h>
 #include <asm/machdep.h>
+#include <asm/pgtable.h>
 
 #include "console.h"
 #include "gamecube.h"
