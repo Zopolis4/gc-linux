@@ -91,7 +91,7 @@ void ARAM_StartDMA (unsigned long mmAddr, unsigned long arAddr, unsigned long le
 	AR_DMA_CNT_L = length & 0xFFFF;
 	
 	// For security
-	udelay(10000);
+	udelay(1000);
 
 	// Without the Break, the While loop loops endless
 	int counter=0;
