@@ -29,7 +29,7 @@
 
 #include <asm/irq.h>
 
-#define RSW_IRQ 22
+#define RSW_IRQ 1
 
 static irqreturn_t gc_rsw_handler(int this_irq, void *dev_id, struct pt_regs *regs) {
 
