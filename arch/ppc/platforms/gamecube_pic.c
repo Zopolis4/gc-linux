@@ -2,69 +2,48 @@
  * arch/ppc/platforms/gamecube_pic.c
  */
 
-#undef DEBUG
-
-
 #include <linux/irq.h>
 #include <linux/init.h>
-#include <linux/kernel.h>
 
 #include <asm/io.h>
+#include <asm/bitops.h>
 
 #include "gamecube.h"
 
 
-static void gamecube_mask_and_ack_irq(unsigned int irq)
+static void gekko_mask_and_ack_irq(unsigned int irq)
 {
-	pr_debug("mask_and_ack(): %x, %x\n", GAMECUBE_IN(GAMECUBE_PIIM),
-			GAMECUBE_IN(GAMECUBE_PIIC));
-	if (irq < GAMECUBE_IRQS) {
-		GAMECUBE_OUT(GAMECUBE_PIIM, GAMECUBE_IN(GAMECUBE_PIIM) &
-				~(1 << irq)); /* mask */
-		GAMECUBE_OUT(GAMECUBE_PIIC, 1 << irq); /* ack */
-	}
-	pr_debug("after mask_and_ack(): %x, %x\n", GAMECUBE_IN(GAMECUBE_PIIM),
-			GAMECUBE_IN(GAMECUBE_PIIC));
+	clear_bit(irq, GAMECUBE_PIIM);
+	set_bit(irq, GAMECUBE_PIIC);
 }
 
-static void gamecube_mask_irq(unsigned int irq)
+static void gekko_mask_irq(unsigned int irq)
 {
-	pr_debug("mask(): %x, %x\n", GAMECUBE_IN(GAMECUBE_PIIM),
-			GAMECUBE_IN(GAMECUBE_PIIC));
-	if (irq < GAMECUBE_IRQS)
-		GAMECUBE_OUT(GAMECUBE_PIIM, GAMECUBE_IN(GAMECUBE_PIIM) &
-				~(1 << irq)); /* mask */
+	clear_bit(irq, GAMECUBE_PIIM);
 }
 
-static void
-gamecube_unmask_irq(unsigned int irq)
+static void gekko_unmask_irq(unsigned int irq)
 {
-	pr_debug(" before unmask(): %x, %x\n", GAMECUBE_IN(GAMECUBE_PIIM),
-			GAMECUBE_IN(GAMECUBE_PIIC));
-	if (irq < GAMECUBE_IRQS)
-		GAMECUBE_OUT(GAMECUBE_PIIM, GAMECUBE_IN(GAMECUBE_PIIM) |
-				(1 << irq));
-	pr_debug("after unmask(): %x, %x\n", GAMECUBE_IN(GAMECUBE_PIIM),
-			GAMECUBE_IN(GAMECUBE_PIIC));
+	set_bit(irq, GAMECUBE_PIIM);
 }
 
-
-static struct hw_interrupt_type gamecube_pic = {
-	.typename	= " GC-PIC ",
-	.enable		= gamecube_unmask_irq,
-	.disable	= gamecube_mask_irq,
-	.ack		= gamecube_mask_and_ack_irq,
+static struct hw_interrupt_type gekko_pic = {
+	.typename	= " GEKKO-PIC ",
+	.enable		= gekko_unmask_irq,
+	.disable	= gekko_mask_irq,
+	.ack		= gekko_mask_and_ack_irq,
 };
 
 void __init gamecube_init_IRQ(void)
 {
 	int i;
 
-	GAMECUBE_OUT(GAMECUBE_PIIM, 0); /* disable all irqs */
-	GAMECUBE_OUT(GAMECUBE_PIIC, 0xffffffff); /* ack all irqs */
+	/* mask and ack all IRQs */
+	writel(0x00000000, GAMECUBE_PIIM);
+	writel(0xffffffff, GAMECUBE_PIIC);
 
 	for (i = 0; i < GAMECUBE_IRQS; i++)
-		irq_desc[i].handler = &gamecube_pic;
+		irq_desc[i].handler = &gekko_pic;
 }
 
 /*
