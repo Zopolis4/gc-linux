@@ -1009,6 +1009,16 @@ config PCI_PERMEDIA
 
 source "drivers/pci/Kconfig"
 
+config EXI
+	bool "EXI support (EXPERIMENTAL)"
+	depends on GAMECUBE && EXPERIMENTAL
+	default y
+	help
+	  This adds support for the Expansion Interface (bus) as found in
+	  the Nintendo GameCube.
+
+	  Say Y.
+
 config HOTPLUG
 	bool "Support for hot-pluggable devices"
 	---help---
