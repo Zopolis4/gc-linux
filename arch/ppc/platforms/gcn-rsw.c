@@ -2,9 +2,9 @@
  * arch/ppc/platforms/gcn-rsw.c
  *
  * Nintendo GameCube reset switch driver
+ * Copyright (C) 2004-2005 The GameCube Linux Team
  * Copyright (C) 2004 Stefan Esser
- * Copyright (C) 2004 Albert Herranz
- * Copyright (C) 2004 The GameCube Linux Team
+ * Copyright (C) 2004,2005 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -52,7 +52,7 @@ struct gcn_rsw_private {
                                                                                 
 MODULE_DESCRIPTION(DRV_DESCRIPTION);
 MODULE_AUTHOR(DRV_AUTHOR);
-MODULE_LICENSE(GPL);
+MODULE_LICENSE("GPL");
                                                                                 
 #define PFX DRV_MODULE_NAME ": "
 #define rsw_printk(level, format, arg...) \
