@@ -111,15 +111,15 @@ static inline uint32_t rgbrgb16toycbycr(uint16_t rgb1, uint16_t rgb2)
 		return 0x00800080;	/* black, black */
 	}
 
-	/*
-	 * FIXME:
-	 * The current scaling from 5 or 6 bits to 8 bits is not correct.
-	 */
-
 	/* RGB565 */
-	r1 = ((rgb1 >> 11) & 0x1f) << 3;
-	g1 = ((rgb1 >> 5) & 0x3f) << 2;
-	b1 = ((rgb1 >> 0) & 0x1f) << 3;
+	r1 = ((rgb1 >> 11) & 0x1f);
+	g1 = ((rgb1 >> 5) & 0x3f);
+	b1 = ((rgb1 >> 0) & 0x1f);
+
+	/* fast (approximated) scaling to 8 bits, thanks to Masken */
+	r1 = (r1 << 3) | (r1 >> 2);
+	g1 = (g1 << 2) | (g1 >> 4);
+	b1 = (b1 << 3) | (b1 >> 2);
 
 	Y1 = clamp(16, 235, ((Yr * r1 + Yg * g1 + Yb * b1) >> RGB2YUV_SHIFT)
 		   + RGB2YUV_LUMA);
@@ -130,10 +130,13 @@ static inline uint32_t rgbrgb16toycbycr(uint16_t rgb1, uint16_t rgb2)
 		g = g1;
 		b = b1;
 	} else {
-		/* RGB565 */
-		r2 = ((rgb2 >> 11) & 0x1f) << 3;
-		g2 = ((rgb2 >> 5) & 0x3f) << 2;
-		b2 = ((rgb2 >> 0) & 0x1f) << 3;
+		/* same as we did for r1 before */
+		r2 = ((rgb2 >> 11) & 0x1f);
+		g2 = ((rgb2 >> 5) & 0x3f);
+		b2 = ((rgb2 >> 0) & 0x1f);
+		r2 = (r2 << 3) | (r2 >> 2);
+		g2 = (g2 << 2) | (g2 >> 4);
+		b2 = (b2 << 3) | (b2 >> 2);
 
 		Y2 = clamp(16, 235,
 			   ((Yr * r2 + Yg * g2 + Yb * b2) >> RGB2YUV_SHIFT)
