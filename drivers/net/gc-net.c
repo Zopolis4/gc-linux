@@ -405,7 +405,7 @@ static inline u8 de600_read_byte(unsigned char type, struct net_device *dev)
 static int gc_bba_open(struct net_device *dev)
 {
 	unsigned long flags;
-	printk("gc_bba_open\n");
+	//printk("gc_bba_open\n");
 
 	int ret = request_irq(BBA_IRQ, gc_bba_interrupt, 0, dev->name, dev);
 	if (ret) {
@@ -766,8 +766,6 @@ int __init gc_bba_probe(struct net_device *dev)
 
 	SET_MODULE_OWNER(dev);
 
-	printk(KERN_INFO "%s: Nintendo GameCube broadband adapter", dev->name);
-
 	/* probe for adapter */
 	rx_page = 0;
 	//select_nic();
@@ -777,14 +775,14 @@ int __init gc_bba_probe(struct net_device *dev)
 	exi_imm_ex(0, &l, 4, EXI_READ);
 	exi_deselect(0);
 
-	printk(": %u\n", l);
+//	printk(": %u\n", l);
 	if (l != 0x4020200) {
-		printk("BBA not found");
+		printk("GameCube broadband adapter not found");
 		return -ENODEV;
 	}
 
 
-	printk("initializing BBA...\n");
+	//printk("initializing BBA...\n");
 
 	eth_outb(0x60, 0);	// unknown
 	udelay(10000);
@@ -797,9 +795,9 @@ int __init gc_bba_probe(struct net_device *dev)
 	eth_exi_outs(4, "\xd1\x07\x75\x75", 2);
 	eth_exi_outb(5, 0x4e);
 
-	printk("BBA %02x %02x %02x %02x %02x %02x %02x %02x\n",
-		 eth_exi_inb(0), eth_exi_inb(1), eth_exi_inb(2), eth_exi_inb(3),
-		 eth_exi_inb(4), eth_exi_inb(5), eth_exi_inb(6), eth_exi_inb(7));
+//	printk("BBA %02x %02x %02x %02x %02x %02x %02x %02x\n",
+//		 eth_exi_inb(0), eth_exi_inb(1), eth_exi_inb(2), eth_exi_inb(3),
+//		 eth_exi_inb(4), eth_exi_inb(5), eth_exi_inb(6), eth_exi_inb(7));
 
 	eth_outb(0x5b, eth_inb(0x5b)&~(1<<7));
 	eth_outb(0x5e, 1);
@@ -827,7 +825,9 @@ int __init gc_bba_probe(struct net_device *dev)
 	eth_outb(0x32, 8);
 
 	eth_ins(0x20, dev->dev_addr, ETH_LEN);
-	printk("MAC ADDRESS %02x:%02x:%02x:%02x:%02x:%02x\n",
+
+	printk(KERN_INFO "%s: Nintendo GameCube broadband adapter", dev->name);
+	printk(", %02x:%02x:%02x:%02x:%02x:%02x.\n",
 		dev->dev_addr[0], dev->dev_addr[1], dev->dev_addr[2],
 		dev->dev_addr[3], dev->dev_addr[4], dev->dev_addr[5]);
 
@@ -842,7 +842,7 @@ int __init gc_bba_probe(struct net_device *dev)
 	eth_outb(8, 0xFF); // enable all IRQs
 	eth_outb(9, 0xFF); // clear all irqs
 
-	printk("after all: irq mask %x %x\n", eth_inb(8), eth_inb(9));
+//	printk("after all: irq mask %x %x\n", eth_inb(8), eth_inb(9));
 
 	/* Initialize the device structure. */
 	dev->priv = &gc_bba_netstats;
