@@ -72,25 +72,16 @@ void __init gamecube_init_IRQ(void)
  */
 int gamecube_get_irq(struct pt_regs *regs)
 {
-	int irq = 0;
+	int irq;
 	u_int irq_status, irq_test = 1;
 
-	pr_debug("get_irq(): %x, %x\n", GAMECUBE_IN(GAMECUBE_PIIM),
-			GAMECUBE_IN(GAMECUBE_PIIC));
-	irq_status = GAMECUBE_IN(GAMECUBE_PIIC) & GAMECUBE_IN(GAMECUBE_PIIM);
+	irq_status = readl(GAMECUBE_PIIC) & readl(GAMECUBE_PIIM);
+	if (irq_status == 0)
+		return -1;	/* no more IRQs pending */
 
-	if (irq_status == 0) {
-		pr_debug("GC-PIC: Received a spurious IRQ\n");
-		return -1;
-/*		while(1);*/
-	}
-
-	do {
+	for (irq = 0; irq < GAMECUBE_IRQS; irq++, irq_test <<= 1)
 		if (irq_status & irq_test)
 			break;
-		irq++;
-		irq_test <<= 1;
-	} while (irq < GAMECUBE_IRQS);
 
 	return irq;
 }
