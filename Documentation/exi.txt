@@ -1,0 +1,55 @@
+The Expansion Interface (EXI)
+-----------------------------
+
+[Introductory information goes here...]
+
+
+Device drivers.
+---------------
+
+When writing drivers for devices attached to the EXI bus, do not bother with
+device probing, removal, hotplug and PM events. The bus driver already takes
+care of this.
+
+
+Registration:
+-------------
+
+Drivers should declare a struct exi_driver. They must initialize both the
+`name' and `id_table' fields.
+
+`name' distinguishes the driver from others registered with the bus. It
+should be short, unique, yet remain informative.
+
+`id_table' is a list of device IDs the driver claims to support. These
+should be taken from include/linux/exi_ids.h:
+
+	struct exi_device_id frob_id_table[] = {
+		{ EXI_ID_FROB0 },
+		{ EXI_ID_FROB1 },
+	};
+
+	struct exi_driver frob_driver = {
+		.name		= "frob",
+		.id_table	= frob_id_table,
+	};
+
+
+From within the driver's initialization function, register the driver with
+the bus by calling exi_driver_register() with the driver structure declared
+previously, like so:
+
+	static int __init frob_init(void)
+	{
+		return exi_driver_register(&frob_driver);
+	}
+
+
+If the driver may be compiled as a loadable kernel module,
+call exi_driver_unregister() in the driver's exit function:
+
+	static void __exit frob_exit(void)
+	{
+		exi_driver_unregister(&frob_driver);
+	}
+
