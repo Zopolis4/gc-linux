@@ -2,8 +2,8 @@
  * drivers/input/gcn-si.c
  *
  * Nintendo GameCube Serial Interface driver
- * Copyright (C) 2004 Steven Looman
  * Copyright (C) 2004 The GameCube Linux Team
+ * Copyright (C) 2004 Steven Looman
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -309,18 +309,16 @@ static void gcn_si_timer(unsigned long portno)
 			if (key[i])
 				input_report_key(&port[portno].idev,
 						 gamecube_keymap[key[i]], 1);
-			
 			port[portno].keyboard.old[i] = key[i];
 		}
-		
 		break;
-		
+
 	default:
 		break;
 	}
-	
+
 	input_sync(&port[portno].idev);
-	
+
 	mod_timer(&port[portno].timer, jiffies + REFRESH_TIME);
 }
 
@@ -357,7 +355,7 @@ static int gcn_si_event(struct input_dev *dev, unsigned int type,
 			unsigned int code, int value)
 {
 	int portno = (int)dev->private;
-	
+
 	if (type == EV_FF) {
 		if (code == FF_RUMBLE) {
 			gcn_si_set_rumbling(portno, value);
@@ -380,31 +378,31 @@ static int __init gcn_si_init(void)
 		printk(KERN_WARNING PFX "resource busy\n");
 		return -EBUSY;
 	}
-	
+
 	for (i = 0; i < 4; ++i) {
 		memset(&port[i], 0, sizeof(port[i]));
-		
+
 		/* probe ports */
 		port[i].si_id = gcn_si_get_controller_id(i) >> 16;
+
 		/* convert si_id to id */
-		if (port[i].si_id == ID_PAD)
-		{
+		if (port[i].si_id == ID_PAD) {
 			port[i].id = CTL_PAD;
 			strcpy(port[i].name,"Standard Pad");
-		}
-		else if (port[i].si_id & ID_WIRELESS_BIT)
-		{
+		} else if (port[i].si_id & ID_WIRELESS_BIT) {
 			port[i].id = CTL_PAD;
 			strcpy(port[i].name,(port[i].si_id & ID_WAVEBIRD_BIT) ?
 			       "Nintendo Wavebird" : "Wireless Pad");
-		}
-		else if (port[i].si_id == ID_KEYBOARD)
-		{
+		} else if (port[i].si_id == ID_KEYBOARD) {
 			port[i].id = CTL_KEYBOARD;
-		}
-		else
-		{
+			strcpy(port[i].name, "Keyboard");
+		} else {
 			port[i].id = CTL_UNKNOWN;
+			if (port[i].si_id)
+				sprintf(port[i].name, "Unknown (%x)", 
+					port[i].si_id);
+			else
+				strcpy(port[i].name, "Not Present");
 		}
 		
 		DPRINTK("port[%d] = 0x%x\n", i, id);
@@ -417,9 +415,6 @@ static int __init gcn_si_init(void)
 
 		switch (port[i].id) {
 		case CTL_PAD:
-			/* sprintf (port[i].phys, "gcsi/port%d", i); */
-			/* port[i].idev.phys = port[i].phys; */
-
 			set_bit(EV_KEY, port[i].idev.evbit);
 			set_bit(EV_ABS, port[i].idev.evbit);
 			set_bit(EV_FF, port[i].idev.evbit);
@@ -492,8 +487,6 @@ static int __init gcn_si_init(void)
 			break;
 
 		case CTL_KEYBOARD:
-			strcpy(port[i].name, "keyboard");
-			
 			set_bit(EV_KEY, port[i].idev.evbit);
 			set_bit(EV_REP, port[i].idev.evbit);
 
@@ -503,15 +496,6 @@ static int __init gcn_si_init(void)
 
 			input_register_device(&port[i].idev);
 
-			break;
-
-		default:
-			/* unknown device */
-			if (port[i].si_id)
-				sprintf(port[i].name, "Unknown (%x)", 
-					port[i].si_id);
-			else
-				strcpy(port[i].name, "Not Present");
 			break;
 		}
 		port[i].idev.name = port[i].name;
@@ -529,15 +513,14 @@ static int __init gcn_si_init(void)
 static void __exit gcn_si_exit(void)
 {
 	int i;
-	
+
 	si_printk(KERN_INFO, "exit\n");
-	
+
 	for (i = 0; i < 4; ++i) {
 		if (port[i].id != CTL_UNKNOWN) {
 			input_unregister_device(&port[i].idev);
 		}
 	}
-	
 	release_resource(&gcn_si_resources);
 }
 
