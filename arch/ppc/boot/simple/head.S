@@ -69,12 +69,13 @@ start_:
 
 	/* The following functions we call must not modify r3 or r4.....
 	*/
-#ifdef CONFIG_GAMECUBE
-	lis	r4, 0xcc00
+#ifdef CONFIG_GAMECUBE_CONSOLE
+	/* setup the framebuffer for the debug console */
+	lis	r8, 0xcc00
 	lis	r5, 0x00c0
-	stw	r5, 0x201c(r4)
+	stw	r5, 0x201c(r8)
 	addi	r5, r5, 1280
-	stw	r5, 0x2024(r4)
+	stw	r5, 0x2024(r8)
 #endif
 #ifdef CONFIG_6xx
 	/* On PReP we must look at the OpenFirmware pointer and sanity
