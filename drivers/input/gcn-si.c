@@ -256,9 +256,9 @@ static void gcn_si_timer(unsigned long portno)
 		/* axis */
 		/* a stick */
 		input_report_abs(&port[portno].idev, ABS_X,
-				 (raw[0] >> 8) & 0xFF);
+				 raw[0] >> 8 & 0xFF);
 		input_report_abs(&port[portno].idev, ABS_Y,
-				 -(raw[0] >> 0) & 0xFF);
+				 0xFF - (raw[0] >> 0 & 0xFF));
 
 		/* b pad */
 		if (raw[0] & PAD_RIGHT)
