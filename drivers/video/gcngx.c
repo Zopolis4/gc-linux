@@ -2,8 +2,8 @@
  * drivers/video/gcngx.c
  *
  * Nintendo GameCube GX driver extension
- * Copyright (C) 2004 Todd Jeffreys <todd@voidpointer.org>
- * Copyright (C) 2004 The GameCube Linux Team
+ * Copyright (C) 2004-2005 The GameCube Linux Team
+ * Copyright (C) 2004,2005 Todd Jeffreys <todd@voidpointer.org>
  *
  * Parts borrowed heavily from libogc.  This driver would not have
  * been possible with this library.  Thanks!
@@ -63,22 +63,21 @@ extern struct fb_ops gcnfb_ops;
 
 #define KMALLOC_BASE 0x0D000000
 
-#define VIDEO_PE_INTERRUPT 0xCC00100A
-#define VIDEO_PE_TOKEN     0xCC00100E
-#define VIDEO_PE_INTERRUPT_TOKEN_ENABLE  (1 << 0)
-#define VIDEO_PE_INTERRUPT_FINISH_ENABLE (1 << 1)
-#define VIDEO_PE_INTERRUPT_TOKEN_INTERRUPT (1 << 2)
+#define VIDEO_PE_INTERRUPT		((void __iomem *)0xcc00100a)
+#define VIDEO_PE_TOKEN			((void __iomem *)0xcc00100e)
+#define VIDEO_PE_INTERRUPT_TOKEN_ENABLE     (1 << 0)
+#define VIDEO_PE_INTERRUPT_FINISH_ENABLE    (1 << 1)
+#define VIDEO_PE_INTERRUPT_TOKEN_INTERRUPT  (1 << 2)
 #define VIDEO_PE_INTERRUPT_FINISH_INTERRUPT (1 << 3)
 
 #define	gcngx_disable_pe_interrupts() writew(readw(VIDEO_PE_INTERRUPT) & ~(VIDEO_PE_INTERRUPT_TOKEN_ENABLE | VIDEO_PE_INTERRUPT_FINISH_ENABLE),VIDEO_PE_INTERRUPT)
 #define gcngx_enable_pe_interrupts() { writew(readw(VIDEO_PE_INTERRUPT) | (VIDEO_PE_INTERRUPT_TOKEN_ENABLE | VIDEO_PE_INTERRUPT_FINISH_ENABLE | VIDEO_PE_INTERRUPT_TOKEN_INTERRUPT | VIDEO_PE_INTERRUPT_FINISH_INTERRUPT),VIDEO_PE_INTERRUPT); writew(0,VIDEO_PE_TOKEN); }
 
-#define VIDEO_CP_SR  ((volatile u16*)0xCC000000)
-#define VIDEO_CP_CR  ((volatile u16*)0xCC000002)
+#define VIDEO_CP_SR		((volatile u16 __iomem *)0xcc000000)
+#define VIDEO_CP_SR_OVERFLOW	(1 << 0)
+#define VIDEO_CP_SR_UNDERFLOW	(1 << 1)
 
-#define VIDEO_CP_SR_OVERFLOW  (1 << 0)
-#define VIDEO_CP_SR_UNDERFLOW (1 << 1)
-
+#define VIDEO_CP_CR		((volatile u16 __iomem *)0xcc000002)
 #define VIDEO_CP_CR_GP_FIFO_READ_ENABLE  (1 << 0)
 #define VIDEO_CP_CR_CP_IRQ_ENABLE        (1 << 1)
 #define VIDEO_CP_CR_OVERFLOW_IRQ_ENABLE  (1 << 2)
@@ -89,11 +88,6 @@ extern struct fb_ops gcnfb_ops;
 #define SIG_PE_FINISH       (SIGRTMIN+14)
 #define SIG_PE_TOKEN        (SIGRTMIN+15)
 #define SIG_VTRACE_COMPLETE (SIGRTMIN+16)
-
-#define ENABLE_RUMBLE() do \
-   { writel(0x00400001,0xCC006400); \
-     writel(0x80000000,0xCC006438); } \
-   while (0)
 
 #define FIFO_PUTU8(x)  (*((volatile u8*) WGPIPE) = (x))
 #define FIFO_PUTU32(x) (*((volatile u32*)WGPIPE) = (x))
@@ -245,7 +239,7 @@ static void *mymalloc(unsigned int len)
 	return p;	
 }
 
-static void *myfree(void *p)
+static void myfree(void *p)
 {
 	struct page *page;
 	u32 len;
@@ -283,7 +277,7 @@ static void gcngx_munmap(struct vm_area_struct *vma)
 	gcnfb_restorefb(info);
 #ifdef CONFIG_FRAMEBUFFER_CONSOLE
 	acquire_console_sem();
-/*	update_screen(info->currcon);*/
+	update_screen(fg_console);
 	unblank_screen();
 	release_console_sem();
 #endif
@@ -332,8 +326,8 @@ int gcngx_mmap(struct fb_info *info,struct file *file,
 		/* now setup the mapping */
 		phys = virt_to_phys(vma->vm_private_data);
 		vma->vm_flags |= (VM_RESERVED | VM_LOCKED);
-		if (remap_page_range(vma,vma->vm_start,
-				     phys,len,vma->vm_page_prot))
+		if (remap_pfn_range(vma,vma->vm_start,
+				     phys >> PAGE_SHIFT,len,vma->vm_page_prot))
 		{
 			kfree(vma->vm_private_data);
 			return -EINVAL;
