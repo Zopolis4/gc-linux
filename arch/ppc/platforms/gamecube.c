@@ -13,7 +13,6 @@
 
 #include <linux/init.h>
 #include <linux/config.h>
-#include <linux/console.h>
 #include <linux/irq.h>
 #include <linux/initrd.h>
 #include <linux/seq_file.h>
