@@ -445,7 +445,8 @@ int __init gcnfb_setup(char *options)
 
 void gcnfb_enable_interrupts(int enable)
 {
-	u16 vtrap = 263;
+	u16 vtrap = (tv_encoding == TV_ENC_NTSC) ? 263 : 313;
+	u16 htrap = (tv_encoding == TV_ENC_NTSC) ? 430 : 433;
 	if (enable)
 	{
 		/* interrupt on line 1 */
@@ -455,7 +456,7 @@ void gcnfb_enable_interrupts(int enable)
 		{
 			vtrap *= 2;
 		}
-		writel(VIDEO_IRQ_SET | VIDEO_IRQ_ENABLE | (vtrap << VIDEO_IRQ_VCT_SHIFT) | (0x1AE << VIDEO_IRQ_HCT_SHIFT),VIDEO_IRQ_STATUS_2);
+		writel(VIDEO_IRQ_SET | VIDEO_IRQ_ENABLE | (vtrap << VIDEO_IRQ_VCT_SHIFT) | (htrap << VIDEO_IRQ_HCT_SHIFT),VIDEO_IRQ_STATUS_2);
 	}
 	else
 	{
