@@ -15,12 +15,15 @@
 #include <asm/ppcboot.h>
 
 /*
- * We have a total of 14 IRQs. Each has a corresponding bit in both
- * the Interrupt Cause (PIIC) and Interrupt Mask (PIIM) registers.
+ * There are 14 IRQs in total. Each has a corresponding bit in both
+ * the Interrupt Cause (ICR) and Interrupt Mask (IMR) registers.
+ *
+ * Enabling/disabling an interrupt line involves asserting/clearing
+ * the corresponding bit in IMR. ACK'ing a request simply involves
+ * asserting the corresponding bit in ICR.
  */
-#define GAMECUBE_IRQS		14
-#define GAMECUBE_PIIC		((volatile ulong *)0xCC003000)
-#define GAMECUBE_PIIM		((volatile ulong *)0xCC003004)
+#define FLIPPER_ICR		((volatile ulong *)0xcc003000)
+#define FLIPPER_IMR		((volatile ulong *)0xcc003004)
 
 /*
  * Anything written here automagically puts us through reset.

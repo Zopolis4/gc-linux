@@ -5,29 +5,23 @@
 #include <linux/init.h>
 #include <linux/config.h>
 #include <linux/console.h>
+#include <linux/irq.h>
 #include <linux/initrd.h>
 #include <linux/seq_file.h>
 
-#include <asm/machdep.h>
-#include <asm/bootinfo.h>
-#include <asm/time.h>
 #include <asm/io.h>
+#include <asm/time.h>
+#include <asm/bitops.h>
+#include <asm/bootinfo.h>
+#include <asm/machdep.h>
 
 #include "console.h"
 #include "gamecube.h"
 
 
-extern void gamecube_init_IRQ(void);
-extern int gamecube_get_irq(struct pt_regs *regs);
-
-extern long __init
-gamecube_time_init(void);
-
-extern unsigned long 
-gamecube_get_rtc_time(void);
-
-extern int 
-gamecube_set_rtc_time(unsigned long nowtime);
+extern long gamecube_time_init(void) __init;
+extern unsigned long gamecube_get_rtc_time(void);
+extern int gamecube_set_rtc_time(unsigned long nowtime);
 
 unsigned long gamecube_find_end_of_memory(void)
 {
@@ -68,6 +62,62 @@ void __init gamecube_calibrate_decr(void)
 	divisor = 4;
 	tb_ticks_per_jiffy = freq / HZ / divisor;
 	tb_to_us = mulhwu_scale_factor(freq/divisor, 1000000);
+}
+
+static int
+gamecube_get_irq(struct pt_regs *regs)
+{
+	int irq;
+	u_int irq_status, irq_test = 1;
+
+	irq_status = readl(FLIPPER_ICR) & readl(FLIPPER_IMR);
+	if (irq_status == 0)
+		return -1;	/* no more IRQs pending */
+
+	for (irq = 0; irq < 14; irq++, irq_test <<= 1)
+		if (irq_status & irq_test)
+			break;
+
+	return irq;
+}
+
+static void
+flipper_mask_and_ack_irq(unsigned int irq)
+{
+	clear_bit(irq, FLIPPER_IMR);
+	set_bit(irq, FLIPPER_ICR);
+}
+
+static void
+flipper_mask_irq(unsigned int irq)
+{
+	clear_bit(irq, FLIPPER_IMR);
+}
+
+static void
+flipper_unmask_irq(unsigned int irq)
+{
+	set_bit(irq, FLIPPER_IMR);
+}
+
+static struct hw_interrupt_type flipper_pic = {
+	.typename	= " FLIPPER-PIC ",
+	.enable		= flipper_unmask_irq,
+	.disable	= flipper_mask_irq,
+	.ack		= flipper_mask_and_ack_irq,
+};
+
+static void __init
+gamecube_init_IRQ(void)
+{
+	int i;
+
+	/* mask and ack all IRQs */
+	writel(0x00000000, FLIPPER_IMR);
+	writel(0xffffffff, FLIPPER_ICR);
+
+	for (i = 0; i < 14; i++)
+		irq_desc[i].handler = &flipper_pic;
 }
 
 static int
