@@ -44,60 +44,32 @@ disable_6xx_mmu:
 	srwi	r10,r10,16
 	cmpwi	0,r10,1		/* 601 ? */
 	beq	.clearbats_601
-#endif
-
-#ifdef CONFIG_GAMECUBE
-/*
- * The code itself seems to be a kind of signature from tmbinc,
- * as all this stuff is strictly not needed...
- * I've rearranged the code a little bit for readability purposes.
- * --Albert Herranz
- */
-	/*
-	 * To disable the MMU the author executes a System Call (sc) which
-	 * sets MSR[IR] = MSR[DR] = 0, effectively disabling the MMU.
-	 *
-	 * In order to return from the system call he setups a dummy System
-	 * Call Exception vector with an absolute branch back to his code.
-	 *
-	 * NOTE: The vector contains *code* not *address of code* !!!
-	 *
-	 */
-
-	/* save for later... */
+#else
+	/* save the Link Register for later... */
 	mflr    r8
 
-	/* calculate address of label 2: to jump to */
+	/* load in r11 the MSR with address translation bits off */
+	li	r10, MSR_IR|MSR_DR
+	mfmsr	r11
+	andc	r11, r11, r10
+
+	/* load in r10 the address of label 2: in physical layout */
 	bl      1f
 1:
-	mflr    r7
-	addi    r7, r7, 2f - 1b
+	mflr    r10
+	addi    r10, r10, 2f - 1b
+	clrlwi  r10, r10, 3 /* virt to phys in our current address space */
 
-	/* convert it to physical layout (in sc context the mmu will be off) */
-	clrlwi  r7, r7, 3
-
-	/* convert it to an absolute branch instruction */
-	oris    r7, r7, 0x4800
-	ori     r7, r7, 2
-
-	/* System Call Exception vector effective address is 0x80000c00 */
-	lis     r9, 0x8000
-	ori     r9, r9, 0x0c00
-
-	/* store branch at System Call Exception vector and flush caches */
-	stw     r7, 0(r9)
-	dcbf    0, r9
-	icbi    0, r9
+	/* this will disable the MMU and jump to 2: */
+	mtspr	SRR1, r11
+	mtspr	SRR0, r10
 	sync
-	isync
-
-	/* switch MMU off and jump to 2: */
-	sc
+	rfi
 2:
-	/* restore Link Register in physical address layout */
+	/* restore, and fix up, the Link Register */
 	clrlwi r8, r8, 3
 	mtlr r8
-#endif
+#endif /* !CONFIG_GAMECUBE */
 
 	/* Clear BATs */
 	li	r8,0
@@ -121,17 +93,6 @@ disable_6xx_mmu:
 	isync
 	sync
 	sync
-	
-#ifndef CONFIG_GAMECUBE
-	li r8, 0x1fff
-	mtspr DBAT0U, r8
-	li r8, 0x2a
-	mtspr DBAT0L, r8
-	
-	mfmsr r8
-	ori r8, r8, 0x10
-	mtmsr r8
-#endif
 
 	/* Set segment registers */
 	li	r8,16		/* load up segment register values */

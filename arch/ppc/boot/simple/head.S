@@ -101,23 +101,14 @@ haveOF:
 	bl	disable_6xx_mmu
 #endif
 
-#ifdef CONFIG_GAMECUBE
-	/* convert our starting address to physical layout format */
-	clrlwi r3, r3, 3
-#else
+#ifndef CONFIG_GAMECUBE
 	bl	disable_6xx_l1cache
 
 	CLEAR_CACHES
-#endif /* CONFIG_GAMECUBE */
-
-#ifdef CONFIG_GAMECUBE_CONSOLE
-	/* setup the framebuffer address for the early debug console */
-	lis	r8, 0xcc00
-	lis	r5, 0x00c0
-	stw	r5, 0x201c(r8)
-	addi	r5, r5, 1280
-	stw	r5, 0x2024(r8)
-#endif /* CONFIG_GAMECUBE_CONSOLE */
+#else
+	/* convert our starting address to physical layout format */
+	clrlwi r3, r3, 3
+#endif /* !CONFIG_GAMECUBE */
 
 #endif
 

@@ -987,16 +987,23 @@ embed_config(bd_t **bdp)
 void
 embed_config(bd_t **bdp)
 {
+	u_char  *cp;
+	int	i;
 	bd_t  *bd;
 
 	bd = &bdinfo;
 	*bdp = bd;
 
-	bd->bi_memsize = 24 * 1024 * 1024;
+	bd->bi_memsize = GCN_MEM_SIZE;
 	bd->bi_tbfreq = 200 * 1000 * 1000;
 	bd->bi_intfreq = 200000000;
 	bd->bi_busfreq = 100000000;
 	timebase_period_ns = 1000000000 / bd->bi_tbfreq;
- }
 
- #endif
+	/* this is mainly to shut up compiler, we won't use this */
+	cp = (u_char *)def_enet_addr;
+	for (i=0; i<6; i++) {
+		bd->bi_enetaddr[i] = *cp++;
+	}
+}
+#endif /* CONFIG_GAMECUBE */ 

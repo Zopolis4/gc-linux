@@ -213,6 +213,10 @@ load_kernel(unsigned long load_addr, int num_words, unsigned long cksum, bd_t *b
 		}
 		udelay(1000);  /* 1 msec */
 	}
+#else
+	/* shut up compiler */
+	timer = 0;
+	ch = 0;
 #endif
 	*cp = 0;
 	puts("\nUncompressing Linux...");
