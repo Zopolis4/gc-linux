@@ -391,7 +391,9 @@ asmlinkage void __init start_kernel(void)
  * Interrupts are still disabled. Do necessary setups, then
  * enable them
  */
+#ifdef CONFIG_GAMECUBE_CONSOLE
 	con_puts("");
+#endif
 	lock_kernel();
 	printk(linux_banner);
 	setup_arch(&command_line);

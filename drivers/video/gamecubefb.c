@@ -114,14 +114,28 @@ static int gamecubefb_setcolreg(unsigned regno, unsigned red, unsigned green,
     return 0;
 }
 
+void gc_blit() {
+	printk("BLIT\n\n\n");
+}
+
 static struct fb_ops gamecubefb_ops = {
 	.owner		= THIS_MODULE,
+#if 0
+	.fb_setcolreg	= gc_blit,
+	.fb_pan_display	= gc_blit,
+	.fb_fillrect	= gc_blit,
+	.fb_copyarea	= gc_blit,
+	.fb_imageblit	= gc_blit,
+	.fb_cursor	= gc_blit,
+#endif
+#if 1
 	.fb_setcolreg	= gamecubefb_setcolreg,
 	.fb_pan_display	= gamecubefb_pan_display,
 	.fb_fillrect	= cfb_fillrect,
 	.fb_copyarea	= cfb_copyarea,
 	.fb_imageblit	= cfb_imageblit,
 	.fb_cursor	= soft_cursor,
+#endif
 };
 
 int __init gamecubefb_setup(char *options)
@@ -175,6 +189,9 @@ int __init gamecubefb_init(void)
 		return -EIO;
 	}
 
+	//MISTFIX
+	fb_info.screen_base = gamecubefb_fix.smem_start;
+
 	printk(KERN_INFO "gamecubefb: framebuffer at 0x%lx, mapped to 0x%p, size %dk\n",
 	       gamecubefb_fix.smem_start, fb_info.screen_base, gamecubefb_fix.smem_len/1024);
 	printk(KERN_INFO "gamecubefb: mode is %dx%dx%d, linelength=%d, pages=%d\n",
@@ -210,6 +227,7 @@ int __init gamecubefb_init(void)
 	gamecubefb_fix.ywrapstep = (ypan>1) ? 1 : 0;
 
 	fb_info.fbops = &gamecubefb_ops;
+	printk("ops set\n");
 	fb_info.var = gamecubefb_defined;
 	fb_info.fix = gamecubefb_fix;
 	fb_info.pseudo_palette = pseudo_palette;
@@ -220,14 +238,18 @@ int __init gamecubefb_init(void)
 	if (register_framebuffer(&fb_info)<0)
 		return -EINVAL;
 
+#if 0
 	/* clear screen */
 	int c = 640*576/2;
+	//unsigned long *p = (unsigned long*)fb_info.screen_base;
 	unsigned long *p = (unsigned long*)gamecubefb_fix.smem_start;
 	while (c--)
 		*p++ = 0x00800080;
+#endif
 
 	printk(KERN_INFO "fb%d: %s frame buffer device\n",
 	       fb_info.node, fb_info.fix.id);
+
 	return 0;
 }
 

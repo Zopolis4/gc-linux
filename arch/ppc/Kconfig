@@ -689,6 +689,12 @@ config NR_CPUS
 	depends on SMP
 	default "4"
 
+config GAMECUBE_CONSOLE
+	bool "GameCube Minimal Screen Console"
+	depends on GAMECUBE
+	---help---
+	   ...
+
 config PREEMPT
 	bool "Preemptible Kernel"
 	depends on !SMP

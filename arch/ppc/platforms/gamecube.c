@@ -2,6 +2,7 @@
 #include <linux/init.h>
 #include <linux/pagemap.h>
 #include <linux/irq.h>
+#include <linux/console.h>
 #include <asm/time.h>
 #include <asm/io.h>
 #include <asm/machdep.h>
@@ -21,12 +22,13 @@ void __init
 gamecube_map_io(void)
 {
 	io_block_mapping(0xd0000000, 0, 0x02000000, _PAGE_IO);
-	io_block_mapping(0xcc000000, 0xcc000000, 0x00100000, _PAGE_IO); /* GC IO */
+	io_block_mapping(0x0c000000, 0xcc000000, 0x00100000, _PAGE_IO); /* GC IO */
 }
 
 static void
 gamecube_unmask_irq(unsigned int irq)
 {
+	return;
 	if (irq < GAMECUBE_IRQS) {
 		GAMECUBE_OUT(GAMECUBE_PIIM, GAMECUBE_IN(GAMECUBE_PIIM) | (1 << irq));
 	}
@@ -35,6 +37,7 @@ gamecube_unmask_irq(unsigned int irq)
 static void
 gamecube_mask_irq(unsigned int irq)
 {
+	return;
 	if (irq < GAMECUBE_IRQS) {
 		GAMECUBE_OUT(GAMECUBE_PIIM, GAMECUBE_IN(GAMECUBE_PIIM) & ~(1 << irq)); /* mask */
 	}
@@ -43,6 +46,7 @@ gamecube_mask_irq(unsigned int irq)
 static void
 gamecube_mask_and_ack_irq(unsigned int irq)
 {
+	return;
 	if (irq < GAMECUBE_IRQS) {
 		GAMECUBE_OUT(GAMECUBE_PIIM, GAMECUBE_IN(GAMECUBE_PIIM) & ~(1 << irq)); /* mask */
 		GAMECUBE_OUT(GAMECUBE_PIIC, 1 << irq); /* ack */
@@ -65,6 +69,7 @@ gamecube_init_IRQ(void)
 {
 	int i;
 
+	return;
 	GAMECUBE_OUT(GAMECUBE_PIIM,0);		/* disable all irqs */
 	GAMECUBE_OUT(GAMECUBE_PIIC,0xffffffff);	/* ack all irqs */
 
@@ -82,6 +87,7 @@ gamecube_get_irq(struct pt_regs *regs)
 	int irq = 0;
 	u_int irq_status, irq_test = 1;
 
+	return;
 	irq_status = GAMECUBE_IN(GAMECUBE_PIIC);
 
 	do
@@ -98,6 +104,7 @@ gamecube_get_irq(struct pt_regs *regs)
 static void
 gamecube_restart(char *cmd)
 {
+	printk("gamecube_restart()\n");
 	GAMECUBE_OUT(GAMECUBE_RESET, 0);
 }
 
@@ -139,5 +146,7 @@ platform_init(unsigned long r3, unsigned long r4, unsigned long r5,
 
 	ppc_md.calibrate_decr = gamecube_calibrate_decr;
 
-//	console_do_init();
+#ifdef CONFIG_DUMMY_CONSOLE
+	conswitchp = &dummy_con;
+#endif
 }
