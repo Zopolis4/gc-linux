@@ -19,9 +19,12 @@
 /* ------------------------------------------------------------------------- */
 
 /*
- * $Id: gc-net.c,v 1.16 2004/02/08 22:13:22 hamtitampti Exp $
+ * $Id: gc-net.c,v 1.17 2004/02/11 20:15:27 hamtitampti Exp $
  *
  * $Log: gc-net.c,v $
+ * Revision 1.17  2004/02/11 20:15:27  hamtitampti
+ * small changes, little bit better now
+ *
  * Revision 1.16  2004/02/08 22:13:22  hamtitampti
  * added log tag
  *
@@ -448,7 +451,8 @@ static int gc_bba_open(struct net_device *dev)
 	spin_lock_irqsave(&priv->lock, priv->lockflags);
 	ret = adapter_init(dev);
 	spin_unlock_irqrestore(&priv->lock, priv->lockflags);
-
+	netif_start_queue(dev);
+	
 	return ret;
 }
 
@@ -601,7 +605,16 @@ static void gc_input(struct net_device *dev)
 	size=0;
 
 	eth_ins(p_read << 8, descr, 4);
+
+	next_receive_frame  = descr[0];
+	next_receive_frame |= (descr[1] & 0x0f) << 8;
 	
+	if (next_receive_frame>0xf) next_receive_frame = 1;
+
+	eth_outb(0x18, next_receive_frame&0xff);
+	eth_outb(0x19, (next_receive_frame&0x0f00)>>8);
+	
+		
 	/*
 		Size Looks Crazy, but ok, the Packet Lenght is indeed 3 nibbles = 12 bits
 		and shifed with 4 bit to the top.
@@ -647,8 +660,6 @@ static void gc_input(struct net_device *dev)
 	/*
 		We update the  Read Page Pointer with the next pointer, which was given to us
 	*/
-	eth_outb(0x18, descr[0] & 0xFF);
-	eth_outb(0x19, descr[1] & 0x0F);
 
 	netif_rx(skb);
 
@@ -669,6 +680,8 @@ static void gc_input(struct net_device *dev)
 	if (next_receive_frame != p_write) printk("Multipacket Seen\n");
 	if (next_receive_frame != p_write) gc_input(dev);
 	*/
+	gc_input(dev);
+	
 	return ;
 }
 
@@ -710,9 +723,9 @@ static void inline gcif_service(struct net_device *dev)
 	{
 		// We clear the IRQ
 		eth_outb(9, 2);
-		//spin_lock_irqsave(&priv->lock, priv->lockflags);
+		spin_lock_irqsave(&priv->lock, priv->lockflags);
 		gc_input(dev);
-		//spin_unlock_irqrestore(&priv->lock, priv->lockflags);
+		spin_unlock_irqrestore(&priv->lock, priv->lockflags);
 		
 	}
 
@@ -1023,8 +1036,6 @@ static int adapter_init(struct net_device *dev)
 
 	
 	BBA_DBG("after all: irq mask %x %x\n", eth_inb(8), eth_inb(9));
-
-	netif_start_queue(dev);
 
 	return 0; /* OK */
 }
