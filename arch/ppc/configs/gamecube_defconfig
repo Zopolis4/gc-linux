@@ -101,7 +101,7 @@ CONFIG_KERNEL_ELF=y
 CONFIG_BINFMT_ELF=y
 CONFIG_BINFMT_MISC=m
 CONFIG_CMDLINE_BOOL=y
-CONFIG_CMDLINE="root=/dev/sda2 video=gamecubefb"
+CONFIG_CMDLINE="root=/dev/ram0 video=gamecubefb"
 
 #
 # Bus options
@@ -390,7 +390,8 @@ CONFIG_GEN_RTC=y
 #
 # File systems
 #
-# CONFIG_EXT2_FS is not set
+CONFIG_EXT2_FS=y
+# CONFIG_EXT2_FS_XATTR is not set
 # CONFIG_EXT3_FS is not set
 # CONFIG_JBD is not set
 # CONFIG_REISERFS_FS is not set

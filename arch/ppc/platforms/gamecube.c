@@ -3,6 +3,7 @@
 #include <linux/pagemap.h>
 #include <linux/irq.h>
 #include <linux/console.h>
+#include <linux/initrd.h>
 #include <asm/time.h>
 #include <asm/io.h>
 #include <asm/machdep.h>
@@ -133,6 +134,16 @@ void __init
 platform_init(unsigned long r3, unsigned long r4, unsigned long r5,
 	      unsigned long r6, unsigned long r7)
 {
+	parse_bootinfo(find_bootinfo());
+
+#ifdef CONFIG_BLK_DEV_INITRD
+	if ( r4 )
+	{
+		initrd_start = r4 + KERNELBASE;
+		initrd_end = r5 + KERNELBASE;
+	}
+#endif
+
 	ppc_md.setup_arch = gamecube_setup_arch;
 	ppc_md.setup_io_mappings = gamecube_map_io;
 	ppc_md.find_end_of_memory = gamecube_find_end_of_memory;
