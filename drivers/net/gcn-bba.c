@@ -739,6 +739,7 @@ static int bba_io_thread(void *param)
 
 	current->flags |= PF_NOFREEZE;
 	set_current_state(TASK_RUNNING);
+	set_user_nice(current, -20);
 
 	for(;;) {
 #if 0
