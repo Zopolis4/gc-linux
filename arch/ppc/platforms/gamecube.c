@@ -130,7 +130,7 @@ gamecube_halt(void)
 void __init gamecube_calibrate_decr(void)
 {
 	int freq, divisor;
-	freq = 162000000 / 2;
+	freq = 162000000;
 	divisor = 4;
 	tb_ticks_per_jiffy = freq / HZ / divisor;
 	tb_to_us = mulhwu_scale_factor(freq/divisor, 1000000);
