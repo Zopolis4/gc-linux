@@ -23,7 +23,13 @@
  *   | framebuffer  640x576x2 bytes | GCN_XFB_END
  *   .                              .
  *   .                              .
+ *   | framebuffer  640x576x2 bytes | Second buffer
+ *   .                              .
+ *   .                              .
  *   +------------------------------+ GCN_XFB_START
+ *   | GX Fifo reserved 256k        | GCN_GX_FIFO_END
+ *   .                              . 
+ *   +------------------------------+ GCN_GX_FIFO_START
  *   | kexec reserved  4x4096 bytes | GCN_KXC_END
  *   .                              .
  *   +------------------------------+ GCN_KXC_START
@@ -43,8 +49,11 @@
 /*
  * Some useful sizes
  */
+#define GCN_VIDEO_REG   (*((volatile u16*)0xCC002002))
+#define GCN_VIDEO_LINES (((GCN_VIDEO_REG >> 8) & 3) ? 576 : 480)
+#define GCN_GX_FIFO_SIZE        (256*1024)
 #define GCN_RAM_SIZE            (24*1024*1024) /* 24 MB */
-#define GCN_XFB_SIZE            (640*576*2)    /* pal framebuffer */
+#define GCN_XFB_SIZE            (640*GCN_VIDEO_LINES*4) /* framebuffer */
 #ifdef CONFIG_KEXEC
   #define GCN_KXC_SIZE          (4*4096) /* PAGE_ALIGN(GCN_PRESERVE_SIZE) */
 #else
@@ -57,7 +66,9 @@
  */
 #define GCN_XFB_END             (GCN_RAM_SIZE-1)
 #define GCN_XFB_START           (GCN_XFB_END-GCN_XFB_SIZE+1)
-#define GCN_KXC_END             (GCN_XFB_START-1)
+#define GCN_GX_FIFO_END         (GCN_XFB_START-1)
+#define GCN_GX_FIFO_START       (GCN_GX_FIFO_END-GCN_GX_FIFO_SIZE+1)
+#define GCN_KXC_END             (GCN_GX_FIFO_START-1)
 #define GCN_KXC_START           (GCN_KXC_END-GCN_KXC_SIZE+1)
 #define GCN_MEM_END             (GCN_KXC_START-1)
 #define GCN_MEM_START           (0x00000000)

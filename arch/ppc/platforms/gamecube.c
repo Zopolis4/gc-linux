@@ -116,17 +116,15 @@ static int
 gcn_get_irq(struct pt_regs *regs)
 {
 	int irq;
-	u_int irq_status, irq_test = 1;
+	u32 irq_status;
 
 	irq_status = readl(FLIPPER_ICR) & readl(FLIPPER_IMR);
 	if (irq_status == 0)
 		return -1;	/* no more IRQs pending */
 
-	for (irq = 0; irq < FLIPPER_NR_IRQS; irq++, irq_test <<= 1)
-		if (irq_status & irq_test)
-			break;
+        __asm __volatile ("cntlzw %0,%1": "=r"(irq) : "r"(irq_status));
 
-	return irq;
+	return (31 - irq);
 }
 
 static void
@@ -173,7 +171,12 @@ gcn_show_cpuinfo(struct seq_file *m)
 {
 	seq_printf(m, "vendor\t\t: IBM\n");
 	seq_printf(m, "machine\t\t: Nintendo GameCube\n");
-
+	seq_printf(m, "cpu MHz\t\t: 486\n");
+	seq_printf(m, "clock\t\t: 486MHz\n");
+	seq_printf(m, "cache size\t: 256 KB\n");
+	seq_printf(m, "bus speed\t: 162 MHz\n");
+	seq_printf(m, "mem bus speed\t: 200 MHz\n");
+	seq_printf(m, "bus width\t: 64 bit\n");
 	return 0;
 }
 

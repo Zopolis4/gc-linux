@@ -36,7 +36,7 @@
 
 MODULE_DESCRIPTION(DRV_DESCRIPTION);
 MODULE_AUTHOR(DRV_AUTHOR);
-MODULE_LICENSE(GPL);
+MODULE_LICENSE("GPL");
 
 #define PFX DRV_MODULE_NAME ": "
 #define si_printk(level, format, arg...) \
@@ -62,8 +62,10 @@ MODULE_LICENSE(GPL);
 #define ID_KEYBOARD	0x0820
 #define ID_GBA		0x0004
 #define ID_GBA_NA	0x0800
-#define ID_WAVEBIRD	0xa800
-#define ID_WAVEBIRD_RCV	0xe960
+#define ID_WAVEBIRD1	0xA800
+#define ID_WAVEBIRD2	0xEBB0
+#define ID_WAVEBIRD3    0xE9A0
+#define ID_WAVEBIRD_RCV 0xE960
 
 #define PAD_START	(1 << 28)
 #define PAD_Y		(1 << 27)
@@ -100,11 +102,11 @@ struct {
 
 	struct input_dev idev;
 	struct timer_list timer;
-
+	
 	union {
 		keyboard_status keyboard;
 	};
-
+	
 	char name[32];
 	/* char phys[32]; */
 } port[4];
@@ -192,6 +194,9 @@ static void gcn_si_set_polling(void)
 	for (i = 0; i < 4; ++i) {
 		switch (port[i].id) {
 		case ID_PAD:
+		case ID_WAVEBIRD1:
+		case ID_WAVEBIRD2:
+		case ID_WAVEBIRD3:
 			writel(0x00400300, SICOUTBUF(i));
 			break;
 
@@ -238,6 +243,9 @@ static void gcn_si_timer(unsigned long portno)
 
 	switch (port[portno].id) {
 	case ID_PAD:
+	case ID_WAVEBIRD1:
+	case ID_WAVEBIRD2:
+	case ID_WAVEBIRD3:
 		/* buttons */
 		input_report_key(&port[portno].idev, BTN_A, raw[0] & PAD_A);
 		input_report_key(&port[portno].idev, BTN_B, raw[0] & PAD_B);
@@ -396,7 +404,12 @@ static int __init gcn_si_init(void)
 
 		switch (port[i].id) {
 		case ID_PAD:
-			sprintf(port[i].name, "standard pad");
+		case ID_WAVEBIRD1:
+		case ID_WAVEBIRD2:
+		case ID_WAVEBIRD3:
+			sprintf(port[i].name, 
+                                port[i].id == ID_PAD ? 
+                                "standard pad" : "Wavebird");
 
 			/* sprintf (port[i].phys, "gcsi/port%d", i); */
 			/* port[i].idev.phys = port[i].phys; */
@@ -513,11 +526,15 @@ static void __exit gcn_si_exit(void)
 	si_printk(KERN_INFO, "exit\n");
 
 	for (i = 0; i < 4; ++i) {
-		if (port[i].id == ID_PAD || port[i].id == ID_KEYBOARD) {
+		if (port[i].id == ID_PAD || 
+		    port[i].id == ID_WAVEBIRD1 ||
+		    port[i].id == ID_WAVEBIRD2 ||
+		    port[i].id == ID_WAVEBIRD3 ||
+		    port[i].id == ID_KEYBOARD) {
 			input_unregister_device(&port[i].idev);
 		}
 	}
-
+	
 	release_resource(&gcn_si_resources);
 }
 

@@ -35,7 +35,10 @@
 #define FBIOGET_HWCINFO         0x4616
 #define FBIOPUT_MODEINFO        0x4617
 #define FBIOGET_DISPINFO        0x4618
-
+#define FBIOWAITRETRACE         0x4619
+#define FBIOWAITPEFINISH        0x4620
+#define FBIOVIRTTOPHYS          0x4621
+#define FBIOFLIP                0x4622
 
 #define FB_TYPE_PACKED_PIXELS		0	/* Packed Pixels	*/
 #define FB_TYPE_PLANES			1	/* Non interleaved planes */
