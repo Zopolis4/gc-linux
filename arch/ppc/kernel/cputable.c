@@ -199,7 +199,7 @@ struct cpu_spec	cpu_specs[] = {
 		.cpu_setup		= __setup_cpu_750
 	},
 	{	/* 750CXe "Gekko" (83214) */
-		.pvr_mask		= 0xfffffff0,
+		.pvr_mask		= 0xffffffff,
 		.pvr_value		= 0x00083214,
 		.cpu_name		= "750CXe",
 		.cpu_features		= CPU_FTR_COMMON |
