@@ -2,8 +2,8 @@
  * drivers/net/gcn-bba.c
  *
  * Nintendo GameCube Broadband Adapter driver
- * Copyright (C) 2004 Albert Herranz
  * Copyright (C) 2004 The GameCube Linux Team
+ * Copyright (C) 2004 Albert Herranz
  *
  * Based on previous work by Stefan Esser, Franz Lehner, Costis and tmbinc.
  *
@@ -165,9 +165,10 @@
  */
 #define BBA_EXI_ID 0x04020200
 
-#define BBA_EXI_CHANNEL 0
-#define BBA_EXI_DEVICE  2
-#define BBA_EXI_FREQ    5
+#define BBA_EXI_CHANNEL_IRQ 2 /* INT line uses EXI2INTB */
+#define BBA_EXI_CHANNEL     0 /* rest of lines use EXI0xxx */
+#define BBA_EXI_DEVICE      2 /* chip select, EXI0CSB2 */
+#define BBA_EXI_FREQ        5 /* 32MHz */
 
 #define BBA_CMD_IR_MASKALL  0x00
 #define BBA_CMD_IR_MASKNONE 0xf8
@@ -244,9 +245,21 @@ static inline void bba_out8(int reg, u8 val)
 	bba_outs(reg, &val, sizeof(val));
 }
 
-#define bba_in12(reg)     ((bba_in8(reg)&0xff)|((bba_in8((reg)+1)&0x0f)<<8))
-#define bba_out12(reg,val) do { bba_out8((reg),(val)&0xff); \
-	                        bba_out8((reg)+1,((val)&0x0f00)>>8); } while(0)
+static inline u16 bba_in16(int reg)
+{
+	u16 val;
+	bba_ins(reg, &val, sizeof(val));
+	return le16_to_cpup(&val);
+}
+
+static inline void bba_out16(int reg, u16 val)
+{
+	cpu_to_le16s(&val);
+	bba_outs(reg, &val, sizeof(val));
+}
+
+#define bba_in12(reg)      (bba_in16(reg) & 0x0fff)
+#define bba_out12(reg,val) do { bba_out16((reg),(val)&0x0fff); } while(0)
 
 static inline void bba_ins_nosel(int reg, void *val, int len)
 {
@@ -271,6 +284,11 @@ static inline void bba_outs_nosel(int reg, void *val, int len)
 	exi_write(BBA_EXI_CHANNEL, val, len);
 }
 
+static inline void bba_outs_more(void *val, int len)
+{
+	exi_write(BBA_EXI_CHANNEL, val, len);
+}
+
 static void bba_outs(int reg, void *val, int len)
 {
 	bba_select();
@@ -289,12 +307,12 @@ static void bba_outs(int reg, void *val, int len)
 
 char bba_driver_name[] = DRV_MODULE_NAME;
 char bba_driver_string[] = DRV_DESCRIPTION;
-char bba_driver_version[] = "0.2-isobel";
+char bba_driver_version[] = "0.3-isobel";
 char bba_copyright[] = "Copyright (C) 2004 " DRV_AUTHOR;
 
 MODULE_AUTHOR(DRV_AUTHOR);
 MODULE_DESCRIPTION(DRV_DESCRIPTION);
-MODULE_LICENSE(GPL);
+MODULE_LICENSE("GPL");
 
 #define PFX DRV_MODULE_NAME ": "
 
@@ -370,10 +388,9 @@ static int bba_open(struct net_device *dev)
 	unsigned long flags;
 	int ret;
 
-	/* XXX seems that interrupts come from EXI Channel 2, but driver
-	 * XXX operation is accomplished through EXI Channel 0 ...
-	 */
-	ret = exi_register_event(2, EXI_EVENT_IRQ, bba_event_handler, dev);
+	/* according to patents, INTs will be triggered on EXI channel 2 */
+	ret = exi_register_event(BBA_EXI_CHANNEL_IRQ , EXI_EVENT_IRQ,
+				 bba_event_handler, dev);
 	if (ret < 0) {
 		bba_printk(KERN_ERR, "unable to register EXI event %d\n",
 			   EXI_EVENT_IRQ);
@@ -461,7 +478,7 @@ static int bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
 		u8 pad[ETH_ZLEN];
 		int pad_len = ETH_ZLEN - skb->len;
 		memset(pad, 0, pad_len);
-		bba_outs_nosel(BBA_WRTXFIFOD, pad, pad_len);
+		bba_outs_more(pad, pad_len);
 	}
 	bba_deselect();
 
@@ -770,11 +787,17 @@ static int bba_reset(struct net_device *dev)
 	bba_cmd_outs(0x04, priv->__0x04_init, 2);
 	bba_cmd_out8(0x05, priv->__0x05_init);
 
+	/*
+	 * These initializations seem to limit the final port speed to 10Mbps
+	 * half duplex. Bypassing them, allows one to set other port speeds.
+	 * But, remember that the bba spi-like bus clock operates at 32MHz.
+	 * ---Albert Herranz
+	 */
+
 	/* unknown, mx registers 0x5b, 0x5c, 0x5e */
 	bba_out8(0x5b, bba_in8(0x5b) & ~(1 << 7));
-	bba_out8(0x5e, 1);
+	bba_out8(0x5e, 1); /* without this the BBA goes at half the speed */
 	bba_out8(0x5c, bba_in8(0x5c) | 4);
-
 	udelay(1000);
 
 	/* accept broadcast, assert int for every two packets received */
