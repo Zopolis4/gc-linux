@@ -981,10 +981,13 @@ void gcif_irq_handler(int channel, int event, void *ct)
 	}
 	if (s & 0x40)
 	{
-		printk("GCIF - EXI - 0x40!\n");
 		eth_exi_outb(3, 0x40);
 		eth_exi_outb(2, 0xF8);
+		printk("GCIF - EXI - 0x40!\n");
+		adapter_init(dev);
 		return;
+		
+//		return;
 	}
 	if (s & 0x20)
 	{
