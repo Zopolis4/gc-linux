@@ -47,35 +47,56 @@ disable_6xx_mmu:
 #endif
 
 #ifdef CONFIG_GAMECUBE
-//	li	r8, MSR_IP|MSR_FP
-//	mtsrr1	r8
-//	lis	r8, mmu_disabled@h
-//	ori	r8, r8, mmu_disabled@l
-//	clrlwi	r8, r8, 2
-//	mtsrr0	r8
-//	rfi
+/*
+ * The code itself seems to be a kind of signature from tmbinc,
+ * as all this stuff is strictly not needed...
+ * I've rearranged the code a little bit for readability purposes.
+ * --Albert Herranz
+ */
+	/*
+	 * To disable the MMU the author executes a System Call (sc) which
+	 * sets MSR[IR] = MSR[DR] = 0, effectively disabling the MMU.
+	 *
+	 * In order to return from the system call he setups a dummy System
+	 * Call Exception vector with an absolute branch back to his code.
+	 *
+	 * NOTE: The vector contains *code* not *address of code* !!!
+	 *
+	 */
 
-// mmu_disabled:
+	/* save for later... */
+	mflr    r8
 
-	lis	r9, 0x8000
-	ori	r9, r9, 0xc00
-	mflr	r8
-	bl	1f
+	/* calculate address of label 2: to jump to */
+	bl      1f
 1:
-	mflr	r7
-	clrlwi	r7, r7, 3
-	addi	r7, r7, 2f - 1b
-	oris	r7, r7, 0x4800
-	ori	r7, r7, 2
-	stw	r7, 0(r9)
-	dcbf	r0, r9
-	icbi	r0, r9
+	mflr    r7
+	addi    r7, r7, 2f - 1b
+
+	/* convert it to physical layout (in sc context the mmu will be off) */
+	clrlwi  r7, r7, 3
+
+	/* convert it to an absolute branch instruction */
+	oris    r7, r7, 0x4800
+	ori     r7, r7, 2
+
+	/* System Call Exception vector effective address is 0x80000c00 */
+	lis     r9, 0x8000
+	ori     r9, r9, 0x0c00
+
+	/* store branch at System Call Exception vector and flush caches */
+	stw     r7, 0(r9)
+	dcbf    0, r9
+	icbi    0, r9
 	sync
 	isync
+
+	/* switch MMU off and jump to 2: */
 	sc
 2:
+	/* restore Link Register in physical address layout */
+	clrlwi r8, r8, 3
 	mtlr r8
-//	isync
 #endif
 
 	/* Clear BATs */
@@ -121,18 +142,13 @@ disable_6xx_mmu:
 	addi	r8,r8,0x111	/* increment VSID */
 	addis	r10,r10,0x1000	/* address of next segment */
 	bdnz	3b
-#ifdef CONFIG_GAMECUBE
-	mflr r8
-	clrlwi r8, r8, 3
-	mtlr r8
-#endif
 	blr
 
 	.globl	disable_6xx_l1cache
 disable_6xx_l1cache:
 	/* Enable, invalidate and then disable the L1 icache/dcache. */
 	li	r8,0
-	ori	r8,r8,(HID0_ICE|HID0_DCE|HID0_ICFI|HID0_DCI |HID0_DLOCK)
+	ori	r8,r8,(HID0_ICE|HID0_DCE|HID0_ICFI|HID0_DCI)
 	mfspr	r11,HID0
 	or	r11,r11,r8
 	andc	r10,r11,r8
@@ -144,19 +160,6 @@ disable_6xx_l1cache:
 	sync
 	isync
 	blr
-#ifdef CONFIG_GAMECUBE
-	sync
-	mfspr	r8, HID0
-	li	r11, HID0_DCI|HID0_DLOCK
-	andc	r8, r8, r11
-	mtspr	HID0, r8    /* no invalidate, unlock */
-	li	r5, HID0_DCE|HID0_DCI
-	andc	r8, r8, r11    /* no enable, no invalidate */
-	mtspr	HID0, r8
-	sync
-	isync
-	blr
-#endif
 
 	.globl	_setup_L2CR
 _setup_L2CR:
