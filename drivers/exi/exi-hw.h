@@ -106,11 +106,12 @@ struct exi_channel {
 	void __iomem		*io_base;
 
 	struct exi_device	*device_selected;
+	wait_queue_head_t	wait_queue;
+
+	spinlock_t		cmd_lock;
 
 	struct exi_command	*dma_cmd;
 	struct exi_command	post_cmd;
-
-	wait_queue_head_t	wait_queue;
 
 	unsigned long		csr;
 	struct tasklet_struct	tasklet;

@@ -89,6 +89,7 @@ static struct exi_channel exi_channels[EXI_MAX_CHANNELS] = {
 	[0] = {
 		.channel = 0,
 		.lock = SPIN_LOCK_UNLOCKED,
+		.cmd_lock = SPIN_LOCK_UNLOCKED,
 		.io_lock = SPIN_LOCK_UNLOCKED,
 		.io_base = EXI_IO_BASE(0),
 		.wait_queue = __WAIT_QUEUE_HEAD_INITIALIZER(
@@ -97,6 +98,7 @@ static struct exi_channel exi_channels[EXI_MAX_CHANNELS] = {
 	[1] = {
 		.channel = 1,
 		.lock = SPIN_LOCK_UNLOCKED,
+		.cmd_lock = SPIN_LOCK_UNLOCKED,
 		.io_lock = SPIN_LOCK_UNLOCKED,
 		.io_base = EXI_IO_BASE(1),
 		.wait_queue = __WAIT_QUEUE_HEAD_INITIALIZER(
@@ -105,6 +107,7 @@ static struct exi_channel exi_channels[EXI_MAX_CHANNELS] = {
 	[2] = {
 		.channel = 2,
 		.lock = SPIN_LOCK_UNLOCKED,
+		.cmd_lock = SPIN_LOCK_UNLOCKED,
 		.io_lock = SPIN_LOCK_UNLOCKED,
 		.io_base = EXI_IO_BASE(2),
 		.wait_queue = __WAIT_QUEUE_HEAD_INITIALIZER(
@@ -157,6 +160,7 @@ void exi_channel_init(struct exi_channel *exi_channel, unsigned int channel)
 
 	exi_channel->channel = channel;
 	spin_lock_init(&exi_channel->lock);
+	spin_lock_init(&exi_channel->cmd_lock);
 	spin_lock_init(&exi_channel->io_lock);
 	exi_channel->io_base = EXI_IO_BASE(channel);
 	init_waitqueue_head(&exi_channel->wait_queue);
@@ -407,6 +411,8 @@ static inline void exi_cmd_select(struct exi_command *cmd)
 	BUG_ON(cmd->data == NULL);
 	BUG_ON(exi_is_selected(exi_channel));
 
+	spin_lock(exi_channel->cmd_lock);
+
 	/* cmd->data contains the device to select */
 	exi_device = cmd->data;
 	//exi_driver = to_exi_driver(exi_device->dev.driver);
@@ -436,6 +442,8 @@ static inline void exi_cmd_deselect(struct exi_command *cmd)
 
 	exi_channel->flags &= ~EXI_SELECTED;
 	exi_channel->device_selected = NULL;
+
+	spin_unlock(exi_channel->cmd_lock);
 }
 
 /*
