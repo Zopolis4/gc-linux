@@ -41,7 +41,7 @@ static irqreturn_t gc_rsw_handler(int this_irq, void *dev_id, struct pt_regs *re
 static int gc_rsw_init(void)
 {
 	if (request_irq(RSW_IRQ, gc_rsw_handler, 0, "GameCube Reset Switch", 0) < 0) {
-		printk(KERN_ERR "i2c-elektor: Request irq%d failed\n", RSW_IRQ);
+		printk(KERN_ERR "gc_rsw: Request irq%d failed\n", RSW_IRQ);
 	} else {
 		enable_irq(RSW_IRQ);
 	}
