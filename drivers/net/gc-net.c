@@ -19,11 +19,11 @@
 /* ------------------------------------------------------------------------- */
 
 /*
- * $Id: gc-net.c,v 1.18 2004/02/26 22:33:51 hamtitampti Exp $
+ * $Id: gc-net.c,v 1.19 2004/02/27 00:06:33 hamtitampti Exp $
  *
  * $Log: gc-net.c,v $
- * Revision 1.18  2004/02/26 22:33:51  hamtitampti
- * 0% packet loss now :-)
+ * Revision 1.19  2004/02/27 00:06:33  hamtitampti
+ * changed IRQ timing, but .. yes, the bus is too slow it seems
  *
  * Revision 1.17  2004/02/11 20:15:27  hamtitampti
  * small changes, little bit better now
@@ -57,9 +57,6 @@
 
 #define BBA_DBG(format, arg...); { }
 //#define BBA_DBG(format, arg...) printk(f,## arg)
-
-//#define PACKETS_PER_IRQ (0x40)	// 2 packets / irq
-#define PACKETS_PER_IRQ 0	// IRQ / packet
 
 #define BBA_IRQ 4
 #define IRQ_EXI 4
@@ -389,9 +386,11 @@ void eth_outs(int reg, void *res, int len)
 #define RUNT 60		/* Too small Ethernet packet */
 #define ETH_LEN 6
 
-/*
- * D-Link driver variables:
- */
+
+#define BBA_PROMISC 0
+#define PACKETS_PER_IRQ (0x40)	// 2 packets / irq
+//#define PACKETS_PER_IRQ 0	// IRQ / packet
+
 
 
 #define GBA_IRQ_MASK	0xFF
@@ -502,6 +501,9 @@ static int gc_bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	
 	spin_lock_irqsave(&priv->lock, priv->lockflags);
 	netif_stop_queue(dev);
+	
+	//while(eth_inb(0x3a)&0x1);
+	
 	// TX Fifo Page to 0
 	eth_outb(0xf, 0);
 	eth_outb(0xe, 0);
@@ -608,14 +610,6 @@ static void gc_input(struct net_device *dev)
 
 	eth_ins(p_read << 8, descr, 4);
 
-	next_receive_frame  = descr[0];
-	next_receive_frame |= (descr[1] & 0x0f) << 8;
-	
-	if (next_receive_frame>0xf) next_receive_frame = 1;
-
-	eth_outb(0x18, next_receive_frame&0xff);
-	eth_outb(0x19, (next_receive_frame&0x0f00)>>8);
-	
 		
 	/*
 		Size Looks Crazy, but ok, the Packet Lenght is indeed 3 nibbles = 12 bits
@@ -681,23 +675,19 @@ static void gc_input(struct net_device *dev)
 
 	netif_rx(skb);
 
+	next_receive_frame  = descr[0];
+	next_receive_frame |= (descr[1] & 0x0f) << 8;
+	
+
+	eth_outb(0x18, next_receive_frame&0xff);
+	eth_outb(0x19, (next_receive_frame&0x0f00)>>8);
+
 	/* update stats */
 	dev->last_rx = jiffies;
 
 	priv->stats.rx_packets ++;	/* count all receives */
 	priv->stats.rx_bytes ++;	/* count all received bytes */
-	/*
-	next_receive_frame  = descr[0];
-	next_receive_frame |= (descr[1] & 0x0f) << 8;
-	
-	printk("Current Framepointer: %d\n",p_read);
-	printk("Next    Framepointer: %d\n",next_receive_frame);
-	printk("Write   Framepointer: %d\n",p_write);
-	printk("Recieved Len: %d\n",skb->len);
-	
-	if (next_receive_frame != p_write) printk("Multipacket Seen\n");
-	if (next_receive_frame != p_write) gc_input(dev);
-	*/
+
 	gc_input(dev);
 	
 	return ;
@@ -767,7 +757,7 @@ static void inline gcif_service(struct net_device *dev)
 	if (status & 0x80)
 	{
 		eth_outb(9, 0x80);
-		BBA_DBG("rx overflow!\n");
+		//printk("rx overflow!\n");
 		gc_input(dev);
 		
 		// RWP
@@ -888,7 +878,7 @@ int __init gc_bba_probe(struct net_device *dev)
 	eth_outb(0x5b, eth_inb(0x5b)&~(1<<7));
 	eth_outb(0x5e, 1);
 	eth_outb(0x5c, eth_inb(0x5c)|4);
-	eth_outb(1, 0x11 | PACKETS_PER_IRQ);
+	eth_outb(1, 0x10 | PACKETS_PER_IRQ | BBA_PROMISC);
 
 	eth_outb(0x50, 0x80);
 
@@ -912,8 +902,7 @@ int __init gc_bba_probe(struct net_device *dev)
 	eth_outb(0x1a, GBA_RX_RHBP);
 	eth_outb(0x1b, 0);
 
-	eth_outb(1, (eth_inb(1) & 0xFE) | 0x12| PACKETS_PER_IRQ);
-
+	
 	eth_outb(0, 8);
 	eth_outb(0x32, 8);
 
@@ -989,7 +978,11 @@ static int adapter_init(struct net_device *dev)
 	eth_outb(0x5b, eth_inb(0x5b)&~(1<<7));
 	eth_outb(0x5e, 1);
 	eth_outb(0x5c, eth_inb(0x5c)|4);
-	eth_outb(1, 0x11|PACKETS_PER_IRQ);
+	
+	eth_outb(1, 0x10|PACKETS_PER_IRQ | BBA_PROMISC);
+
+	eth_outb(0x14, 0x0);
+	eth_outb(0x15, 0x8);
 
 	eth_outb(0x50, 0x80);
 
@@ -1012,7 +1005,6 @@ static int adapter_init(struct net_device *dev)
 	eth_outb(0x1a, GBA_RX_RHBP);
 	eth_outb(0x1b, 0);
 	
-	eth_outb(1, (eth_inb(1) & 0xFE) | 0x12| PACKETS_PER_IRQ);
 
 	eth_outb(0, 8);
 	eth_outb(0x32, 8);
@@ -1045,7 +1037,7 @@ static int adapter_init(struct net_device *dev)
 	eth_outb(8, 0xFF); // enable all IRQs
 	eth_outb(9, 0xFF); // clear all irqs
 
-//	eth_outb(0x30, (eth_inb(0x30) | 0x2));	// 100 Mbit ?
+	//eth_outb(0x30, 0x2);	// 100 Mbit ?
 
 	
 	BBA_DBG("after all: irq mask %x %x\n", eth_inb(8), eth_inb(9));
