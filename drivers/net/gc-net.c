@@ -49,9 +49,14 @@ void gcif_irq_handler(int channel, int event, void *ct);
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /* exi_select: enable chip select, set speed */
+
+int selected = 0;
 void exi_select(int channel, int device, int freq)
 {
 	volatile unsigned long *exi = (volatile unsigned long *)0xCC006800;
+	selected ++;
+	if (selected != 1)
+		panic("-------- select while selected!\n");
 	long d;
 	// exi_select
 	d = exi[channel * 5];
@@ -64,6 +69,9 @@ void exi_select(int channel, int device, int freq)
 void exi_deselect(int channel)
 {
 	volatile unsigned long *exi = (volatile unsigned long *)0xCC006800;
+	selected--;
+	if (selected)
+		panic("deselect broken!");
 	exi[channel * 5] &= 0x405;
 }
 
@@ -97,7 +105,7 @@ void exi_sync(int channel)
 	while (exi[channel * 5 + 3] & 1);
 
 	if (exi_last_addr)
-	{	
+	{
 		int i;
 		unsigned long d;
 		d = exi[channel * 5 + 4];
@@ -137,7 +145,6 @@ static inline int have_irq(int t)
 {
 	if (exi_handler[t])
 	{
-		printk("CALL HANDLER\n");
 		exi_handler[t](t/3, t%3, exi_handler_context[t]);
 		return 1;
 	} else
@@ -164,34 +171,12 @@ void exi_interrupt_handler(int irq, void *c)
 	}
 }
 
-void exi_interrupt_debug_handler(int irq, void *c)
-{
-	int ch;
-	for (ch = 0; ch < 3; ++ch)
-	{
-		unsigned long v = (*(unsigned long*)(0xcc006800 + ch * 0x14)); //  & 0xC0F;
-		v &= v<<1;
-		printk("ch %d c %08x\n", ch, (unsigned int)v);
-		if (v & 0x800)
-			if (!have_irq(ch * 3 + EXI_EVENT_INSERT))
-				; // v &= ~0x800;
-		if (v & 8)
-			if (!have_irq(ch * 3 + EXI_EVENT_TC))
-				; // v &= ~8;
-		if (v & 2)
-			if (!have_irq(ch * 3 + EXI_EVENT_IRQ))
-				; /// v &= ~2;
-		*(unsigned long*)(0xcc006800 + ch * 0x14) |= v;
-	}
-}
-
-
 void exi_init()
 {
 	printk("EXI: init interrupts\n");
 	//request_irq(IRQ_EXI, exi_interrupt_handler, 0);
 	//request_debug_irq(IRQ_EXI, exi_interrupt_debug_handler, 0);
-	
+
 	*(unsigned long*)(0xcc006814) |= 3<<10; // enable&clear irq for insertion
 }
 
@@ -204,7 +189,7 @@ int exi_request_irq(int channel, int event, exi_irq_handler_t *handler, void *co
 	}
 	exi_handler[channel * 3 + event] = handler;
 	exi_handler_context[channel * 3 + event] = context;
-	
+
 	switch (event)
 	{
 	case EXI_EVENT_TC:
@@ -346,7 +331,6 @@ void eth_ins(int reg, void *res, int len)
 	exi_imm(0, &val, 4, EXI_WRITE, 0);
 	exi_sync(0);
 	exi_imm_ex(0, res, len, EXI_READ);
-	exi_sync(0);
 	exi_deselect(0);
 }
 
@@ -400,7 +384,7 @@ static inline u8 de600_read_status(struct net_device *dev)
 
 static inline u8 de600_read_byte(unsigned char type, struct net_device *dev)
 {
-	// dev used by macros 
+	// dev used by macros
 	u8 lo;
 	outb_p((type), DATA_PORT);
 	lo = ((unsigned char)inb(STATUS_PORT)) >> 4;
@@ -422,7 +406,7 @@ static int gc_bba_open(struct net_device *dev)
 {
 	unsigned long flags;
 	printk("gc_bba_open\n");
-	
+
 	int ret = request_irq(BBA_IRQ, gc_bba_interrupt, 0, dev->name, dev);
 	if (ret) {
 		printk(KERN_ERR "%s: unable to get IRQ %d\n", dev->name, BBA_IRQ);
@@ -472,7 +456,7 @@ static inline void trigger_interrupt(struct net_device *dev)
  * Copy a buffer to the adapter transmit page memory.
  * Start sending.
  */
- 
+
 static int gc_bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	unsigned long flags;
@@ -481,8 +465,6 @@ static int gc_bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	int	tickssofar;
 	u8	*buffer = skb->data;
 	int	i;
-
-	printk("xmit\n");
 
 	if (free_tx_pages <= 0) {	/* Do timeouts, to avoid hangs. */
 		tickssofar = jiffies - dev->trans_start;
@@ -502,68 +484,64 @@ static int gc_bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
 //	netif_stop_queue(dev);
 
 	/* Start real output */
-	printk("gc_bba_start_xmit:len=%d, page %d/%d\n", skb->len, tx_fifo_in, free_tx_pages);
+//	printk("gc_bba_start_xmit:len=%d, page %d/%d\n", skb->len, tx_fifo_in, free_tx_pages);
 
 	if ((len = skb->len) < RUNT)
 		len = RUNT;
 
 	spin_lock_irqsave(&gc_bba_lock, flags);
-	
+
 	dev->trans_start = jiffies;
 
 	unsigned int val=0xC0004800;	// register 0x48 is the output queue
-	
+
 	struct pbuf *q;
-	
+
 	exi_select(0, 2, 5);
 	exi_imm(0, &val, 4, EXI_WRITE, 0);
 	exi_sync(0);
-	
+
 	exi_imm_ex(0, buffer, skb->len, EXI_WRITE);
-	
+
 	char buf0[1024];
 	memset(buf0, 0, 1024);
-	
+
 	if (len != skb->len)
-	    exi_imm_ex(0, buf0, len-skb->len, EXI_WRITE);
+		exi_imm_ex(0, buf0, len-skb->len, EXI_WRITE);
 
 	exi_deselect(0);
-	
-//	netif_start_queue(dev);
 
+//	netif_start_queue(dev);
 
 	val = eth_inb(0);
 	if (val & 4)
 	{
 		printk("err USE!\n");
-	spin_unlock_irqrestore(&gc_bba_lock, flags);
-	dev_kfree_skb(skb);
+		spin_unlock_irqrestore(&gc_bba_lock, flags);
+		dev_kfree_skb(skb);
 		return 1;
 	}
 	val|=4;
 	eth_outb(0, val);
-	
+
 //	printk("DEBUG: waiting for tx done!\n");
 
-/*	int counter = 1000;
-	while ((!(eth_inb(9)&0x14)) && counter--);
-	
+	while (!(eth_inb(9)&0x14));
+
 	if (eth_inb(9) & 0x10)
 	{
 		printk("TRANSMIT ERROR!\n");
-		eth_outb(9, 0x10);
+//		eth_outb(9, 0x10);
 	}
-	
-	if (eth_inb(9) & 0x4)
-		eth_outb(9, 0x4);
-*/
+
+//	if (eth_inb(9) & 0x4)
+//		eth_outb(9, 0x4);
 
 //	while (!(eth_inb(0)&0x02));
-	
+
 //	int s = eth_inb(4);
 //	if (s)
 //		printk("tx error %02x\n", s);
-	
 
 	spin_unlock_irqrestore(&gc_bba_lock, flags);
 	dev_kfree_skb(skb);
@@ -587,7 +565,7 @@ static char *gc_input(struct net_device *dev)
 	p_read  = eth_inb(0x18);
 	p_read |= eth_inb(0x19) << 8;
 //	printk("w %x r %x\n", p_write, p_read);
-	
+
 	if (p_read == p_write)
 	{
 		printk("nothing left.\n");
@@ -601,16 +579,13 @@ static char *gc_input(struct net_device *dev)
 		printk("NO DATA AVAILABLE!\n");
 		return 0;
 	}
-	
+
 	len=0;
-	
-	descr[0] = eth_inb((p_read<<8) + 0);
-	descr[1] = eth_inb((p_read<<8) + 1);
-	descr[2] = eth_inb((p_read<<8) + 2);
-	descr[3] = eth_inb((p_read<<8) + 3);
-	
+
+	eth_ins(p_read << 8, descr, 4);
+
 	len = (descr[1] >> 4) | (descr[2]<<4);
-	
+
 	len-=4; //???
 
 	if ((len < 32)  ||  (len > 1535)) {
@@ -632,17 +607,19 @@ static char *gc_input(struct net_device *dev)
 
 	/* 'skb->data' points to the start of sk_buff data area. */
 	buffer = skb_put(skb,len);
-	
-	printk("There are %u bytes data\n", len);
-	
+
+//	printk("There are %u bytes data\n", len);
+
 	ptr = (p_read << 8) + 4;
-	for (i=0; i<len; ++i)
+
+	if (ptr + len > 0x1000)
 	{
-		if (ptr == 0x1000) // wrap around
-			ptr = 0x100;
-		buffer[i]=eth_inb(ptr++); // skip descriptor
-	}
-	
+		int len1 = 0x1000 - ptr - len;
+		eth_ins(ptr, buffer, len1);
+		eth_ins(ptr, buffer + len1, len - len1);
+	} else
+		eth_ins(ptr, buffer, len);
+
 	eth_outb(0x18, descr[0] & 0xFF);
 	eth_outb(0x19, descr[1] & 0xFF);
 
@@ -655,24 +632,7 @@ static char *gc_input(struct net_device *dev)
 	((struct net_device_stats *)(dev->priv))->rx_packets++; /* count all receives */
 	((struct net_device_stats *)(dev->priv))->rx_bytes += len; /* count all received bytes */
 
-	
-//	i=0;
-//	p = pbuf_alloc(PBUF_LINK, len, PBUF_POOL);
-//	if(p != NULL) {
-		/* We iterate over the pbuf chain until we have read the entire
-			 packet into the pbuf. */
-//		for(q = p; q != NULL; q = q->next) {
-			/* Read enough bytes to fill this pbuf in the chain. The
-				 avaliable data in the pbuf is given by the q->len
-				 variable. */
-			/* read data into(q->payload, q->len); */
-//			memcpy(q->payload, buffer+i, q->len);
-//			i+=q->len;
-			// exi_imm_ex(0, q->payload, q->len, EXI_READ);
-//		}
-//	}
-
-	return p;	
+	return p;
 }
 
 
@@ -680,33 +640,33 @@ static void inline gcif_service(struct net_device *dev)
 {
 //	struct gcif *gcif;
 //	gcif = netif->state;
-	
+
 	unsigned short  p_read, p_write;
 
 	int inb9 = eth_inb(9);
 	int inb8 = eth_inb(8);
-	
+
 	int status = inb9 & inb8;
-	
-	printk("gcif_service: %08x %08x status %08x\n", inb8, inb9, status);
-	
+
+//	printk("gcif_service: %08x %08x status %08x\n", inb8, inb9, status);
+
 	if (!status) {
+		eth_outb(9, 0xff);
 		printk("?? GC irq but no irq ??\n");
-//		eth_outb(9, 0xff);
 	}
-	
-	if (status & 4) 
+
+	if (status & 4)
 	{
-//		eth_outb(9, status);
-	    int s = eth_inb(4);
-		if (s)
-		printk("tx error %02x\n", s);
+		eth_outb(9, 4);
 
-
+		int s = eth_inb(4);
+		if (s)   // should not occur, since 4 == TX OK
+			printk("tx error %02x\n", s);
 	}
-	
+
 	if (status & 2)
 	{
+		eth_outb(9, 2);
 		while (1)
 		{
 			p_write  = eth_inb(0x16);
@@ -718,22 +678,36 @@ static void inline gcif_service(struct net_device *dev)
 			if (p_write == p_read)
 				break;
 			gc_input(dev);
-printk("Break\n");
-			break;
 		}
-//		eth_outb(9, status);
 	}
 	if (status & 8)
 	{
+		eth_outb(9, 8);
 		printk("receive error :(\n");
-//		eth_outb(9, 8);
 	}
-	if (status & ~(8|2))
+
+	if (status & 0x10)
 	{
-		printk("status %02x\n", status);
-//		eth_outb(9, ~(8|2));
+		eth_outb(9, 0x10);
+		printk("tx error\n");
 	}
-	eth_outb(9, status);
+	if (status & 0x20)
+	{
+		eth_outb(9, 0x20);
+		printk("rx fifo error\n");
+	}
+	if (status & 0x80)
+	{
+		eth_outb(9, 0x80);
+		printk("rx overflow!\n");
+	}
+
+	if (status & ~(0xBE))
+	{
+		eth_outb(9, status & ~0xBE);
+		printk("status %02x\n", status & ~0xBE);
+	}
+//	eth_outb(9, status);
 }
 
 
@@ -763,7 +737,7 @@ static irqreturn_t gc_bba_interrupt(int irq, void *dev_id, struct pt_regs * regs
 	{
 		unsigned long v = (*(unsigned long*)(0xcc006800 + ch * 0x14)); //  & 0xC0F;
 		v &= v<<1;
-//		*(unsigned long*)(0xcc006800 + ch * 0x14) |= v;
+		*(unsigned long*)(0xcc006800 + ch * 0x14) |= v;
 		exi_handler_context[ch * 3 + EXI_EVENT_IRQ] = dev;
 		if (v & 0x800)
 			have_irq(ch * 3 + EXI_EVENT_INSERT);
@@ -771,7 +745,6 @@ static irqreturn_t gc_bba_interrupt(int irq, void *dev_id, struct pt_regs * regs
 			have_irq(ch * 3 + EXI_EVENT_TC);
 		if (v & 2)
 			have_irq(ch * 3 + EXI_EVENT_IRQ);
-		*(unsigned long*)(0xcc006800 + ch * 0x14) |= v;
 	}
 
 	if (retrig)
@@ -798,18 +771,18 @@ int __init gc_bba_probe(struct net_device *dev)
 	/* probe for adapter */
 	rx_page = 0;
 	//select_nic();
-	
+
 	exi_select(0, 2, 5);
 	exi_imm_ex(0, &s, 2, EXI_WRITE);
 	exi_imm_ex(0, &l, 4, EXI_READ);
 	exi_deselect(0);
-	
+
 	printk(": %u\n", l);
 	if (l != 0x4020200) {
 		printk("BBA not found");
 		return -ENODEV;
 	}
-	
+
 
 	printk("initializing BBA...\n");
 
@@ -823,9 +796,9 @@ int __init gc_bba_probe(struct net_device *dev)
 
 	eth_exi_outs(4, "\xd1\x07\x75\x75", 2);
 	eth_exi_outb(5, 0x4e);
-	
+
 	printk("BBA %02x %02x %02x %02x %02x %02x %02x %02x\n",
-		 eth_exi_inb(0), eth_exi_inb(1), eth_exi_inb(2), eth_exi_inb(3), 
+		 eth_exi_inb(0), eth_exi_inb(1), eth_exi_inb(2), eth_exi_inb(3),
 		 eth_exi_inb(4), eth_exi_inb(5), eth_exi_inb(6), eth_exi_inb(7));
 
 	eth_outb(0x5b, eth_inb(0x5b)&~(1<<7));
@@ -836,7 +809,7 @@ int __init gc_bba_probe(struct net_device *dev)
 	eth_outb(0x50, 0x80);
 
 	udelay(10000);
-	
+
 	// recvinit
 	eth_outb(0xA,  0x1);
 	eth_outb(0xB,  0x0);
@@ -844,18 +817,18 @@ int __init gc_bba_probe(struct net_device *dev)
 	eth_outb(0x17, 0x0);
 	eth_outb(0x18, 0x1);
 	eth_outb(0x19, 0x0);
-	
+
 	eth_outb(0x1a, 0xF);
 	eth_outb(0x1b, 0);
-	
+
 	eth_outb(1, (eth_inb(1) & 0xFE) | 0x12);
-	
+
 	eth_outb(0, 8);
 	eth_outb(0x32, 8);
-	
-	eth_ins(0x20, dev->dev_addr, ETH_LEN); 
-	printk("MAC ADDRESS %02x:%02x:%02x:%02x:%02x:%02x\n", 
-		dev->dev_addr[0], dev->dev_addr[1], dev->dev_addr[2], 
+
+	eth_ins(0x20, dev->dev_addr, ETH_LEN);
+	printk("MAC ADDRESS %02x:%02x:%02x:%02x:%02x:%02x\n",
+		dev->dev_addr[0], dev->dev_addr[1], dev->dev_addr[2],
 		dev->dev_addr[3], dev->dev_addr[4], dev->dev_addr[5]);
 
 	/* Get the adapter ethernet address from the ROM */
@@ -865,7 +838,7 @@ int __init gc_bba_probe(struct net_device *dev)
 
 	eth_exi_outb(0x2, 0xFF);
 	eth_exi_outb(0x3, 0xFF);
-  
+
 	eth_outb(8, 0xFF); // enable all IRQs
 	eth_outb(9, 0xFF); // clear all irqs
 
@@ -909,9 +882,9 @@ static int adapter_init(struct net_device *dev)
 
 	eth_exi_outs(4, "\xd1\x07\x75\x75", 2);
 	eth_exi_outb(5, 0x4e);
-	
+
 	printk("BBA %02x %02x %02x %02x %02x %02x %02x %02x\n",
-		 eth_exi_inb(0), eth_exi_inb(1), eth_exi_inb(2), eth_exi_inb(3), 
+		 eth_exi_inb(0), eth_exi_inb(1), eth_exi_inb(2), eth_exi_inb(3),
 		 eth_exi_inb(4), eth_exi_inb(5), eth_exi_inb(6), eth_exi_inb(7));
 	eth_outb(0x5b, eth_inb(0x5b)&~(1<<7));
 	eth_outb(0x5e, 1);
@@ -921,7 +894,7 @@ static int adapter_init(struct net_device *dev)
 	eth_outb(0x50, 0x80);
 
 	udelay(10000);
-	
+
 	// recvinit
 	eth_outb(0xA,  0x1);
 	eth_outb(0xB,  0x0);
@@ -929,35 +902,35 @@ static int adapter_init(struct net_device *dev)
 	eth_outb(0x17, 0x0);
 	eth_outb(0x18, 0x1);
 	eth_outb(0x19, 0x0);
-	
+
 	eth_outb(0x1a, 0xF);
 	eth_outb(0x1b, 0);
-	
+
 	eth_outb(1, (eth_inb(1) & 0xFE) | 0x12);
-	
+
 	eth_outb(0, 8);
 	eth_outb(0x32, 8);
 
-	eth_ins(0x20, dev->dev_addr, ETH_LEN); 
-	printk("MAC ADDRESS %02x:%02x:%02x:%02x:%02x:%02x\n", 
-		dev->dev_addr[0], dev->dev_addr[1], dev->dev_addr[2], 
+	eth_ins(0x20, dev->dev_addr, ETH_LEN);
+	printk("MAC ADDRESS %02x:%02x:%02x:%02x:%02x:%02x\n",
+		dev->dev_addr[0], dev->dev_addr[1], dev->dev_addr[2],
 		dev->dev_addr[3], dev->dev_addr[4], dev->dev_addr[5]);
 
 	/* Get the adapter ethernet address from the ROM */
 	for (i = 0; i < ETH_ALEN; i++) {
 		dev->broadcast[i] = 0xff;
 	}
-	
-//	eth_ins(0x20, dev->ethaddr->addr, 6); 
-//	printk("MAC ADDRESS %02x:%02x:%02x:%02x:%02x:%02x\n", 
-//		gcif->ethaddr->addr[0], gcif->ethaddr->addr[1], gcif->ethaddr->addr[2], 
+
+//	eth_ins(0x20, dev->ethaddr->addr, 6);
+//	printk("MAC ADDRESS %02x:%02x:%02x:%02x:%02x:%02x\n",
+//		gcif->ethaddr->addr[0], gcif->ethaddr->addr[1], gcif->ethaddr->addr[2],
 //		gcif->ethaddr->addr[3], gcif->ethaddr->addr[4], gcif->ethaddr->addr[5]);
 
         exi_request_irq(2, EXI_EVENT_IRQ, gcif_irq_handler, NULL);
 
 	eth_exi_outb(0x2, 0xFF);
 	eth_exi_outb(0x3, 0xFF);
-  
+
 	eth_outb(8, 0xFF); // enable all IRQs
 	eth_outb(9, 0xFF); // clear all irqs
 
@@ -974,9 +947,9 @@ static int __init gc_bba_init(void)
 {
 	printk("gc_bba_init\n");
 	spin_lock_init(&gc_bba_lock);
-	
+
 //	exi_init();
-	
+
 	gc_bba_dev.init = gc_bba_probe;
 	if (register_netdev(&gc_bba_dev) != 0)
 		return -EIO;
@@ -994,12 +967,13 @@ void gcif_irq_handler(int channel, int event, void *ct)
 //	struct netif *netif = (struct netif*)ct;
 	int s;
 	struct net_device *dev = (struct net_device *)ct;
-	
+
 	eth_exi_outb(2, 0);
 	s = eth_exi_inb(3);
-	
+
 	if (s & 0x80)
 	{
+//		printk("GC_IRQ service.\n");
 		eth_exi_outb(3, 0x80);
 		gcif_service(dev);
 		eth_exi_outb(2, 0xF8);
