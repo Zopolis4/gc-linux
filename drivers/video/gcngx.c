@@ -283,7 +283,7 @@ static void gcngx_munmap(struct vm_area_struct *vma)
 	gcnfb_restorefb(info);
 #ifdef CONFIG_FRAMEBUFFER_CONSOLE
 	acquire_console_sem();
-	update_screen(info->currcon);
+/*	update_screen(info->currcon);*/
 	unblank_screen();
 	release_console_sem();
 #endif
