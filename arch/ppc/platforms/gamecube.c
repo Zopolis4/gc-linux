@@ -58,7 +58,6 @@ unsigned long isa_io_base = 0;
 unsigned long isa_mem_base = 0;
 unsigned long pci_dram_offset = 0;
 
-
 /* from arch/ppc/platforms/gcn-time.c */
 extern long gcn_time_init(void) __init;
 extern unsigned long gcn_get_rtc_time(void);
@@ -67,14 +66,13 @@ extern int gcn_set_rtc_time(unsigned long nowtime);
 /* from arch/ppc/platforms/gcn-con.c */
 extern void gcn_con_init(void);
 
-unsigned long
-gcn_find_end_of_memory(void)
+
+static unsigned long gamecube_find_end_of_memory(void)
 {
 	return GCN_MEM_SIZE;
 }
 
-void __init
-gcn_map_io(void)
+static void __init gamecube_map_io(void)
 {
 	/* all RAM and more ??? */
 	io_block_mapping(0xd0000000, 0, 0x02000000, _PAGE_IO);
@@ -83,28 +81,24 @@ gcn_map_io(void)
 	io_block_mapping(0xcc000000, 0x0c000000, 0x00100000, _PAGE_IO);
 }
 
-static void
-gcn_restart(char *cmd)
+static void gamecube_restart(char *cmd)
 {
 	local_irq_disable();
 	writeb(0x00, GCN_PI_RESET);
 }
 
-static void
-gcn_power_off(void)
+static void gamecube_power_off(void)
 {
 	local_irq_disable();
-	for (;;);	/* Wait until power button depressed */
+	for (;;); /* spin until power button pressed */
 }
 
-static void
-gcn_halt(void)
+static void gamecube_halt(void)
 {
-	gcn_restart(NULL);
+	gamecube_restart(NULL);
 }
 
-void __init
-gcn_calibrate_decr(void)
+static void __init gamecube_calibrate_decr(void)
 {
 	int freq, divisor;
 	freq = 162000000;
@@ -113,8 +107,7 @@ gcn_calibrate_decr(void)
 	tb_to_us = mulhwu_scale_factor(freq/divisor, 1000000);
 }
 
-static int
-gcn_get_irq(struct pt_regs *regs)
+static int gamecube_get_irq(struct pt_regs *regs)
 {
 	int irq;
 	u32 irq_status;
@@ -128,21 +121,18 @@ gcn_get_irq(struct pt_regs *regs)
 	return (31 - irq);
 }
 
-static void
-flipper_mask_and_ack_irq(unsigned int irq)
+static void flipper_mask_and_ack_irq(unsigned int irq)
 {
 	clear_bit(irq, FLIPPER_IMR);
 	set_bit(irq, FLIPPER_ICR);
 }
 
-static void
-flipper_mask_irq(unsigned int irq)
+static void flipper_mask_irq(unsigned int irq)
 {
 	clear_bit(irq, FLIPPER_IMR);
 }
 
-static void
-flipper_unmask_irq(unsigned int irq)
+static void flipper_unmask_irq(unsigned int irq)
 {
 	set_bit(irq, FLIPPER_IMR);
 }
@@ -154,8 +144,7 @@ static struct hw_interrupt_type flipper_pic = {
 	.ack		= flipper_mask_and_ack_irq,
 };
 
-static void __init
-gcn_init_IRQ(void)
+static void __init gamecube_init_IRQ(void)
 {
 	int i;
 
@@ -167,8 +156,7 @@ gcn_init_IRQ(void)
 		irq_desc[i].handler = &flipper_pic;
 }
 
-static int
-gcn_show_cpuinfo(struct seq_file *m)
+static int gamecube_show_cpuinfo(struct seq_file *m)
 {
 	seq_printf(m, "vendor\t\t: IBM\n");
 	seq_printf(m, "machine\t\t: Nintendo GameCube\n");
@@ -178,11 +166,11 @@ gcn_show_cpuinfo(struct seq_file *m)
 	seq_printf(m, "bus speed\t: 162 MHz\n");
 	seq_printf(m, "mem bus speed\t: 200 MHz\n");
 	seq_printf(m, "bus width\t: 64 bit\n");
+
 	return 0;
 }
 
-static void __init
-gcn_setup_arch(void)
+static void __init gamecube_setup_arch(void)
 {
 #ifdef CONFIG_GAMECUBE_CONSOLE
 #if (GCN_XFB_START <= 0x00fffe00) 
@@ -208,23 +196,22 @@ platform_init(unsigned long r3, unsigned long r4, unsigned long r5,
 	}
 #endif
 
-	ppc_md.setup_arch = gcn_setup_arch;
-	ppc_md.show_cpuinfo = gcn_show_cpuinfo;
+	ppc_md.setup_arch = gamecube_setup_arch;
+	ppc_md.show_cpuinfo = gamecube_show_cpuinfo;
 
-	ppc_md.init_IRQ = gcn_init_IRQ;
-	ppc_md.get_irq = gcn_get_irq;
+	ppc_md.init_IRQ = gamecube_init_IRQ;
+	ppc_md.get_irq = gamecube_get_irq;
 
-	ppc_md.restart = gcn_restart;
-	ppc_md.power_off = gcn_power_off;
-	ppc_md.halt = gcn_halt;
+	ppc_md.restart = gamecube_restart;
+	ppc_md.power_off = gamecube_power_off;
+	ppc_md.halt = gamecube_halt;
 
-	ppc_md.calibrate_decr = gcn_calibrate_decr;
+	ppc_md.calibrate_decr = gamecube_calibrate_decr;
 
-	ppc_md.find_end_of_memory = gcn_find_end_of_memory;
-	ppc_md.setup_io_mappings = gcn_map_io;
+	ppc_md.find_end_of_memory = gamecube_find_end_of_memory;
+	ppc_md.setup_io_mappings = gamecube_map_io;
 
-	ppc_md.time_init      = gcn_time_init;
-	ppc_md.set_rtc_time   = gcn_set_rtc_time;
-	ppc_md.get_rtc_time   = gcn_get_rtc_time;
+	ppc_md.time_init = gcn_time_init;
+	ppc_md.set_rtc_time = gcn_set_rtc_time;
+	ppc_md.get_rtc_time = gcn_get_rtc_time;
 }
-
