@@ -89,16 +89,13 @@ extern void radix_tree_init(void);
 extern void free_initmem(void);
 extern void populate_rootfs(void);
 extern void driver_init(void);
+extern void prepare_namespace(void);
 
 #ifdef CONFIG_TC
 extern void tc_init(void);
 #endif
 
-/*
- * Are we up and running (ie do we have all the infrastructure
- * set up)
- */
-int system_running;
+int system_state;	/* SYSTEM_BOOTING/RUNNING/SHUTDOWN */
 
 /*
  * Boot command-line arguments
@@ -478,7 +475,6 @@ asmlinkage void __init start_kernel(void)
 	signals_init();
 	/* rootfs populating might need page-writeback */
 	page_writeback_init();
-	populate_rootfs();
 #ifdef CONFIG_PROC_FS
 	proc_root_init();
 #endif
@@ -584,8 +580,6 @@ static void run_init_process(char *init_filename)
 	execve(init_filename, argv_init, envp_init);
 }
 
-extern void prepare_namespace(void);
-
 static int init(void * unused)
 {
 	lock_kernel();
@@ -605,9 +599,23 @@ static int init(void * unused)
 	do_pre_smp_initcalls();
 
 	smp_init();
+
+	/*
+	 * Do this before initcalls, because some drivers want to access
+	 * firmware files.
+	 */
+	populate_rootfs();
+
 	do_basic_setup();
 
-	prepare_namespace();
+	/*
+	 * check if there is an early userspace init.  If yes, let it do all
+	 * the work
+	 */
+	if (sys_access("/init", 0) == 0)
+		execute_command = "/init";
+	else
+		prepare_namespace();
 
 	/*
 	 * Ok, we have completed the initial bootup, and
@@ -616,7 +624,7 @@ static int init(void * unused)
 	 */
 	free_initmem();
 	unlock_kernel();
-	system_running = 1;
+	system_state = SYSTEM_RUNNING;
 
 	if (sys_open("/dev/console", O_RDWR, 0) < 0)
 		printk("Warning: unable to open an initial console.\n");
