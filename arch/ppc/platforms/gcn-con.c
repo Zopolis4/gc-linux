@@ -2,7 +2,7 @@
  * arch/ppc/platforms/gcn-con.c
  *
  * Nintendo GameCube early debug console
- * Copyright (C) 2004 The GameCube Linux Team
+ * Copyright (C) 2004-2005 The GameCube Linux Team
  *
  * Based on console.c by tmbinc.
  *
@@ -220,7 +220,7 @@ static void gcn_con_write(struct console *co, const char *b,
 void gcn_con_init(void)
 {
 	console_init(&gcn_con_data, (void *)(0xd0000000 | GCN_XFB_START),
-		     640, 576, 640 * 2);
+		     640, GCN_VIDEO_LINES, 640 * 2);
 	gcn_con_puts("gcn-con: console initialized.\n");
 
 	gcn_con.write = gcn_con_write;
