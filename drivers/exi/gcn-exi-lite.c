@@ -2,10 +2,10 @@
  * drivers/exi/gcn_exi_lite.c
  *
  * Nintendo GameCube EXpansion Interface support, "lite" version.
- * Copyright (C) 2004 The GameCube Linux Team
+ * Copyright (C) 2004-2005 The GameCube Linux Team
  *
  * Partly, depends on existing work by tmbinc.
- * This code will be replaced by apgo's EXI framework, when available.
+ * This code will be replaced by Scream|CT's EXI framework, available soon.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -245,7 +245,7 @@ int exi_register_event(int channel, int event_id,
 	event->data = data;
 
 	/* ack and enable interrupts */
-	unsigned long reg = EXI_CSR_BASE + channel * 0x14;
+	void __iomem *reg = (void __iomem *)(EXI_CSR_BASE + channel * 0x14);
 	unsigned long csr = readl(reg);
 	switch (event_id) {
 	case EXI_EVENT_INSERT:
@@ -282,7 +282,7 @@ int exi_unregister_event(int channel, int event_id)
 	event->data = 0;
 
 	/* ack and disable interrupts */
-	unsigned long reg = EXI_CSR_BASE + channel * 0x14;
+	void __iomem *reg = (void __iomem *)(EXI_CSR_BASE + channel * 0x14);
 	unsigned long csr = readl(reg);
 	switch (event_id) {
 	case EXI_EVENT_INSERT:
@@ -310,13 +310,14 @@ static irqreturn_t exi_irq_handler(int irq, void *dev_id, struct pt_regs *regs)
 {
 	struct exi_private *priv = exi_priv();
 
-	register unsigned long reg, csr, status, mask;
+	register unsigned long csr, status, mask;
+	void __iomem *reg;
 	register int channel;
 
 	spin_lock(&priv->lock);
 
 	for (channel = 0; channel < EXI_MAX_CHANNELS; channel++) {
-		reg = EXI_CSR_BASE + channel * 0x14;
+		reg = (void __iomem *)(EXI_CSR_BASE + channel * 0x14);
 		csr = readl(reg);
 		mask = csr & (EXI_CSR_EXTINTMASK |
 			      EXI_CSR_TCINTMASK | EXI_CSR_EXIINTMASK);
@@ -350,7 +351,7 @@ int exi_lite_init()
 	spin_lock_init(priv->lock);
 	spin_lock_init(priv->select_lock);
 
-	err = request_irq(EXI_IRQ, exi_irq_handler, SA_SHIRQ, "exi", NULL);
+	err = request_irq(EXI_IRQ, exi_irq_handler, 0, "exi", NULL);
 	if (err) {
 		exi_printk(KERN_ERR, "request of irq%d failed\n", EXI_IRQ);
 	}
