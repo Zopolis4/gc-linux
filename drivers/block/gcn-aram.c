@@ -23,7 +23,7 @@
 #include <linux/module.h>
 #include <linux/blkdev.h>
 #include <linux/delay.h>
-
+#include <linux/wait.h>
 #include <asm/setup.h>
 #include <asm/bitops.h>
 #include <asm/pgtable.h>
@@ -33,187 +33,201 @@
 #include <linux/fcntl.h>	/* O_ACCMODE */
 #include <linux/hdreg.h>	/* HDIO_GETGEO */
 
+#include <asm/io.h>
+
 #define ARAM_MAJOR Z2RAM_MAJOR
 
-#define TRUE                  (1)
-#define FALSE                 (0)
+#define HARD_SECTOR_SIZE 512
 
 //#define ARAM_DBG      printk
 #define ARAM_DBG(format, arg...); { }
 
-//#define RAMDISK
-#undef RAMDISK
+#define ARAM_SOUNDMEMORYOFFSET 0
+#define ARAM_BUFFERSIZE (16*1024*1024 - ARAM_SOUNDMEMORYOFFSET)
 
-#ifdef RAMDISK
-unsigned char *RAMDISKBuffer;
-#define ARAM_BUFFERSIZE 10*1024
-#else
-#define ARAM_BUFFERSIZE 14*1024*1024
-#define ARAM_SOUNDMEMORYOFFSET	1024*1024
-	//#define ARAM_BLOCKSIZE 1024
-#endif
+#define AI_DSP_CSR          (void* __iomem)0xCC00500A
+#define  AI_CSR_PIINT       (1<<1)
+#define  AI_CSR_ARINT       (1<<5)
+#define  AI_CSR_ARINTMASK   (1<<6)
+#define  AI_CSR_DSPINT      (1<<7)
+#define  AI_CSR_DSPINTMASK  (1<<8)
+#define  AI_CSR_DMA_STATUS  (1<<9)
 
-static int current_device = -1;
-static spinlock_t aram_lock = SPIN_LOCK_UNLOCKED;
+#define AR_DMA_MMADDR        (void* __iomem)0xCC005020
+#define AR_DMA_ARADDR	     (void* __iomem)0xCC005024
+#define AR_DMA_CNT	     (void* __iomem)0xCC005028
 
-extern void flush_cache(void *start, unsigned int len);
-
-static struct block_device_operations aram_fops;
-static struct gendisk *aram_gendisk;
-
-#define AR_DMA_MMADDR_H			*(unsigned short*)0xCC005020
-#define AR_DMA_MMADDR_L			*(unsigned short*)0xCC005022
-#define AR_DMA_ARADDR_H			*(unsigned short*)0xCC005024
-#define AR_DMA_ARADDR_L			*(unsigned short*)0xCC005026
-#define AR_DMA_CNT_H			*(unsigned short*)0xCC005028
-#define AR_DMA_CNT_L			*(unsigned short*)0xCC00502A
-#define AI_DSP_STATUS	 		*(volatile unsigned short*)0xCC00500A
-
-#define ARAM_READ				1
+#define ARAM_READ				(1 << 31)
 #define ARAM_WRITE				0
 
-void ARAM_StartDMA(unsigned long mmAddr, unsigned long arAddr,
-		   unsigned long length, unsigned long type)
+#define ARAM_DMA_ALIGNMENT_MASK                 0x1F
+
+#define ARAM_IRQ  6
+#define IRQ_PARAM (void*)0xFFFFFFFA
+
+static spinlock_t aram_lock = SPIN_LOCK_UNLOCKED;
+static struct block_device_operations aram_fops;
+static struct gendisk *aram_gendisk;
+static struct request_queue *aram_queue;
+static struct request * volatile irq_request;
+static u32 refCount;
+
+static inline void ARAM_StartDMA(unsigned long mmAddr, unsigned long arAddr,
+				 unsigned long length, unsigned long type)
 {
-
-	//printk("ARAM DMA copy -> %08x - %08x  - %d  %d\n",mmAddr,arAddr,length,type);
-	AR_DMA_MMADDR_H = mmAddr >> 16;
-	AR_DMA_MMADDR_L = mmAddr & 0xFFFF;
-	AR_DMA_ARADDR_H = arAddr >> 16;
-	AR_DMA_ARADDR_L = arAddr & 0xFFFF;
-	AR_DMA_CNT_H = (type << 15) | (length >> 16);
-	AR_DMA_CNT_L = length & 0xFFFF;
-
-	// We wait, until DMA finished
-	while (AI_DSP_STATUS & 0x200) ;
+	writel(mmAddr,AR_DMA_MMADDR);
+	writel(arAddr,AR_DMA_ARADDR);
+	writel(type | length,AR_DMA_CNT);
 }
 
-/*
- 	echo YUHUUhello1234567890hello12345678901234567890CCC > /dev/aram 
- 	dd if=/dev/aram 
- 	cat /dev/aram  | wc -c
-*/
+static irqreturn_t aram_irq(int irq,void *dev_id,struct pt_regs *regs)
+{
+	unsigned long flags;
+	unsigned long len;
+	struct request *req;
+
+	if (readw(AI_DSP_CSR) & AI_CSR_ARINT) {
+		/* ack the int */
+		local_irq_save(flags);
+		writew(readw(AI_DSP_CSR) | AI_CSR_ARINT,AI_DSP_CSR);
+		local_irq_restore(flags);
+		
+		/* now process */
+		spin_lock_irqsave(&aram_lock,flags);
+		if ((req = irq_request)) {
+			len = req->current_nr_sectors << 9;
+			/* invalidate cache on read */
+			if (rq_data_dir(req) == READ) {
+				invalidate_dcache_range(
+					(u32)req->buffer,
+					(u32)req->buffer + len);
+			}
+			/* complete request */
+			if (!end_that_request_first(req,1,
+						    req->current_nr_sectors)) {
+				add_disk_randomness(req->rq_disk);
+				end_that_request_last(req);
+			}
+			else {
+				printk(KERN_ERR DEVICE_NAME " device still thinks there are requests but DMA has finished\n");
+			}
+			irq_request = NULL;
+			/* start queue back up */
+			blk_start_queue(aram_queue);
+		}
+		else {
+			printk(KERN_ERR DEVICE_NAME " received an interrupt but no irq_request set\n");
+		}
+		spin_unlock_irqrestore(&aram_lock,flags);
+		/* return handled */
+		return IRQ_HANDLED;
+	}
+
+	return IRQ_NONE;
+}
+
+
 static void do_aram_request(request_queue_t * q)
 {
 	struct request *req;
-	blk_stop_queue(q);
-	spin_lock(&aram_lock);
-
-	while ((req = elv_next_request(q)) != NULL) {
-		unsigned long start = req->sector << 9;
-		unsigned long len = req->current_nr_sectors << 9;
-
-		if (start + len > ARAM_BUFFERSIZE) {
+	unsigned long start;
+	unsigned long len;
+	
+	/*unsigned long flags; */
+	
+	while ((req = elv_next_request(q))) {
+		/* get length */
+		start = req->sector << 9;
+		len = req->current_nr_sectors << 9;
+		
+		if ((start + len) > ARAM_BUFFERSIZE) {
 			printk(KERN_ERR DEVICE_NAME
-			       ": bad access: block=%lu, count=%u\n",
-			       (unsigned long)req->sector,
-			       req->current_nr_sectors);
+			       ": bad access: block=%lu, count=%lu\n",
+			       (unsigned long)req->sector,len);
 			end_request(req, 0);
 			continue;
 		}
-#ifdef RAMDISK
-		if (rq_data_dir(req) == READ) {
-			memcpy(req->buffer, (char *)&RAMDISKBuffer[start], len);
-		} else {
-			memcpy((char *)&RAMDISKBuffer[start], req->buffer, len);
+		else if (irq_request) {	/* already scheduled? */
+			blk_stop_queue(q);
+			return;
 		}
-#else
+		/* dequeue */
+		blkdev_dequeue_request(req);
+		blk_stop_queue(q);
+		irq_request = req;
+		/* schedule DMA */
 		if (rq_data_dir(req) == READ) {
-			//memset(req->buffer,0,len);
-			//flush_dcache_range((unsigned long)req->buffer,(unsigned long)req->buffer + len);
 			ARAM_StartDMA((unsigned long)req->buffer,
 				      start + ARAM_SOUNDMEMORYOFFSET, len,
 				      ARAM_READ);
-			//flush_dcache_range((unsigned long)req->buffer,(unsigned long)req->buffer + len);
-			invalidate_dcache_range((unsigned long)req->buffer,
-						(unsigned long)req->buffer +
-						len);
-		} else {
+		} 
+		else {
 			flush_dcache_range((unsigned long)req->buffer,
 					   (unsigned long)req->buffer + len);
 			ARAM_StartDMA((unsigned long)req->buffer,
 				      start + ARAM_SOUNDMEMORYOFFSET, len,
 				      ARAM_WRITE);
 		}
-#endif
-
-		end_request(req, 1);
+		return;
 	}
-
-	spin_unlock(&aram_lock);
-	blk_start_queue(q);
-
 }
 
 static int aram_open(struct inode *inode, struct file *filp)
 {
-	ARAM_DBG("A-RAM Open device\n");
-
-	int device;
-	int rc = -ENOMEM;
-
-	device = iminor(inode);
-
-	if (current_device != -1 && current_device != device) {
-		rc = -EBUSY;
-		goto err_out;
-	}
-#ifdef RAMDISK
-	if (current_device == -1) {
-		current_device = device;
-		set_capacity(aram_gendisk, ARAM_BUFFERSIZE >> 9);
-	}
-#endif
-	return 0;
-
-      err_out:
-	ARAM_DBG("A-RAM Open device Error %d\n", rc);
-
-	return rc;
-
-}
-
-/*
-	mkfs.minix /dev/aram 
-	mount -t minix /dev/aram /mnt/
-
-	dd if=/dev/urandom bs=1M count=10 > /mnt/test.bin   
-	dd if=/dev/urandom bs=1M count=1 > /mnt/test1.bin
-
+	unsigned long flags;
 	
-*/
-static int aram_ioctl(struct inode *inode, struct file *file,
-		      unsigned int cmd, unsigned long arg)
-{
-	ARAM_DBG("A-RAM IOCTL\n");
-
-	if (cmd == HDIO_GETGEO) {
-		struct hd_geometry geo;
-		/*
-		 * get geometry: we have to fake one...  trim the size to a
-		 * multiple of 2048 (1M): tell we have 32 sectors, 64 heads,
-		 * whatever cylinders.
-		 */
-		geo.heads = 64;
-		geo.sectors = 32;
-		geo.start = 0;
-		geo.cylinders = ARAM_BUFFERSIZE / (geo.heads * geo.sectors);
-
-		if (copy_to_user((void *)arg, &geo, sizeof(geo)))
-			return -EFAULT;
-		return 0;
-	}
-
-	return -EINVAL;
+	ARAM_DBG("A-RAM Open device\n");
+	/* only allow a minor of 0 to be opened */
+	if (iminor(inode))
+		return -ENODEV;
+	/* allow multiple people to open this file */
+	spin_lock_irqsave(&aram_lock,flags);
+	++refCount;
+	spin_unlock_irqrestore(&aram_lock,flags);
+	return 0;
 }
 
 static int aram_release(struct inode *inode, struct file *filp)
 {
+	unsigned long flags;
 	ARAM_DBG("A-RAM Close device\n");
-	if (current_device == -1)
-		return 0;
-
+	/* lower ref count */
+	spin_lock_irqsave(&aram_lock,flags);
+	--refCount;
+	spin_unlock_irqrestore(&aram_lock,flags);
 	return 0;
+}
+
+static int aram_ioctl(struct inode *inode, struct file *file,
+		      unsigned int cmd, unsigned long arg)
+{
+	struct hd_geometry geo;
+	
+	ARAM_DBG("A-RAM IOCTL\n");
+	
+	switch (cmd) {
+	case BLKRAGET:
+	case BLKFRAGET:
+	case BLKROGET:
+	case BLKBSZGET:
+	case BLKSSZGET:
+	case BLKSECTGET:
+	case BLKGETSIZE:
+	case BLKGETSIZE64:
+	case BLKFLSBUF:
+		return ioctl_by_bdev(inode->i_bdev,cmd,arg);
+	case HDIO_GETGEO:
+		/* fake the entries */
+		geo.heads = 32;
+		geo.sectors = 32;
+		geo.start = 0;
+		geo.cylinders = ARAM_BUFFERSIZE / (geo.heads * geo.sectors);
+		if (copy_to_user((void __user*)arg,&geo,sizeof(geo)))
+			return -EFAULT;
+		return 0;
+	default:
+		return -ENOTTY;
+	}
 }
 
 static int aram_revalidate(struct gendisk *disk)
@@ -230,31 +244,27 @@ static struct block_device_operations aram_fops = {
 	.ioctl = aram_ioctl,
 };
 
-static struct request_queue *aram_queue;
 
-#if 0
-static irqreturn_t aram_interrupt(int irq, void *dev_id, struct pt_regs *regs)
-{
-	printk("interrupt received\n");
-	return 0;
-}
-#endif
 
 int __init aram_init(void)
 {
 	int ret;
+	unsigned long flags;
 
-	printk("A-Ram Block Device Driver Init\n");
-
-	ret = -EBUSY;
-	if (register_blkdev(ARAM_MAJOR, DEVICE_NAME))
-		goto err;
-
+	/* get the irq */
+	if ((ret=request_irq(ARAM_IRQ,aram_irq,SA_SHIRQ,"ARAM",IRQ_PARAM)))
+		goto out_irq;
+	
+	if ((ret=register_blkdev(ARAM_MAJOR, DEVICE_NAME)))
+		goto out_blkdev;
+	
 	ret = -ENOMEM;
 	aram_gendisk = alloc_disk(1);
 	if (!aram_gendisk)
 		goto out_disk;
-
+	
+	spin_lock_init(&aram_lock);
+	
 	aram_queue = blk_init_queue(do_aram_request, &aram_lock);
 	if (!aram_queue)
 		goto out_queue;
@@ -262,61 +272,60 @@ int __init aram_init(void)
 	aram_gendisk->major = ARAM_MAJOR;
 	aram_gendisk->first_minor = 0;
 	aram_gendisk->fops = &aram_fops;
-	sprintf(aram_gendisk->disk_name, "aram");
+	strcpy(aram_gendisk->disk_name, "aram");
 	strcpy(aram_gendisk->devfs_name, aram_gendisk->disk_name);
 
 	aram_gendisk->queue = aram_queue;
+
+	/* we can only have one segment at a time */
+	blk_queue_max_phys_segments(aram_queue,1);
+	blk_queue_max_hw_segments(aram_queue,1);
+	/* make sectors equal to the pagesize */
+	blk_queue_hardsect_size(aram_queue,HARD_SECTOR_SIZE);
+	/* set the DMA alignment */
+	blk_queue_dma_alignment(aram_queue,ARAM_DMA_ALIGNMENT_MASK);
+	
 	set_capacity(aram_gendisk, ARAM_BUFFERSIZE >> 9);
-
 	add_disk(aram_gendisk);
-	spin_lock_init(&aram_lock);
 
-#if 0
-	ret =
-	    request_irq(5, aram_interrupt, 0, aram_gendisk->disk_name,
-			aram_gendisk);
-	if (ret) {
-		//BBA_DBG(KERN_ERR "%s: unable to get IRQ %d\n", dev->name, dev->irq);
-		return ret;
-	}
-#endif
+	/* lock this since audio driver might be using it */
+	local_irq_save(flags);
+	writew(readw(AI_DSP_CSR) | AI_CSR_ARINTMASK,AI_DSP_CSR);
+	local_irq_restore(flags);
 
-#define AUDIO_DSP_CONTROL   *(volatile u_int16_t *)(0xCC00500a)
-#define  AI_CSR_ARINTMASK   (1<<6)
-	AUDIO_DSP_CONTROL &= ~AI_CSR_ARINTMASK;
-
-#ifdef RAMDISK
-	RAMDISKBuffer = kmalloc(ARAM_BUFFERSIZE, GFP_KERNEL);
-#endif
+	refCount = 0;
 
 	return 0;
 
-      out_queue:
+ out_queue:
+	del_gendisk(aram_gendisk);
 	put_disk(aram_gendisk);
-      out_disk:
+ out_disk:
 	unregister_blkdev(ARAM_MAJOR, DEVICE_NAME);
-      err:
+ out_blkdev:
+	free_irq(ARAM_IRQ,IRQ_PARAM);
+ out_irq:
 	return ret;
 }
 
 void __exit aram_cleanup(void)
 {
+	free_irq(ARAM_IRQ,IRQ_PARAM);
 
 	blk_unregister_region(MKDEV(ARAM_MAJOR, 0), 256);
+	
 	if (unregister_blkdev(ARAM_MAJOR, DEVICE_NAME) != 0)
 		printk(KERN_ERR DEVICE_NAME ": unregister of device failed\n");
-
+	
 	del_gendisk(aram_gendisk);
 	put_disk(aram_gendisk);
 	blk_cleanup_queue(aram_queue);
-
-#ifdef RAMDISK
-	kfree(RAMDISKBuffer);
-#endif
-
+	
 	return;
 }
 
+MODULE_AUTHOR("Todd Jeffreys <todd@voidpointer.org>");
+MODULE_DESCRIPTION("Gamecube ARAM block driver");
 MODULE_LICENSE("GPL");
 module_init(aram_init);
 module_exit(aram_cleanup);
