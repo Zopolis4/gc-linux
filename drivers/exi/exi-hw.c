@@ -289,6 +289,7 @@ static inline void exi_start_dma_transfer_raw(struct exi_channel *exi_channel,
 	writel(readl(csr_reg) | EXI_CSR_TCINTMASK, csr_reg);
 	spin_unlock_irqrestore(&exi_channel->io_lock, flags);
 
+	/* start the transfer */
 	writel(EXI_CR_TSTART | EXI_CR_DMA | (mode&7), io_base + EXI_CR);
 }
 
@@ -459,6 +460,7 @@ static void exi_cmd_post_transfer(struct exi_command *cmd)
 
 	cmd->done_data = post_cmd->done_data;
 	cmd->done = post_cmd->done;
+	exi_op_nop(post_cmd, exi_channel);
 	exi_command_done(cmd);
 }
 
@@ -476,6 +478,8 @@ static void exi_cmd_post_transfer(struct exi_command *cmd)
  */
 static int exi_cmd_transfer(struct exi_command *cmd)
 {
+	static u8 exi_aligned_transfer_buf[EXI_DMA_ALIGN+1]
+				 __attribute__ ((aligned (EXI_DMA_ALIGN+1)));
 	struct exi_channel *exi_channel = cmd->exi_channel;
 	struct exi_command *post_cmd = &exi_channel->post_cmd;
 	void *pre_data, *data, *post_data;
@@ -524,21 +528,31 @@ static int exi_cmd_transfer(struct exi_command *cmd)
 	len = post_data - data;
 
 	/*
-	 * Coalesce pre and post data transfers if no DMA transfer is done.
+	 * Coalesce pre and post data transfers if no DMA transfer is possible.
 	 */
 	if (!len) {
 		/*
-		 * Maximum transfer size here is 62 bytes.
-		 * 
-		 * XXX
+		 * Maximum transfer size here is 31+31=62 bytes.
+		 */
+
+		/*
 		 * On transfer sizes greater than or equal to 32 bytes
-		 * we could optimize the transfer by performing a 32-byte
+		 * we can optimize the transfer by performing a 32-byte
 		 * DMA transfer using a specially aligned temporary buffer,
 		 * followed by a non-DMA transfer for the remaining bytes.
 		 */
-		exi_transfer_raw(exi_channel, pre_data, pre_len+post_len,
-				 opcode);
-		goto done;
+		if ( pre_len + post_len > EXI_DMA_ALIGN ) {
+			post_len = pre_len + post_len - (EXI_DMA_ALIGN+1);
+			post_data = pre_data + EXI_DMA_ALIGN+1;
+			len = EXI_DMA_ALIGN+1;
+			data = exi_aligned_transfer_buf;
+			memcpy(data, pre_data, EXI_DMA_ALIGN+1);
+			pre_len = 0;
+		} else {
+			exi_transfer_raw(exi_channel, pre_data,
+					 pre_len + post_len, opcode);
+			goto done;
+		}
 	}
 
 	/*
@@ -565,8 +579,6 @@ static int exi_cmd_transfer(struct exi_command *cmd)
 		post_cmd->done = cmd->done;
 		cmd->done_data = NULL;
 		cmd->done = exi_cmd_post_transfer;
-	} else {
-		exi_op_nop(post_cmd, exi_channel);
 	}
 
 	exi_channel->dma_cmd = cmd;
@@ -815,10 +827,12 @@ static inline int exi_can_trigger_event(struct exi_channel *exi_channel,
 static inline int exi_trigger_event(struct exi_channel *exi_channel,
 				    unsigned int event_id)
 {
+	struct exi_event_handler *event;
 	exi_event_handler_t handler;
 	int retval = 0;
 
-	handler = exi_channel->events[event_id].handler;
+	event = &exi_channel->events[event_id];
+	handler = event->handler;
 	if (handler) {
 		retval = handler(exi_channel, event_id, event->data);
 	}
