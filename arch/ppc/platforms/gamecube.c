@@ -26,7 +26,6 @@
 #include <asm/pgtable.h>
 
 #include "gamecube.h"
-#include "gcn-con.h"
 
 /*
  * There are 14 IRQs in total. Each has a corresponding bit in both
@@ -65,6 +64,8 @@ extern long gcn_time_init(void) __init;
 extern unsigned long gcn_get_rtc_time(void);
 extern int gcn_set_rtc_time(unsigned long nowtime);
 
+/* from arch/ppc/platforms/gcn-con.c */
+extern void gcn_con_init(void);
 
 unsigned long
 gcn_find_end_of_memory(void)

@@ -19,7 +19,6 @@
 #include <linux/cache.h>
 
 #include "gamecube.h"
-#include "gcn-con.h"
 
 extern struct font_desc font_vga_8x16;
 
