@@ -139,9 +139,13 @@ void gamecubefb_writel(unsigned long color, int *address)
 
         pb = GC_Video_RGBToYCbCrFixed (r, g, b);
 
-        fb_writel_real((pa & 0xFF000000) | (pb & 0x0000FF00) |
-                (((pa & 0x00FF0000) + (pb & 0x00FF0000)) >> 1) |
-                (((pa & 0x000000FF) + (pb & 0x000000FF)) >> 1), address);
+	fb_writel_real((pa & 0xFF000000) | (pb & 0x0000FF00) |
+		((((pa & 0x00FF0000) + (pb & 0x00FF0000)) >> 1) & 0x00FF0000) |
+		((((pa & 0x000000FF) + (pb & 0x000000FF)) >> 1) & 0x000000FF), address);
+
+	//fb_writel_real((pa & 0xFF000000) | (pb & 0x0000FF00) |
+        //        (((pa & 0x00FF0000) + (pb & 0x00FF0000)) >> 1) |
+        //        (((pa & 0x000000FF) + (pb & 0x000000FF)) >> 1), address);
 }
 
 /* --------------------------------------------------------------------- */
@@ -348,7 +352,7 @@ int __init gamecubefb_init(void)
 
 	unsigned int *VIDEO_Mode;
 
-	printk("tv_encoding = %i\n", tv_encoding);
+//	printk("tv_encoding = %i\n", tv_encoding);
 
 	if (tv_encoding == TV_ENC_NTSC)
 		VIDEO_Mode = VIDEO_Mode640X480NtscYUV16;
