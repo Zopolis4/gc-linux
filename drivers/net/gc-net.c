@@ -19,9 +19,12 @@
 /* ------------------------------------------------------------------------- */
 
 /*
- * $Id: gc-net.c,v 1.19 2004/02/27 00:06:33 hamtitampti Exp $
+ * $Id: gc-net.c,v 1.20 2004/02/29 08:36:29 hamtitampti Exp $
  *
  * $Log: gc-net.c,v $
+ * Revision 1.20  2004/02/29 08:36:29  hamtitampti
+ * improofed internal structure, read comment in file
+ *
  * Revision 1.19  2004/02/27 00:06:33  hamtitampti
  * changed IRQ timing, but .. yes, the bus is too slow it seems
  *
@@ -33,6 +36,84 @@
  *
  *
  */
+
+/*
+	Important Notes for Developers:
+	
+	currently speeds:
+	1008 bytes from 192.168.0.2: icmp_seq=1 ttl=64 time=3.3 ms
+	2008 bytes from 192.168.0.2: icmp_seq=1 ttl=64 time=6.0 ms
+	5008 bytes from 192.168.0.2: icmp_seq=2 ttl=64 time=14.1 ms
+	10008 bytes from 192.168.0.2: icmp_seq=0 ttl=64 time=27.0 ms
+	20008 bytes from 192.168.0.2: icmp_seq=0 ttl=64 time=53.2 ms
+	65000 bytes about 172ms (with Win2000)
+
+	As you see, the Delay increases "linear"
+	this comes due to a Bandwith Problem with the EXI bus.
+	
+	note:
+	All ! i repeat ALL
+	packets are received with the 
+		static void gc_input(struct net_device *dev)
+	and sent to the linux kernel then.
+	
+	BUT !
+	the Transmit Back , the
+		static int gc_bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
+	
+	As you see inside this function, i check, if the Transmit is currently in progress
+	if "yes" (priv->tx_lock)
+	i wait then a small time, and return with 1 ! 
+	(otherwise, the linux kernel try's to resume the packet .. about 1mill / sec or so)
+	the Return 1; indicates to the linux kernel to resume the packet tramsission.
+	
+		if (priv->tx_lock) {
+			priv->stats.tx_dropped++;
+			udelay(1000);
+			netif_wake_queue(dev);
+			return 1;	// This return will Resume the packet try
+		}	
+	
+	So it happens, that the packet wich the linux Stack wants to send , enters multiple times the Xmit thing.
+	Until it time-out in Linux Packet buffer, logically.
+	
+	due to the tx_dropped, you see in ifconfig the dropped TX packets increasing.
+	Clear, there are more dropped packets then (as kernel resumes automaticall)
+	but i had no better idea.
+          
+          RX packets:582 errors:0 dropped:0 overruns:0 frame:0
+          TX packets:475 errors:0 dropped:775 overruns:0 carrier:0	
+
+
+	Flood Performance:
+	1K: 2531 packets transmitted, 2103 packets received, 16% packet loss
+	2K: 1095 packets transmitted, 736 packets received, 32% packet loss
+	4K: 886 packets transmitted, 472 packets received, 46% packet loss
+	8K: 773 packets transmitted, 276 packets received, 64% packet loss
+
+	ok
+	AT last:
+	
+	Even at flood, the kernel gets all RX (received frames)
+	but fails due to send back.
+
+
+	100Mbit issue:
+		eth_outb(0x30, 0x2);
+	
+	This activates 100Mbit 
+	Testet and operational. (market out in source)
+	
+	BAD: the ping / flood gets more worse.
+	as the packets arrive now faster, the bus almost crashes.
+	
+	BOYS, Write a Faster EXI driver, this is the maximum we can do now.
+	
+	hamtitampti
+	
+		
+
+*/
 
 #include <linux/module.h>
 #include <linux/kernel.h>
@@ -71,6 +152,7 @@ struct gc_private {
 	spinlock_t lock;
 	spinlock_t phylock;             /* phy lock */
 	unsigned long lockflags;        /* Lock flags */
+    	int tx_lock;
     	
 	// Statistical Data
 	struct net_device_stats stats;
@@ -157,8 +239,7 @@ void exi_imm_ex(int channel, void *data, int len, int mode)
 	while (len)
 	{
 		int tc = len;
-		if (tc > 4)
-			tc = 4;
+		if (tc > 4) tc = 4;
 		exi_imm(channel, d, tc, mode, 0);
 		exi_sync(channel);
 		len-=tc;
@@ -404,30 +485,6 @@ static int	adapter_init(struct net_device *dev);
 
 
 /*
-
-static inline u8 de600_read_status(struct net_device *dev)
-{
-	u8 status;
-
-	outb_p(STATUS, DATA_PORT);
-	status = inb(STATUS_PORT);
-	outb_p(NULL_COMMAND | HI_NIBBLE, DATA_PORT);
-
-	return status;
-}
-
-static inline u8 de600_read_byte(unsigned char type, struct net_device *dev)
-{
-	// dev used by macros
-	u8 lo;
-	outb_p((type), DATA_PORT);
-	lo = ((unsigned char)inb(STATUS_PORT)) >> 4;
-	outb_p((type) | HI_NIBBLE, DATA_PORT);
-	return ((unsigned char)inb(STATUS_PORT) & (unsigned char)0xf0) | lo;
-}
-*/
-
-/*
  * Open/initialize the board.  This is called (in the current kernel)
  * after booting when 'ifconfig <dev->name> $IP_ADDR' is run (in rc.inet1).
  *
@@ -463,12 +520,6 @@ static int gc_bba_open(struct net_device *dev)
 static int gc_bba_close(struct net_device *dev)
 {
 	BBA_DBG("gc_bba_close\n");
-
-//	//select_nic();
-//	de600_put_command(RESET);
-//	de600_put_command(STOP_RESET);
-//	de600_put_command(0);
-//	//select_prn();
 	free_irq(dev->irq, dev);
 	return 0;
 }
@@ -480,15 +531,6 @@ static struct net_device_stats *gc_stats(struct net_device *dev)
 	return &priv->stats;
 }
 
-static inline void trigger_interrupt(struct net_device *dev)
-{
-//	de600_put_command(FLIP_IRQ);
-//	//select_prn();
-//	DE600_SLOW_DOWN;
-//	//select_nic();
-//	de600_put_command(0);
-}
-
 /*
  * Copy a buffer to the adapter transmit page memory.
  * Start sending.
@@ -497,17 +539,29 @@ static inline void trigger_interrupt(struct net_device *dev)
 static int gc_bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	struct gc_private *priv = (struct gc_private *)dev->priv;
-	unsigned char Reg0;
+
+	netif_stop_queue(dev);	
+		
+	if (priv->tx_lock) {
+		priv->stats.tx_dropped++;
+		udelay(1000);
+		netif_wake_queue(dev);
+		return 1;	// This return will Resume the packet try
+	}
+
+	priv->tx_lock = 1;
+	
+	netif_wake_queue(dev);
 	
 	spin_lock_irqsave(&priv->lock, priv->lockflags);
-	netif_stop_queue(dev);
-	
+
 	//while(eth_inb(0x3a)&0x1);
 	
 	// TX Fifo Page to 0
+
 	eth_outb(0xf, 0);
 	eth_outb(0xe, 0);
-	
+
 	//printk("XMIT packet : len %d\n",skb->len);
 	/*
 		We send using the FIFO mode
@@ -516,13 +570,16 @@ static int gc_bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	BBA_DBG("gc_bba_start_xmit:len=%d, page %d/%d\n", skb->len, tx_fifo_in, free_tx_pages);
 
 	// We set the packetbuffer to beginning...
-	
+
+	eth_outb(0x3e, skb->len&0xff);
+	eth_outb(0x3f, (skb->len&0x0f00)>>8);
+		
 	unsigned int val=0xC0004800;	// register 0x48 is the output queue
 
 	exi_select(0, 2, 5);
 	exi_imm(0, &val, 4, EXI_WRITE, 0);
 	exi_sync(0);
-
+	
 	// Send Data from skb buffer to Network Driver now
 	exi_imm_ex(0, skb->data, skb->len, EXI_WRITE);	
 
@@ -544,13 +601,13 @@ static int gc_bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	val |=4;
 	eth_outb(0, val);
 
-
 	spin_unlock_irqrestore(&priv->lock, priv->lockflags);
+
 	dev->trans_start = jiffies;
-	dev_kfree_skb(skb);
-	 	
-	priv->stats.tx_bytes++;
+	priv->stats.tx_bytes += skb->len;
  	priv->stats.tx_packets++;
+ 	
+	dev_kfree_skb(skb);
 
 	return 0;
 }
@@ -570,7 +627,7 @@ static void gc_input(struct net_device *dev)
 	/*
 	Input Flow concept: Take a look to Hardware spec page 35
 	*/
-	
+/*	
 	eth_outb(0x3a, 2);
 	if (eth_inb(0x3a) & 2)
 	{
@@ -578,7 +635,7 @@ static void gc_input(struct net_device *dev)
 		priv->stats.rx_missed_errors++;
 		return ;
 	}
-		
+*/		
 	/*
 		Receive Buffer Write Page Pointer: Current receive write page pointer. The MSB
 		is the Reg17h.3 bit. The LSB is the Reg16h.0 bit. This register is controlled by
@@ -597,7 +654,6 @@ static void gc_input(struct net_device *dev)
 	
 	p_read  = eth_inb(0x18);
 	p_read |= (eth_inb(0x19)&0x0f) << 8;
-	
 	if (p_read == p_write) return;
 	
 	//printk("Received a packet .. (start)\n");
@@ -686,12 +742,21 @@ static void gc_input(struct net_device *dev)
 	dev->last_rx = jiffies;
 
 	priv->stats.rx_packets ++;	/* count all receives */
-	priv->stats.rx_bytes ++;	/* count all received bytes */
+	priv->stats.rx_bytes += skb->len;	/* count all received bytes */
 
 	gc_input(dev);
 	
 	return ;
 }
+
+#define BBA_IRQ_FRAGI	0x01
+#define BBA_IRQ_RI	0x02
+#define BBA_IRQ_TI	0x04
+#define BBA_IRQ_REI	0x08
+#define BBA_IRQ_TEI	0x10
+#define BBA_IRQ_FIFOEI	0x20
+#define BBA_IRQ_BUSEI	0x40
+#define BBA_IRQ_RBFI	0x80
 
 
 static void inline gcif_service(struct net_device *dev)
@@ -705,61 +770,73 @@ static void inline gcif_service(struct net_device *dev)
 	int status = inb9 & inb8;
 
 	BBA_DBG("gcif_service: %08x %08x status %08x\n", inb8, inb9, status);
-
+	
 	if (!status) {
 		eth_outb(9, 0xff);
 		BBA_DBG("?? GC irq but no irq ??\n");
 	}
-
-	if (status & 4)
+	
+	if (status & BBA_IRQ_FRAGI)	// 0x1
 	{
-		eth_outb(9, 4);
-		// We clear the IRQ
-		netif_wake_queue(dev);		/* allow more packets into adapter */
-
-		
-		// TX Transmisstion compleated ...
-
-		/*
-		int s = eth_inb(4);
-		if (s)   // should not occur, since 4 == TX OK
-			BBA_DBG("tx error %02x\n", s);
-		*/
+		eth_outb(9, BBA_IRQ_FRAGI);
+		BBA_DBG("Fragmentet Interrupt\n");
 	}
 
-	if (status & 2)
+	if (status & BBA_IRQ_RI)	// 0x2
 	{
 		// We clear the IRQ
-		eth_outb(9, 2);
+		eth_outb(9, BBA_IRQ_RI);
 		spin_lock_irqsave(&priv->lock, priv->lockflags);
 		gc_input(dev);
 		spin_unlock_irqrestore(&priv->lock, priv->lockflags);
 		
 	}
-
-	if (status & 8)
+	
+	if (status & BBA_IRQ_TI)	// 0x4
 	{
-		eth_outb(9, 8);
-		//printk("receive error :(\n");
-	}
-
-	if (status & 0x10)
-	{
-		eth_outb(9, 0x10);
+		eth_outb(9, BBA_IRQ_TI);
+		// We clear the IRQ
 		netif_wake_queue(dev);		/* allow more packets into adapter */
-		//printk("tx error\n");
+		priv->tx_lock = 0;
+		// TX Transmisstion compleated ...
 	}
-	if (status & 0x20)
+
+	if (status & BBA_IRQ_REI)	// 0x8
 	{
-		eth_outb(9, 0x20);
-		BBA_DBG("rx fifo error\n");
+		eth_outb(9, BBA_IRQ_REI);
+		BBA_DBG("receive error :(\n");
+		priv->stats.rx_frame_errors++;
 	}
-	if (status & 0x80)
+
+	if (status & BBA_IRQ_TEI)	// 0x10
 	{
-		eth_outb(9, 0x80);
-		//printk("rx overflow!\n");
-		gc_input(dev);
-		
+		eth_outb(9, BBA_IRQ_TEI);
+		netif_wake_queue(dev);		/* allow more packets into adapter */
+		priv->tx_lock = 0;
+		BBA_DBG("tx error\n");
+		priv->stats.tx_errors++;
+	}
+
+	if (status & BBA_IRQ_FIFOEI)	// 0x20
+	{
+		eth_outb(9, BBA_IRQ_FIFOEI);
+		BBA_DBG("rx/tx fifo error\n");
+		adapter_init(dev);
+		priv->stats.rx_errors++;
+	}
+	
+	if (status & BBA_IRQ_BUSEI)	// 0x40
+	{
+		eth_outb(9, BBA_IRQ_BUSEI);
+		BBA_DBG("Bus Error\n");
+	}
+	
+	if (status & BBA_IRQ_RBFI)	// 0x80
+	{
+		eth_outb(9, BBA_IRQ_RBFI);
+		BBA_DBG("rx overflow!\n");
+		//gc_input(dev);
+		priv->stats.rx_over_errors++;
 		// RWP
 		eth_outb(0x16, GBA_RX_RWP);
 		eth_outb(0x17, 0x0);
@@ -771,16 +848,9 @@ static void inline gcif_service(struct net_device *dev)
 		// RHBP
 		eth_outb(0x1a, GBA_RX_RHBP);
 		eth_outb(0x1b, 0);
-		
 
 	}
-
-	if (status & ~(0xBE))
-	{
-		eth_outb(9, status & ~0xBE);
-		BBA_DBG("status %02x\n", status & ~0xBE);
-	}
-//	eth_outb(9, status);
+	
 }
 
 
@@ -794,8 +864,6 @@ static irqreturn_t gc_bba_interrupt(int irq, void *dev_id, struct pt_regs * regs
 	
 	struct net_device *dev  = (struct net_device *)dev_id;
     	struct gc_private *priv = (struct gc_private *)dev->priv;
-
-	int		retrig = 0;
 
 	/* This might just as well be deleted now, no crummy drivers present :-) */
 	if ((dev == NULL) || (dev->irq != irq)) {
@@ -819,9 +887,6 @@ static irqreturn_t gc_bba_interrupt(int irq, void *dev_id, struct pt_regs * regs
 		if (v & 2)
 			have_irq(ch * 3 + EXI_EVENT_IRQ);
 	}
-
-	if (retrig)
-		trigger_interrupt(dev);
 
 	spin_unlock(&priv->lock);
 	
@@ -958,7 +1023,7 @@ static int adapter_init(struct net_device *dev)
 	
 	BBA_DBG("initializing BBA...\n");
 
-	
+	priv->tx_lock = 0;
 	
 	eth_outb(0x60, 0);	// unknown
 	udelay(10000);
@@ -982,7 +1047,7 @@ static int adapter_init(struct net_device *dev)
 	eth_outb(1, 0x10|PACKETS_PER_IRQ | BBA_PROMISC);
 
 	eth_outb(0x14, 0x0);
-	eth_outb(0x15, 0x8);
+	eth_outb(0x15, 0x6);
 
 	eth_outb(0x50, 0x80);
 
@@ -1037,7 +1102,7 @@ static int adapter_init(struct net_device *dev)
 	eth_outb(8, 0xFF); // enable all IRQs
 	eth_outb(9, 0xFF); // clear all irqs
 
-	//eth_outb(0x30, 0x2);	// 100 Mbit ?
+	//eth_outb(0x30, 0x2);	// 100 Mbit ?	-- FATAL , IF speed so high, EXI totally overloaded
 
 	
 	BBA_DBG("after all: irq mask %x %x\n", eth_inb(8), eth_inb(9));
@@ -1077,38 +1142,6 @@ void gcif_irq_handler(int channel, int event, void *ct)
 	eth_exi_outb(2, 0);
 	s = eth_exi_inb(3);
 
-	if (s & 0x80)
-	{
-//		BBA_DBG("GC_IRQ service.\n");
-		eth_exi_outb(3, 0x80);
-		gcif_service(dev);
-		eth_exi_outb(2, 0xF8);
-		return;
-	}
-	if (s & 0x40)
-	{
-		eth_exi_outb(3, 0x40);
-		eth_exi_outb(2, 0xF8);
-//		BBA_DBG("GCIF - EXI - 0x40!\n");
-		adapter_init(dev);
-		return;
-		
-//		return;
-	}
-	if (s & 0x20)
-	{
-		BBA_DBG("GCIF - EXI - CMDERR!\n");
-		eth_exi_outb(3, 0x20);
-		eth_exi_outb(2, 0xF8);
-		return;
-	}
-	if (s & 0x10)
-	{
-		BBA_DBG("GCIF - EXI - patchtru!\n");
-		eth_exi_outb(3, 0x10);
-		eth_exi_outb(2, 0xF8);
-		return;
-	}
 	if (s & 0x08)
 	{
 		BBA_DBG("GCIF - EXI - HASH function\n");
@@ -1116,6 +1149,41 @@ void gcif_irq_handler(int channel, int event, void *ct)
 		eth_exi_outb(2, 0xF8);
 		return;
 	}
+
+	if (s & 0x10)
+	{
+		BBA_DBG("GCIF - EXI - patchtru!\n");
+		eth_exi_outb(3, 0x10);
+		eth_exi_outb(2, 0xF8);
+		return;
+	}
+
+	if (s & 0x20)
+	{
+		BBA_DBG("GCIF - EXI - CMDERR!\n");
+		eth_exi_outb(3, 0x20);
+		eth_exi_outb(2, 0xF8);
+		return;
+	}
+	
+	if (s & 0x40)
+	{
+		eth_exi_outb(3, 0x40);
+		eth_exi_outb(2, 0xF8);
+		BBA_DBG("GCIF - EXI - 0x40!\n");
+		adapter_init(dev);
+		return;
+	}	
+
+	if (s & 0x80)
+	{
+		BBA_DBG("GC_IRQ service.\n");
+		eth_exi_outb(3, 0x80);
+		gcif_service(dev);
+		eth_exi_outb(2, 0xF8);
+		return;
+	}
+
 //	printk("GCIF - EXI - ?? %02x\n", s);
 	eth_exi_outb(2, 0xF8);
 }
