@@ -42,6 +42,8 @@
 #define BBA_DBG(format, arg...); { }
 //#define BBA_DBG(format, arg...) printk(f,## arg)
 
+//#define PACKETS_PER_IRQ (0x40)	// 2 packets / irq
+#define PACKETS_PER_IRQ 0	// IRQ / packet
 
 #define BBA_IRQ 4
 #define IRQ_EXI 4
@@ -645,15 +647,18 @@ static void gc_input(struct net_device *dev)
 
 	priv->stats.rx_packets ++;	/* count all receives */
 	priv->stats.rx_bytes ++;	/* count all received bytes */
-	
+	/*
 	next_receive_frame  = descr[0];
 	next_receive_frame |= (descr[1] & 0x0f) << 8;
 	
-	//printk("Current Framepointer: %d\n",p_read);
-	//printk("Next    Framepointer: %d\n",next_receive_frame);
-	//printk("Write   Framepointer: %d\n",p_write);
-	//printk("Recieved Len: %d\n",skb->len);
+	printk("Current Framepointer: %d\n",p_read);
+	printk("Next    Framepointer: %d\n",next_receive_frame);
+	printk("Write   Framepointer: %d\n",p_write);
+	printk("Recieved Len: %d\n",skb->len);
 	
+	if (next_receive_frame != p_write) printk("Multipacket Seen\n");
+	if (next_receive_frame != p_write) gc_input(dev);
+	*/
 	return ;
 }
 
@@ -695,8 +700,9 @@ static void inline gcif_service(struct net_device *dev)
 	{
 		// We clear the IRQ
 		eth_outb(9, 2);
-		
+		//spin_lock_irqsave(&priv->lock, priv->lockflags);
 		gc_input(dev);
+		//spin_unlock_irqrestore(&priv->lock, priv->lockflags);
 		
 	}
 
@@ -721,6 +727,7 @@ static void inline gcif_service(struct net_device *dev)
 	{
 		eth_outb(9, 0x80);
 		BBA_DBG("rx overflow!\n");
+		gc_input(dev);
 		
 		// RWP
 		eth_outb(0x16, 0x1);
@@ -841,8 +848,8 @@ int __init gc_bba_probe(struct net_device *dev)
 	eth_outb(0x5b, eth_inb(0x5b)&~(1<<7));
 	eth_outb(0x5e, 1);
 	eth_outb(0x5c, eth_inb(0x5c)|4);
-	eth_outb(1, 0x11);
-//	eth_outb(1, 0);
+	eth_outb(1, 0x11 | PACKETS_PER_IRQ);
+
 	eth_outb(0x50, 0x80);
 
 	udelay(10000);
@@ -866,7 +873,7 @@ int __init gc_bba_probe(struct net_device *dev)
 	eth_outb(0x1a, 0xF);
 	eth_outb(0x1b, 0);
 
-	eth_outb(1, (eth_inb(1) & 0xFE) | 0x12);
+	eth_outb(1, (eth_inb(1) & 0xFE) | 0x12| PACKETS_PER_IRQ);
 
 	eth_outb(0, 8);
 	eth_outb(0x32, 8);
@@ -946,8 +953,8 @@ static int adapter_init(struct net_device *dev)
 	eth_outb(0x5b, eth_inb(0x5b)&~(1<<7));
 	eth_outb(0x5e, 1);
 	eth_outb(0x5c, eth_inb(0x5c)|4);
-	eth_outb(1, 0x11);
-//	eth_outb(1, 0);
+	eth_outb(1, 0x11|PACKETS_PER_IRQ);
+
 	eth_outb(0x50, 0x80);
 
 	udelay(10000);
@@ -969,7 +976,7 @@ static int adapter_init(struct net_device *dev)
 	eth_outb(0x1a, 0xF);
 	eth_outb(0x1b, 0);
 	
-	eth_outb(1, (eth_inb(1) & 0xFE) | 0x12);
+	eth_outb(1, (eth_inb(1) & 0xFE) | 0x12| PACKETS_PER_IRQ);
 
 	eth_outb(0, 8);
 	eth_outb(0x32, 8);
