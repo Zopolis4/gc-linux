@@ -858,10 +858,10 @@ config FB_PM3
 	  and maybe other boards.
 
 config FB_GAMECUBE
-	bool "GameCube frame buffer support"
+	bool "Nintendo GameCube frame buffer"
 	depends on FB && GAMECUBE
 	help
-	  GameCube frame buffer
+	  This is the frame buffer device driver for the Nintendo GameCube.
 
 config FB_SBUS
 	bool "SBUS and UPA framebuffers"

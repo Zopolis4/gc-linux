@@ -660,7 +660,8 @@ struct fb_info {
 #ifndef CONFIG_FB_GAMECUBE	/* XXX Why? O' why? */
 #  define fb_writel __raw_writel
 #else
-#  define fb_writel(b,addr) gamecubefb_writel(b,addr)
+   extern unsigned int gcnfb_writel(unsigned int, void *);
+#  define fb_writel(b,addr) gcnfb_writel(b,addr)
 #  define fb_writel_real(b,addr) /* __raw_writel */ (*(volatile u32 *) (addr) = (b))
 #endif
 #define fb_writeq __raw_writeq

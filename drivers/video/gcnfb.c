@@ -1,9 +1,16 @@
 /*
- * framebuffer driver for the GameCube's "Flipper" chipset
+ * drivers/video/gcnfb.c
  *
- * (c) 2004 Michael Steil <mist@c64.org>
- * based on vesafb:
- * (c) 1998 Gerd Knorr <kraxel@goldbach.in-berlin.de>
+ * Nintendo GameCube "Flipper" chipset frame buffer driver
+ * Copyright (C) 2004 Michael Steil <mist@c64.org>
+ * Copyright (C) 2004 The GameCube Linux Team
+ *
+ * Based on vesafb (c) 1998 Gerd Knorr <kraxel@goldbach.in-berlin.de>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
  *
  */
 
@@ -20,7 +27,19 @@
 #include <linux/init.h>
 #include <asm/io.h>
 
-volatile static unsigned int *gamecube_video = (unsigned int *)0xCC002000;
+#include <platforms/gamecube.h>
+
+
+#define DRV_MODULE_NAME   "gcnfb"
+#define DRV_DESCRIPTION   "Nintendo GameCube frame buffer driver"
+#define DRV_AUTHOR        "Michael Steil <mist@c64.org>"
+
+MODULE_AUTHOR(DRV_AUTHOR);
+MODULE_DESCRIPTION(DRV_DESCRIPTION);
+MODULE_LICENSE(GPL);
+
+
+volatile static unsigned int *gcn_video = (unsigned int *)0xCC002000;
 
 static const unsigned int VIDEO_Mode640X480NtscYUV16[32] = {
 	0x0F060001, 0x476901AD, 0x02EA5140, 0x00030018,
@@ -44,7 +63,7 @@ static const unsigned int VIDEO_Mode640X480Pal50YUV16[32] = {
 	0x02800000, 0x000000FF, 0x00FF00FF, 0x00FF00FF
 };
 
-static struct fb_var_screeninfo gcfb_defined __initdata = {
+static struct fb_var_screeninfo gcnfb_defined __initdata = {
 	.activate = FB_ACTIVATE_NOW,
 	.height = -1,
 	.width = -1,
@@ -55,8 +74,8 @@ static struct fb_var_screeninfo gcfb_defined __initdata = {
 	.vmode = FB_VMODE_NONINTERLACED,
 };
 
-static struct fb_fix_screeninfo gcfb_fix __initdata = {
-	.id = "GameCube",
+static struct fb_fix_screeninfo gcnfb_fix __initdata = {
+	.id = "gcnfb",
 	.type = FB_TYPE_PACKED_PIXELS,
 	.accel = FB_ACCEL_NONE,
 };
@@ -66,7 +85,7 @@ static struct fb_fix_screeninfo gcfb_fix __initdata = {
 #define TV_ENC_PAL 2
 static int tv_encoding __initdata = TV_ENC_DETECT;
 
-static struct fb_info gcfb_info;
+static struct fb_info gcnfb_info;
 static u32 pseudo_palette[17];
 
 static int ypan = 0;		/* 0..nothing, 1..ypan, 2..ywrap */
@@ -156,13 +175,13 @@ static inline uint32_t rgbrgb16toycbycr(uint16_t rgb1, uint16_t rgb2)
 	    (((uint8_t) Y2) << 8) | (((uint8_t) Cr) << 0);
 }
 
-void gamecubefb_writel(register unsigned long rgbrgb, register int *address)
+unsigned int gcnfb_writel(unsigned int rgbrgb, void *address)
 {
 	uint16_t *rgb = (uint16_t *) & rgbrgb;
-	fb_writel_real(rgbrgb16toycbycr(rgb[0], rgb[1]), address);
+	return fb_writel_real(rgbrgb16toycbycr(rgb[0], rgb[1]), address);
 }
 
-static int gamecubefb_pan_display(struct fb_var_screeninfo *var,
+static int gcnfb_pan_display(struct fb_var_screeninfo *var,
 				  struct fb_info *info)
 {
 	return 0;
@@ -173,7 +192,7 @@ static void vesa_setpalette(int regno, unsigned red, unsigned green,
 {
 }
 
-static int gamecubefb_setcolreg(unsigned regno, unsigned red, unsigned green,
+static int gcnfb_setcolreg(unsigned regno, unsigned red, unsigned green,
 				unsigned blue, unsigned transp,
 				struct fb_info *info)
 {
@@ -221,23 +240,24 @@ static int gamecubefb_setcolreg(unsigned regno, unsigned red, unsigned green,
 	return 0;
 }
 
-static struct fb_ops gamecubefb_ops = {
+static struct fb_ops gcnfb_ops = {
 	.owner = THIS_MODULE,
-	.fb_setcolreg = gamecubefb_setcolreg,
-	.fb_pan_display = gamecubefb_pan_display,
+	.fb_setcolreg = gcnfb_setcolreg,
+	.fb_pan_display = gcnfb_pan_display,
 	.fb_fillrect = cfb_fillrect,
 	.fb_copyarea = cfb_copyarea,
 	.fb_imageblit = cfb_imageblit,
 	.fb_cursor = soft_cursor,
 };
 
-int __init gamecubefb_setup(char *options)
+int __init gcnfb_setup(char *options)
 {
 	char *this_opt;
 
-	printk("options = %s\n", options);
 	if (!options || !*options)
 		return 0;
+
+	printk("gcnfb: options = %s\n", options);
 
 	while ((this_opt = strsep(&options, ",")) != NULL) {
 		printk("this_opt = %s\n", this_opt);
@@ -262,124 +282,125 @@ int __init gamecubefb_setup(char *options)
 	return 0;
 }
 
-static int __init gamecubefb_init(void)
+int __init gcnfb_init(void)
 {
 	int video_cmap_len;
 	int i;
 	int err = 0;
 	char *option = NULL;
 
-	if (fb_get_options("gamecubefb", &option))
-		return -ENODEV;
-	gamecubefb_setup(option);
+	if (fb_get_options("gcnfb", &option)) {
+		if (fb_get_options("gamecubefb", &option))
+			return -ENODEV;
+	}
+	gcnfb_setup(option);
 
-	// detect current video mode
+	/* detect current video mode */
 	if (tv_encoding == TV_ENC_DETECT) {
-		tv_encoding = ((gamecube_video[0] >> 8) & 3) + 1;
+		tv_encoding = ((gcn_video[0] >> 8) & 3) + 1;
 	}
 
-	gcfb_defined.bits_per_pixel = 16;
-	gcfb_defined.xres = 640;
-	gcfb_defined.yres = (tv_encoding == TV_ENC_NTSC) ? 480 : 576;
+	gcnfb_defined.bits_per_pixel = 16;
+	gcnfb_defined.xres = 640;
+	gcnfb_defined.yres = (tv_encoding == TV_ENC_NTSC) ? 480 : 576;
 
-	gcfb_fix.line_length =
-	    gcfb_defined.xres * (gcfb_defined.bits_per_pixel / 8);
-	gcfb_fix.smem_len = gcfb_fix.line_length * gcfb_defined.yres;
-	/* place XFB at end of RAM */
-	gcfb_fix.smem_start = (24 * 1024 * 1024) - gcfb_fix.smem_len;
+	gcnfb_fix.line_length =
+	    gcnfb_defined.xres * (gcnfb_defined.bits_per_pixel / 8);
+	gcnfb_fix.smem_len = gcnfb_fix.line_length * gcnfb_defined.yres;
+	gcnfb_fix.smem_start = GCN_XFB_START;
 
-	gcfb_fix.visual = (gcfb_defined.bits_per_pixel == 8) ?
+	gcnfb_fix.visual = (gcnfb_defined.bits_per_pixel == 8) ?
 	    FB_VISUAL_PSEUDOCOLOR : FB_VISUAL_TRUECOLOR;
 
 	if (!request_mem_region
-	    (gcfb_fix.smem_start, gcfb_fix.smem_len, "gamecubefb")) {
+	    (gcnfb_fix.smem_start, gcnfb_fix.smem_len, "gcnfb")) {
 		printk(KERN_WARNING
-		       "gamecubefb: abort, cannot reserve video memory at %p\n",
-		       (void *)gcfb_fix.smem_start);
+		       "gcnfb: abort, cannot reserve video memory at %p\n",
+		       (void *)gcnfb_fix.smem_start);
 		/* We cannot make this fatal. Sometimes this comes from magic
 		   spaces our resource handlers simply don't know about */
 	}
 
-	gcfb_info.screen_base = ioremap(gcfb_fix.smem_start, gcfb_fix.smem_len);
-	if (!gcfb_info.screen_base) {
+	gcnfb_info.screen_base = ioremap(gcnfb_fix.smem_start, gcnfb_fix.smem_len);
+	if (!gcnfb_info.screen_base) {
 		printk(KERN_ERR
-		       "gamecubefb: abort, cannot ioremap video memory"
+		       "gcnfb: abort, cannot ioremap video memory"
 		       " at %p (%dk)\n",
-		       (void *)gcfb_fix.smem_start, gcfb_fix.smem_len / 1024);
+		       (void *)gcnfb_fix.smem_start, gcnfb_fix.smem_len / 1024);
 		err = -EIO;
 		goto err_ioremap;
 	}
 
 	printk(KERN_INFO
-	       "gamecubefb: framebuffer at 0x%p, mapped to 0x%p, size %dk\n",
-	       (void *)gcfb_fix.smem_start, gcfb_info.screen_base,
-	       gcfb_fix.smem_len / 1024);
+	       "gcnfb: framebuffer at 0x%p, mapped to 0x%p, size %dk\n",
+	       (void *)gcnfb_fix.smem_start, gcnfb_info.screen_base,
+	       gcnfb_fix.smem_len / 1024);
 	printk(KERN_INFO
-	       "gamecubefb: mode is %dx%dx%d, linelength=%d, pages=%d\n",
-	       gcfb_defined.xres, gcfb_defined.yres,
-	       gcfb_defined.bits_per_pixel, gcfb_fix.line_length,
+	       "gcnfb: mode is %dx%dx%d, linelength=%d, pages=%d\n",
+	       gcnfb_defined.xres, gcnfb_defined.yres,
+	       gcnfb_defined.bits_per_pixel, gcnfb_fix.line_length,
 	       0 /*screen_info.pages */ );
 
-	gcfb_defined.xres_virtual = gcfb_defined.xres;
-	gcfb_defined.yres_virtual = gcfb_defined.yres;
+	gcnfb_defined.xres_virtual = gcnfb_defined.xres;
+	gcnfb_defined.yres_virtual = gcnfb_defined.yres;
 	ypan = 0;
 
 	/* FIXME! Please, use here *real* values */
 	/* some dummy values for timing to make fbset happy */
-	gcfb_defined.pixclock =
-	    10000000 / gcfb_defined.xres * 1000 / gcfb_defined.yres;
-	gcfb_defined.left_margin = (gcfb_defined.xres / 8) & 0xf8;
-	gcfb_defined.hsync_len = (gcfb_defined.xres / 8) & 0xf8;
+	gcnfb_defined.pixclock =
+	    10000000 / gcnfb_defined.xres * 1000 / gcnfb_defined.yres;
+	gcnfb_defined.left_margin = (gcnfb_defined.xres / 8) & 0xf8;
+	gcnfb_defined.hsync_len = (gcnfb_defined.xres / 8) & 0xf8;
 
-	if (gcfb_defined.bits_per_pixel == 15) {
-		gcfb_defined.red.offset = 11;
-		gcfb_defined.red.length = 5;
-		gcfb_defined.green.offset = 6;
-		gcfb_defined.green.length = 5;
-		gcfb_defined.blue.offset = 1;
-		gcfb_defined.blue.length = 5;
-		gcfb_defined.transp.offset = 15;
-		gcfb_defined.transp.length = 1;
+	if (gcnfb_defined.bits_per_pixel == 15) {
+		gcnfb_defined.red.offset = 11;
+		gcnfb_defined.red.length = 5;
+		gcnfb_defined.green.offset = 6;
+		gcnfb_defined.green.length = 5;
+		gcnfb_defined.blue.offset = 1;
+		gcnfb_defined.blue.length = 5;
+		gcnfb_defined.transp.offset = 15;
+		gcnfb_defined.transp.length = 1;
 		video_cmap_len = 16;
-	} else if (gcfb_defined.bits_per_pixel == 16) {
-		gcfb_defined.red.offset = 11;
-		gcfb_defined.red.length = 5;
-		gcfb_defined.green.offset = 5;
-		gcfb_defined.green.length = 6;
-		gcfb_defined.blue.offset = 0;
-		gcfb_defined.blue.length = 5;
-		gcfb_defined.transp.offset = 0;
-		gcfb_defined.transp.length = 0;
+	} else if (gcnfb_defined.bits_per_pixel == 16) {
+		gcnfb_defined.red.offset = 11;
+		gcnfb_defined.red.length = 5;
+		gcnfb_defined.green.offset = 5;
+		gcnfb_defined.green.length = 6;
+		gcnfb_defined.blue.offset = 0;
+		gcnfb_defined.blue.length = 5;
+		gcnfb_defined.transp.offset = 0;
+		gcnfb_defined.transp.length = 0;
 		video_cmap_len = 16;
 	} else {
-		gcfb_defined.red.length = 6;
-		gcfb_defined.green.length = 6;
-		gcfb_defined.blue.length = 6;
+		gcnfb_defined.red.length = 6;
+		gcnfb_defined.green.length = 6;
+		gcnfb_defined.blue.length = 6;
 		video_cmap_len = 256;
 	}
 
-	gcfb_fix.ypanstep = ypan ? 1 : 0;
-	gcfb_fix.ywrapstep = (ypan > 1) ? 1 : 0;
+	gcnfb_fix.ypanstep = ypan ? 1 : 0;
+	gcnfb_fix.ywrapstep = (ypan > 1) ? 1 : 0;
 
-	gcfb_info.fbops = &gamecubefb_ops;
-	gcfb_info.var = gcfb_defined;
-	gcfb_info.fix = gcfb_fix;
-	gcfb_info.pseudo_palette = pseudo_palette;
-	gcfb_info.flags = FBINFO_FLAG_DEFAULT;
+	gcnfb_info.fbops = &gcnfb_ops;
+	gcnfb_info.var = gcnfb_defined;
+	gcnfb_info.fix = gcnfb_fix;
+	gcnfb_info.pseudo_palette = pseudo_palette;
+	gcnfb_info.flags = FBINFO_FLAG_DEFAULT;
 
-	if (fb_alloc_cmap(&gcfb_info.cmap, video_cmap_len, 0)) {
+	if (fb_alloc_cmap(&gcnfb_info.cmap, video_cmap_len, 0)) {
 		err = -ENOMEM;
 		goto err_alloc_cmap;
 	}
 
-	if (register_framebuffer(&gcfb_info) < 0) {
+	if (register_framebuffer(&gcnfb_info) < 0) {
 		err = -EINVAL;
 		goto err_register_framebuffer;
 	}
 
 	/* fill framebuffer memory with black color */
-	int c = gcfb_defined.xres * gcfb_defined.yres / 2;
-	volatile unsigned long *p = (unsigned long *)gcfb_info.screen_base;
+	int c = gcnfb_defined.xres * gcnfb_defined.yres / 2;
+	volatile unsigned long *p = (unsigned long *)gcnfb_info.screen_base;
 	while (c--)
 		writel(0x00800080, p++);
 
@@ -392,52 +413,47 @@ static int __init gamecubefb_init(void)
 
 	/* initialize video registers */
 	for (i = 0; i < 7; i++) {
-		gamecube_video[i] = VIDEO_Mode[i];
+		gcn_video[i] = VIDEO_Mode[i];
 	}
-	gamecube_video[8] = VIDEO_Mode[8];
+	gcn_video[8] = VIDEO_Mode[8];
 	for (i = 10; i < 32; i++) {
-		gamecube_video[i] = VIDEO_Mode[i];
+		gcn_video[i] = VIDEO_Mode[i];
 	}
 
-	gamecube_video[7] = 0x10000000 | (gcfb_fix.smem_start >> 5);
+	gcn_video[7] = 0x10000000 | (gcnfb_fix.smem_start >> 5);
 
-// setting both fields to same source means half the resolution, but
-// reduces flickering a lot ...mmmh maybe worth a try as a last resort :/
-// gamecube_video[9] = 0x10000000 | (gcfb_fix.smem_start>>5);
+/*
+ * setting both fields to same source means half the resolution, but
+ * reduces flickering a lot ...mmmh maybe worth a try as a last resort :/
+ * gcn_video[9] = 0x10000000 | (gcnfb_fix.smem_start>>5);
+ *
+ */
 
-	gamecube_video[9] =
-	    0x10000000 | ((gcfb_fix.smem_start + gcfb_fix.line_length) >> 5);
+	gcn_video[9] =
+	    0x10000000 | ((gcnfb_fix.smem_start + gcnfb_fix.line_length) >> 5);
 
 	printk(KERN_INFO "fb%d: %s frame buffer device\n",
-	       gcfb_info.node, gcfb_info.fix.id);
+	       gcnfb_info.node, gcnfb_info.fix.id);
 	goto out;
 
 err_register_framebuffer:
-	fb_dealloc_cmap(&gcfb_info.cmap);
+	fb_dealloc_cmap(&gcnfb_info.cmap);
 err_alloc_cmap:
-	iounmap(gcfb_info.screen_base);
+	iounmap(gcnfb_info.screen_base);
 err_ioremap:
-	release_mem_region(gcfb_fix.smem_start, gcfb_fix.smem_len);
+	release_mem_region(gcnfb_fix.smem_start, gcnfb_fix.smem_len);
 out:
 	return err;
 }
 
-static void __exit gamecubefb_exit(void)
+static void __exit gcnfb_exit(void)
 {
-	release_mem_region(gcfb_fix.smem_start, gcfb_fix.smem_len);
-	iounmap(gcfb_info.screen_base);
-	fb_dealloc_cmap(&gcfb_info.cmap);
-	unregister_framebuffer(&gcfb_info);
+	unregister_framebuffer(&gcnfb_info);
+	fb_dealloc_cmap(&gcnfb_info.cmap);
+	iounmap(gcnfb_info.screen_base);
+	release_mem_region(gcnfb_fix.smem_start, gcnfb_fix.smem_len);
 }
 
-/*
- * Overrides for Emacs so that we follow Linus's tabbing style.
- * ---------------------------------------------------------------------------
- * Local variables:
- * c-basic-offset: 8
- * End:
- */
+module_init(gcnfb_init);
+module_exit(gcnfb_exit);
 
-module_init(gamecubefb_init);
-module_exit(gamecubefb_exit);
-MODULE_LICENSE("GPL");
