@@ -8,6 +8,7 @@
 #include <linux/initrd.h>
 
 #include <asm/machdep.h>
+#include <asm/bootinfo.h>
 #include <asm/time.h>
 #include <asm/io.h>
 
