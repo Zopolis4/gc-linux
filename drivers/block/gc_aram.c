@@ -1,7 +1,7 @@
 /*
 	gc_aram.c
 	
-	by GC-Linux Team , hamtitampti
+	by GC-Linux Team , hamtitampti , 2004
 */
 /*
  	// Some test things
@@ -90,8 +90,10 @@ void ARAM_StartDMA (unsigned long mmAddr, unsigned long arAddr, unsigned long le
 	AR_DMA_CNT_H = (type << 15) | (length >> 16);
 	AR_DMA_CNT_L = length & 0xFFFF;
 	
+	// For security
 	udelay(10000);
-	// Missing: Ready Flag for Transfer finished....
+
+	// Without the Break, the While loop loops endless
 	int counter=0;
 	while (AI_DSP_STATUS & 0x200) {
 		counter++;
@@ -127,6 +129,7 @@ static void do_aram_request(request_queue_t *q)
 		}		
 		#else
 		if (rq_data_dir(req) == READ) {
+			//memset(req->buffer,0,len);
 			flush_dcache_range((unsigned long)req->buffer,(unsigned long)req->buffer + len);
 			ARAM_StartDMA((unsigned long)req->buffer,start+ARAM_SOUNDMEMORYOFFSET, len,ARAM_READ);
 			flush_dcache_range((unsigned long)req->buffer,(unsigned long)req->buffer + len);
