@@ -174,8 +174,8 @@ struct cpu_spec	cpu_specs[] = {
 	32, 32,
 	__setup_cpu_750cx
     },
-    {   /* 750CXe (83214) */
-	0xffffffff, 0x00083214, "750CXe (Gekko)",
+    {   /* 750CXe "Gekko" (83214) */
+	0xffffffff, 0x00083214, "750CXe",
 	CPU_FTR_COMMON |
 	CPU_FTR_SPLIT_ID_CACHE | CPU_FTR_MAYBE_CAN_DOZE | CPU_FTR_USE_TB |
 	CPU_FTR_L2CR | CPU_FTR_TAU | CPU_FTR_HPTE_TABLE | CPU_FTR_MAYBE_CAN_NAP,
