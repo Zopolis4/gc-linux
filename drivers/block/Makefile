@@ -31,6 +31,7 @@ obj-$(CONFIG_AMIGA_Z2RAM)	+= z2ram.o
 obj-$(CONFIG_GAMECUBE_ARAM)	+= gcn-aram.o
 obj-$(CONFIG_GAMECUBE_MEMCARD)	+= gcn-memcard.o
 obj-$(CONFIG_GAMECUBE_SD)	+= gcn-sd.o
+obj-$(CONFIG_GAMECUBE_DVD)      += gcn-dvd/
 obj-$(CONFIG_BLK_DEV_RAM)	+= rd.o
 obj-$(CONFIG_BLK_DEV_LOOP)	+= loop.o
 obj-$(CONFIG_BLK_DEV_PS2)	+= ps2esdi.o

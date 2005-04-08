@@ -61,6 +61,17 @@ config AMIGA_Z2RAM
 	  To compile this driver as a module, choose M here: the
 	  module will be called z2ram.
 
+config GAMECUBE_DVD
+	tristate "Nintendo Gamecube DVD"
+	depends on GAMECUBE
+	help
+	  This enables support for using the mini-DVD drive on the 
+	  Nintendo Gamecube.
+	  Say Y if you want to include this driver in the kernel.
+	  
+	  To compile this driver as a module, choose M here: the 
+	  module will be called gcn-dvd
+
 config GAMECUBE_ARAM
 	tristate "Nintendo GameCube ARAM"
 	depends on GAMECUBE
