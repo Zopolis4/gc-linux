@@ -631,7 +631,7 @@ static irqreturn_t gc_dvd_irq_handler(int irq,void *dev_id,struct pt_regs *regs)
 	}
 	/* ok we have an interrupt, now process our queue */
 	/* lock our structure */
-	spin_lock_irqsave(interrupt_queue.lock,flags);
+	spin_lock_irqsave(&interrupt_queue.lock,flags);
 	/* now look at our structure and call appropriate callback if necessary */
 	if (!list_empty(&interrupt_queue.queue)) {
 		/* first unlink the queue item */
@@ -650,7 +650,7 @@ static irqreturn_t gc_dvd_irq_handler(int irq,void *dev_id,struct pt_regs *regs)
 						     interrupt_queue.queue.next);
 		}
 		/* unlock the lock */
-		spin_unlock_irqrestore(interrupt_queue.lock,flags);
+		spin_unlock_irqrestore(&interrupt_queue.lock,flags);
 		/* determine the correct interrupt status */
 		if (reason & REASON_FLAG_COVER) {
 			if (reason & DI_DICVR_CVR) {
@@ -675,7 +675,7 @@ static irqreturn_t gc_dvd_irq_handler(int irq,void *dev_id,struct pt_regs *regs)
 		}
 	}
 	else {
-		spin_unlock_irqrestore(interrupt_queue.lock,flags);
+		spin_unlock_irqrestore(&interrupt_queue.lock,flags);
 		DPRINTK("Received interrupt but nothing was waiting for it\n");
 	}
   
