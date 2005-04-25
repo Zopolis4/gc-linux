@@ -403,13 +403,22 @@ static void exi_command_done(struct exi_command *cmd)
  * Internal. Perform a select.
  * Caller holds the channel lock.
  */
-static inline void exi_cmd_select(struct exi_command *cmd)
+static inline int exi_cmd_select(struct exi_command *cmd)
 {
 	struct exi_channel *exi_channel = cmd->exi_channel;
 	struct exi_device *exi_device;
+	int retval = 0;
 
 	BUG_ON(cmd->data == NULL);
-	BUG_ON(exi_is_selected(exi_channel));
+	if (unlikely(exi_is_selected(exi_channel))) {
+		/*
+		 * This may happen when called directly from interrupt context,
+		 * without using the EXI event handler system.
+		 * In such cases, the caller _should_ be able to deal with that.
+		 */
+		retval = -EBUSY;
+		goto out;
+	}
 
 	spin_lock(&exi_channel->select_lock);
 
@@ -425,6 +434,8 @@ static inline void exi_cmd_select(struct exi_command *cmd)
 
 	exi_select_raw(exi_channel, exi_device->eid.device,
 		       exi_device->frequency);
+out:
+	return retval;
 }
 
 /*
@@ -639,7 +650,7 @@ static int exi_run_command(struct exi_command *cmd)
 				   !exi_is_selected(exi_channel));
 			spin_lock_irqsave(&exi_channel->lock, flags);
 		}
-		exi_cmd_select(cmd);
+		retval = exi_cmd_select(cmd);
 		break;
 	case EXI_OP_DESELECT:
 		exi_cmd_deselect(cmd);
@@ -685,17 +696,20 @@ static void exi_wait_done(struct exi_command *cmd)
 static int exi_run_command_and_wait(struct exi_command *cmd)
 {
 	DECLARE_COMPLETION(complete);
+	int retval;
 
 	cmd->done_data = &complete;
 	cmd->done = exi_wait_done;
-	if (exi_run_command(cmd) > 0) {
+	retval = exi_run_command(cmd);
+	if (retval > 0) {
 		if (in_atomic() || irqs_disabled()) {
 			exi_wait_for_dma_transfer(cmd->exi_channel);
 		} else {
 			wait_for_completion(&complete);
 		}
+		retval = 0;
 	}
-	return 0;
+	return retval;
 }
 
 
@@ -705,12 +719,12 @@ static int exi_run_command_and_wait(struct exi_command *cmd)
  *
  *	Selects a given EXI device.
  */
-void exi_select(struct exi_device *exi_device)
+int exi_select(struct exi_device *exi_device)
 {
 	struct exi_command cmd;
 
 	exi_op_select(&cmd, exi_device);
-	exi_run_command(&cmd);
+	return exi_run_command(&cmd);
 }
 
 /**

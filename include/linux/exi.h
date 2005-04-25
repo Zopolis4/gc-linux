@@ -237,7 +237,7 @@ extern void exi_dma_transfer_raw(struct exi_channel *channel,
 extern u32 exi_get_id(struct exi_channel *exi_channel,
 		      unsigned int device, unsigned int freq);
 
-void exi_select(struct exi_device *exi_device);
+int exi_select(struct exi_device *exi_device);
 void exi_deselect(struct exi_channel *exi_channel);
 void exi_transfer(struct exi_channel *exi_channel,
 		  void *data, size_t len, int opcode);
@@ -293,11 +293,11 @@ static inline void exi_lite_exit(void)
 	exi_hw_exit();
 }
 
-static inline void exi_lite_select(int channel, int device, int freq)
+static inline int exi_lite_select(int channel, int device, int freq)
 {
 	struct exi_channel *exi_channel = to_exi_channel(channel);
 	struct exi_device *exi_device = exi_get_exi_device(exi_channel, device);
-	exi_select(exi_device);
+	return exi_select(exi_device);
 }
 
 static inline void exi_lite_deselect(int channel)
