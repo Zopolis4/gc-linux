@@ -62,6 +62,7 @@ static struct rtc_private rtc_private;
 
 /*
  * Loads the SRAM contents.
+ * Context: user.
  */
 static void sram_load(struct exi_device *dev)
 {
@@ -70,63 +71,75 @@ static void sram_load(struct exi_device *dev)
 	u32 req;
 
 	/* select the SRAM device */
-	exi_dev_select(dev);
+	if (exi_dev_select(dev) == 0) {
+		/* send the appropriate command */
+		req = 0x20000100;
+		exi_dev_write(dev, &req, sizeof(req));
 
-	/* send the appropriate command */
-	req = 0x20000100;
-	exi_dev_write(dev, &req, sizeof(req));
+		/* read the SRAM data */
+		exi_dev_read(dev, sram, sizeof(*sram));
 
-	/* read the SRAM data */
-	exi_dev_read(dev, sram, sizeof(*sram));
-
-	/* deselect the SRAM device */
-	exi_dev_deselect(dev);
+		/* deselect the SRAM device */
+		exi_dev_deselect(dev);
+	}
 
 	return;
 }
 
 /*
  * Gets the hardware clock date and time.
+ * Context: user.
  */
 static unsigned long rtc_get_time(struct exi_device *dev)
 {
-	unsigned long a;
+	unsigned long a = 0;
 
 	/* select the RTC device */
-	exi_dev_select(dev);
+	if (exi_dev_select(dev) == 0) {
+		/* send the appropriate command */
+		a = 0x20000000;
+		exi_dev_write(dev, &a, sizeof(a));
 
-	/* send the appropriate command */
-	a = 0x20000000;
-	exi_dev_write(dev, &a, sizeof(a));
+		/* read the time and date value */
+		exi_dev_read(dev, &a, sizeof(a));
 
-	/* read the time and date value */
-	exi_dev_read(dev, &a, sizeof(a));
-
-	/* deselect the RTC device */
-	exi_dev_deselect(dev);
+		/* deselect the RTC device */
+		exi_dev_deselect(dev);
+	}
 
 	return a;
 }
 
 /*
  * Sets the hardware clock date and time to @aval.
+ * Context: user, interrupt (adjtimex).
  */
-static void rtc_set_time(struct exi_device *dev, unsigned long aval)
+static int rtc_set_time(struct exi_device *dev, unsigned long aval)
 {
 	u32 req;
+	int retval;
+
+	/*
+	 * We may get called from the timer interrupt. In that case,
+	 * we could fail if the exi channel used to access the RTC
+	 * is busy. If this happens, we just return an error. The timer
+	 * interrupt code is prepared to deal with such case.
+	 */
 
 	/* select the RTC device */
-	exi_dev_select(dev);
+	retval = exi_dev_select(dev);
+	if (!retval) {
+		/* send the appropriate command */
+		req = 0xa0000000;
+		exi_dev_write(dev, &req, sizeof(req));
 
-	/* send the appropriate command */
-	req = 0xa0000000;
-	exi_dev_write(dev, &req, sizeof(req));
+		/* set the new time and date value */
+		exi_dev_write(dev, &aval, sizeof(aval));
 
-	/* set the new time and date value */
-	exi_dev_write(dev, &aval, sizeof(aval));
-
-	/* deselect the RTC device */
-	exi_dev_deselect(dev);
+		/* deselect the RTC device */
+		exi_dev_deselect(dev);
+	}
+	return retval;
 }
 
 /**
@@ -147,9 +160,7 @@ static int gcn_set_rtc_time(unsigned long nowtime)
 {
 	struct rtc_private *priv = &rtc_private;
 
-	rtc_set_time(priv->dev, nowtime - RTC_OFFSET - priv->sram.bias);
-
-	return 1;
+	return rtc_set_time(priv->dev, nowtime - RTC_OFFSET - priv->sram.bias);
 }
 
 /**
