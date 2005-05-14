@@ -684,7 +684,7 @@ config GAMECUBE_RESET
 config GAMECUBE_DVDCOVER
 	tristate "Nintendo GameCube DVD cover"
 	depends on GAMECUBE
-	default y
+	default n
 	help
 	  If you say yes to this option, support will be included for the
 	  DVD cover of the Nintendo GameCube.
