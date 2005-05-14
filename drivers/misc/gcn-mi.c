@@ -221,6 +221,7 @@ static int mi_probe(struct device *device, struct resource *mem, int irq)
 	}
 	priv->last_address_faults = 0;
 	*/
+	spin_lock_init(&priv->lock);
 
 	priv->device = device;
 	dev_set_drvdata(priv->device, priv);
