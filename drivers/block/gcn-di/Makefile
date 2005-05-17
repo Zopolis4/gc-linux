@@ -4,7 +4,7 @@ $(obj)/gcn-di.o: $(obj)/drive_20020402.h \
 			$(obj)/drive_20010608.h \
 			$(obj)/drive_20020823.h
 
-CONFIG_GAMECUBE_DI_BUILD_FIRMWARE=y
+#CONFIG_GAMECUBE_DI_BUILD_FIRMWARE=y
 
 ifeq ($(CONFIG_GAMECUBE_DI_BUILD_FIRMWARE),y)
 
