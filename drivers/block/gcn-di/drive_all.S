@@ -1,5 +1,5 @@
 /*
- * drive 04 (20020402) DVD-R compatible "cactus" firmware extensions
+ * DVD-R compatible "cactus" firmware extensions
  * Copyright (C) 2005 The GameCube Linux Team
  * Copyright (C) 2005 Albert Herranz
  *
@@ -17,9 +17,6 @@
  *
  */
 
-.equ irq_handler_vector,	0x804c
-.equ irq_depth,			0x805b
-.equ dicmdbuf0,			0x80b4
 
 .equ NMICR,			0xfc40
 .equ UNICR,			0xfc44
@@ -32,37 +29,136 @@
 .equ 	ADB0ON,			(1<<2)
 .equ 	ADB1ON,			(1<<3)
 
-/* we jump here on return from our entry point */
-.equ entry_return_address,	0x08d47e
 
-.equ data1,			0x08ea2a
-.equ data1_size,		0x10
-.equ data2,			0x08ea3a
-.equ data2_size,		0x5e
-.equ bss_size,			0x1b8
+.equ irq_handler_vector,	0x804c		/* 04, 06, 08 */
+.equ irq_depth,			0x805b		/* 04, 06, 08 */
 
-.equ cactus,			0x40ecf9
 
+#if DRIVE_MODEL == 0x20020402 /* 04 */
+
+
+	.equ dicmdbuf0,			0x80b4
+
+	.equ entry_return_address,	0x08d47e
+
+	.equ data1,			0x008000
+	.equ data1_size,		0x6e
+	.equ data1_copy_from,		0x08ea2a
+
+	.equ bss,			0x00806e
+	.equ bss_size,			0x1b8
+
+	.equ cactus,			0x40ecf9
+
+	.equ bert,			0x8084
+	.equ ernie,			0x819c
 
 	.section	absolute
 
-.org 0x0808aa
-initialize_drive:
+	.org 0x0808aa /* 04, 06, 08 */
+	initialize_drive:
 
-.org 0x082f27
-memcpy:
+	.org 0x082f27 /* 04, 08 */
+	memcpy:
 
-.org 0x082f49
-memset:
+	.org 0x082f49 /* 04, 08 */
+	memset:
 
-.equ adb1_break_address,	0x08a7db
-.org 0x08a88d
-adb1_fixup_exit:
+	.equ adb1_break_address,	0x08a7db
+	.org 0x08a88d
+	adb1_fixup_exit:
 
-.equ disable_extensions_when_called_from,	0x0885c1
-.equ adb0_break_address,	0x08ae28
-.org 0x08ae33
-adb0_fixup_exit:
+	.equ adb0_break_address,	0x08ae28
+	.org 0x08ae33
+	adb0_fixup_exit:
+
+	.equ disable_extensions_when_called_from,	0x0885c1 /* 04, 08 */
+
+
+#elif DRIVE_MODEL == 0x20010608 /* 06 */
+
+
+	.equ dicmdbuf0,			0x80a8
+
+	.equ entry_return_address,	0x08d41e
+
+	.equ data1,			0x008000
+	.equ data1_size,		0x6e
+	.equ data1_copy_from,		0x08e9c8
+
+	.equ bss,			0x00806e
+	.equ bss_size,			0x1ac
+
+	.equ cactus,			0x40ed02
+
+	.equ bert,			0x8078
+	.equ ernie,			0x8190
+
+	.section	absolute
+
+	.org 0x0808aa /* 04, 06, 08 */
+	initialize_drive:
+
+	.org 0x082f2e
+	memcpy:
+
+	.org 0x082f50
+	memset:
+
+	.equ adb1_break_address,	0x08aaf0
+	.org 0x08aba2
+	adb1_fixup_exit:
+
+	.equ adb0_break_address,	0x08b145
+	.org 0x08b150
+	adb0_fixup_exit:
+
+	.equ disable_extensions_when_called_from,	0x0885b9
+
+
+#elif DRIVE_MODEL == 0x20020823 /* 08 */
+
+
+	.equ dicmdbuf0,			0x80b0
+
+	.equ entry_return_address,	0x08d4d9
+
+	.equ data1,			0x008000
+	.equ data1_size,		0x6e
+	.equ data1_copy_from,		0x08ea7c
+
+	.equ bss,			0x00806e
+	.equ bss_size,			0x1b6
+
+	.equ cactus,			0x40ecf5
+
+	.equ bert,			0x8080
+	.equ ernie,			0x8198
+
+	.section	absolute
+
+	.org 0x0808aa /* 04, 06, 08 */
+	initialize_drive:
+
+	.org 0x082f27 /* 04, 08 */
+	memcpy:
+
+	.org 0x082f49 /* 04, 08 */
+	memset:
+
+	.equ adb1_break_address,	0x08a828
+	.org 0x08a8da
+	adb1_fixup_exit:
+
+	.equ adb0_break_address,	0x08ae75
+	.org 0x08ae80
+	adb0_fixup_exit:
+
+	.equ disable_extensions_when_called_from,	0x0885c1 /* 04, 08 */
+
+#else
+	#error Sorry, unsupported drive.
+#endif
 
 
 	.section	.text
@@ -82,17 +178,13 @@ _main:
 	jsr	initialize_drive
 
 	/* relocate initialized data */
-	mov	0x8000, a0
-	mov	data1, d1
+	mov	data1, a0
+	mov	data1_copy_from, d1
 	mov	data1_size, d0
-	jsr	memcpy
-	mov	0x8010, a0
-	mov	data2, d1
-	mov	data2_size, d0
 	jsr	memcpy
 
 	/* zero out the bss */	
-	mov	0x806e, a0
+	mov	bss, a0
 	sub	d0, d0
 	mov	bss_size, d0
 	jsr	memset
@@ -130,9 +222,9 @@ our_irq_handler:
 	mov	2, d0
 	bset	d0, (a0)
 
-	/* not sure about this ... */
-	mov	(0x8084), d0
-	mov	d0, (0x819c)
+	/* this seems to avoid errors if the drive idles for too long */
+	mov	(bert), d0
+	mov	d0, (ernie)
 
 	/* call the original handler */
 	mov	(saved_irq_handler), a0
@@ -168,7 +260,7 @@ our_irq_handler:
  *  22| PC hi  |            | PC hi  |
  *    :        :            | old a3 | 
  *    | ...    |            |        |
- *    +--------+            +--------+ <- 0x8ea1c
+ *    +--------+            +--------+ <- (0x8ea1c) for drive 04
  *    normal context stack  interrupt context stack
  *
  */
@@ -288,7 +380,7 @@ adb1_fixup:
 
 .align 2
 saved_irq_handler:
-	.long	0x00080A74
+	.long	0x00080A74	/* 04, 06, 08 */
 disable_extensions:
 	.byte	0x00
 

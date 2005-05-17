@@ -249,13 +249,29 @@ static struct di_drive_code drive_20020402[] = {
  * Drive 06 (XXX) firmware extensions.
  */
 
-/* XXX TODO */
+#include "drive_20010608.h"
+
+static struct di_drive_code drive_20010608[] = {
+	[0] = {
+		.address = DI_DRIVE_CODE_BASE,
+		.len = sizeof(drive_20010608_firmware),
+		.code = (u8 *)drive_20010608_firmware,
+	},
+};
 
 /*
- * Drive 08 (XXX) firmware extensions.
+ * Drive 08 (20020823) firmware extensions.
  */
 
-/* XXX TODO */
+#include "drive_20020823.h"
+
+static struct di_drive_code drive_20020823[] = {
+	[0] = {
+		.address = DI_DRIVE_CODE_BASE,
+		.len = sizeof(drive_20020823_firmware),
+		.code = (u8 *)drive_20020823_firmware,
+	},
+};
 
 
 /*
@@ -876,6 +892,18 @@ static void di_make_interoperable(struct di_device *ddev)
 		case 0x20020402:
 			di_patch(ddev, drive_20020402,
 				 ARRAY_SIZE(drive_20020402));
+			di_patch(ddev, &generic_drive_code_trigger, 1);
+			ddev->flags |= DI_INTEROPERABLE;
+			break;
+		case 0x20010608:
+			di_patch(ddev, drive_20010608,
+				 ARRAY_SIZE(drive_20010608));
+			di_patch(ddev, &generic_drive_code_trigger, 1);
+			ddev->flags |= DI_INTEROPERABLE;
+			break;
+		case 0x20020823:
+			di_patch(ddev, drive_20020823,
+				 ARRAY_SIZE(drive_20020823));
 			di_patch(ddev, &generic_drive_code_trigger, 1);
 			ddev->flags |= DI_INTEROPERABLE;
 			break;
