@@ -33,11 +33,22 @@
 .equ irq_handler_vector,	0x804c		/* 04, 06, 08 */
 .equ irq_depth,			0x805b		/* 04, 06, 08 */
 
+.equ fake_command,		0xaa
+.equ set_drive_status_command,	0xee		/* same as in gcn-di.c */
+.equ enable_extensions_command,	0x55		/* same as in gcn-di.c */
+
+.equ get_drive_status_command,	0xe0
+
 
 #if DRIVE_MODEL == 0x20020402 /* 04 */
 
+	.equ cmdbuf0,			0x80b4
+	.equ drive_status,		0x81b0
+	.equ drive_status2,		0x8194
 
-	.equ dicmdbuf0,			0x80b4
+	.equ bert,			0x8084
+	.equ ernie,			0x819c
+	.equ cactus,			0x40ecf9
 
 	.equ entry_return_address,	0x08d47e
 
@@ -47,11 +58,6 @@
 
 	.equ bss,			0x00806e
 	.equ bss_size,			0x1b8
-
-	.equ cactus,			0x40ecf9
-
-	.equ bert,			0x8084
-	.equ ernie,			0x819c
 
 	.section	absolute
 
@@ -77,8 +83,13 @@
 
 #elif DRIVE_MODEL == 0x20010608 /* 06 */
 
+	.equ cmdbuf0,			0x80a8
+	.equ drive_status,		0x81a4
+	.equ drive_status2,		0x8188
 
-	.equ dicmdbuf0,			0x80a8
+	.equ bert,			0x8078
+	.equ ernie,			0x8190
+	.equ cactus,			0x40ed02
 
 	.equ entry_return_address,	0x08d41e
 
@@ -88,11 +99,6 @@
 
 	.equ bss,			0x00806e
 	.equ bss_size,			0x1ac
-
-	.equ cactus,			0x40ed02
-
-	.equ bert,			0x8078
-	.equ ernie,			0x8190
 
 	.section	absolute
 
@@ -118,8 +124,13 @@
 
 #elif DRIVE_MODEL == 0x20020823 /* 08 */
 
+	.equ cmdbuf0,			0x80b0
+	.equ drive_status,		0x81ac
+	.equ drive_status2,		0x8190
 
-	.equ dicmdbuf0,			0x80b0
+	.equ bert,			0x8080
+	.equ ernie,			0x8198
+	.equ cactus,			0x40ecf5
 
 	.equ entry_return_address,	0x08d4d9
 
@@ -129,11 +140,6 @@
 
 	.equ bss,			0x00806e
 	.equ bss_size,			0x1b6
-
-	.equ cactus,			0x40ecf5
-
-	.equ bert,			0x8080
-	.equ ernie,			0x8198
 
 	.section	absolute
 
@@ -193,16 +199,15 @@ _main:
 	mov	our_irq_handler, a0
 	mov	a0, (irq_handler_vector)
 
-	/* setup our extending functions ... */
+	/* setup our extending functions */
 	mov	adb1_break_address, a0
 	mov	a0, (ADB1)
 	mov	adb0_break_address, a0
 	mov	a0, (ADB0)
-
-	/* ... and enable them */
 	mov	ADB1ON|ADB0ON, d0
 	movb	d0, (ADBCTL)
 
+	/* return to the original firmware */
 	mov	entry_return_address, a0
 	jmp	(a0)
 
@@ -226,11 +231,73 @@ our_irq_handler:
 	mov	(bert), d0
 	mov	d0, (ernie)
 
+	/* save current command ... */
+	mov	cmdbuf0, a0
+	movbu	(0, a0), d0
+	movb	d0, (saved_cmdbuf0)
+
+	/* ... and place a temporary fake command, to detect new commands */
+	mov	fake_command, d0
+	movb	d0, (a0)
+
 	/* call the original handler */
 	mov	(saved_irq_handler), a0
 	jsr	(a0)
 
+	/* if our fake command changed, we assume a new command has arrived */
+	mov	cmdbuf0, a0
+	movbu	(0, a0), d0
+	cmp	fake_command, d0
+	bne	extra_command_parser
+
+	/* if there is no new command, restore the previously saved command */
+	movb	(saved_cmdbuf0), d0
+	movb	d0, (a0)
+
 	rts
+
+extra_command_parser:
+	/* "set drive status" command */
+	cmp	set_drive_status_command, d0
+	beq	set_drive_status
+
+	/* "enable extensions" command */
+	cmp	enable_extensions_command, d0
+	bne	done
+
+enable_or_disable_extensions:
+	/* 0x55, enable, 0x00, 0x00 */
+	/* 1=enable, otherwise=disable */
+	movbu	(cmdbuf0+1), d0
+	jsr	di_enable_or_disable_extensions
+	jmp	get_drive_status
+
+set_drive_status:
+	/* 0xee, drive_status, drive_status2, 0x00 */
+	movbu	(cmdbuf0+1), d0
+	movb	d0, (drive_status)
+	movbu	(cmdbuf0+2), d0
+	movb	d0, (drive_status2)
+
+get_drive_status:
+	/*
+	 * This saves us an invalid command error and updates the status
+	 * accordingly. In fact, our extended command becomes a "get status"
+	 * command.
+	 */
+	mov	cmdbuf0, a0
+	mov	get_drive_status_command, d0
+	movb	d0, (a0)
+	sub	d0, d0
+	movb	d0, (1,a0)
+	movb	d0, (2,a0)
+	movb	d0, (3,a0)
+
+done:
+	rts
+
+
+
 
 /*
  * This is how the stacks look like when our interrupt handler is called.
@@ -301,18 +368,31 @@ adb0_break_handler:
 	/* 0x20 + 0x10 + 0x04 = 0x34 */
 	mov	(0x34, a0), a1
 	cmp	disable_extensions_when_called_from, a1
-	bne	1f
+	bne	3f	/* else, do nothing */
 
 di_disable_extensions:
-	mov	disable_extensions, a1
-	mov	1, d0
-	movb	d0, (a1)
-	movbu	(ADBCTL), d0
-	and	~ADB1ON, d0
-	movb	d0, (ADBCTL)
+	mov	0, d0
 
+di_enable_or_disable_extensions:
+	movbu	(ADBCTL), d1
+	cmp	0, d0
+	bne	1f
+	and	~ADB1ON, d1
+	jmp	2f
 1:
+	or	ADB1ON, d1
+2:
+	movb	d1, (ADBCTL)
+
+	mov	enable_extensions, a1
+	movb	d0, (a1)
+
+3:
 	rts
+
+di_enable_extensions:
+	mov	1, d0
+	jmp	di_enable_or_disable_extensions
 
 
 adb0_fixup:
@@ -324,9 +404,9 @@ adb0_fixup:
 	cmp	0x00f000, d1
 	bne	1f
 	mov	0x00, d0
-	movbu	(disable_extensions), d1
+	movbu	(enable_extensions), d1
 	cmp	0, d1
-	bne	1f
+	beq	1f
 	movb	d0, (0x09, a0)
 1:
 	/* skip the extra field */
@@ -334,9 +414,9 @@ adb0_fixup:
 	cmp	0x06, d1
 	bne	1f
 	mov	(0x06, a0), d1
-	movbu	(disable_extensions), d0
+	movbu	(enable_extensions), d0
 	cmp	0, d0
-	bne	2f
+	beq	2f
 	add	6, d1
 2:
 	mov	d1, (0x06, a0)
@@ -381,7 +461,9 @@ adb1_fixup:
 .align 2
 saved_irq_handler:
 	.long	0x00080A74	/* 04, 06, 08 */
-disable_extensions:
+enable_extensions:
+	.byte	0x01
+saved_cmdbuf0:
 	.byte	0x00
 
 _exit:

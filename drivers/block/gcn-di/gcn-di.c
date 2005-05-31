@@ -19,6 +19,7 @@
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/dma-mapping.h>
+#include <linux/timer.h>
 #include <linux/delay.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
@@ -29,13 +30,13 @@
 
 #include <asm/io.h>
 
-#define DI_DEBUG 1
+#define DI_DEBUG
 
 #define DRV_MODULE_NAME	"gcn-di"
 #define DRV_DESCRIPTION	"Nintendo GameCube DVD Interface driver"
 #define DRV_AUTHOR	"Albert Herranz"
 
-static char di_driver_version[] = "0.1";
+static char di_driver_version[] = "0.3";
 
 #define di_printk(level, format, arg...) \
 	printk(level DRV_MODULE_NAME ": " format , ## arg)
@@ -100,6 +101,33 @@ static char di_driver_version[] = "0.1";
 #define DI_CFG			0x24
 
 
+/* drive status, status */
+#define DI_STATUS(s)		((u8)((s)>>24))
+
+#define DI_STATUS_READY			0x00
+#define DI_STATUS_COVER_OPENED		0x01
+#define DI_STATUS_DISK_CHANGE		0x02
+#define DI_STATUS_NO_DISK		0x03
+#define DI_STATUS_MOTOR_STOP		0x04
+#define DI_STATUS_DISK_ID_NOT_READ	0x05
+
+/* drive status, error */
+#define DI_ERROR(s)		((u32)((s)&0x00ffffff))
+
+#define DI_ERROR_NO_ERROR		0x000000
+#define DI_ERROR_MOTOR_STOPPED		0x020400
+#define DI_ERROR_DISK_ID_NOT_READ	0x020401
+#define DI_ERROR_MEDIUM_NOT_PRESENT	0x023a00
+#define DI_ERROR_SEEK_INCOMPLETE	0x030200
+#define DI_ERROR_UNRECOVERABLE_READ	0x031100
+#define DI_ERROR_INVALID_COMMAND	0x052000
+#define DI_ERROR_BLOCK_OUT_OF_RANGE	0x052100
+#define DI_ERROR_INVALID_FIELD		0x052400
+#define DI_ERROR_MEDIUM_CHANGED		0x062800
+
+#define di_may_retry(s)		(DI_STATUS(s) == DI_STATUS_READY || \
+				 DI_STATUS(s) == DI_STATUS_DISK_ID_NOT_READ)
+
 /* DI Sector Size */
 #define DI_SECTOR_SHIFT		11
 #define DI_SECTOR_SIZE		(1 << DI_SECTOR_SHIFT) /*2048*/
@@ -110,25 +138,18 @@ static char di_driver_version[] = "0.1";
 #define DI_NAME			"di"
 #define DI_MAJOR		60
 
-#define DI_COMMAND_TIMEOUT	20
+#define DI_COMMAND_TIMEOUT	20 /* seconds */
+#define DI_COMMAND_RETRIES	10 /* times */
+
+#define DI_MOTOR_OFF_TIMEOUT	10
 
 #define KERNEL_SECTOR_SHIFT	9
 #define KERNEL_SECTOR_SIZE	(1 << KERNEL_SECTOR_SHIFT) /*512*/
 
 
-struct di_opcode {
-	u16				op;
-#define DI_OP(a,b)		(((u8)(a)<<8)|((u8)(b)))
-#define   DI_DIR_READ		0x00
-#define   DI_DIR_WRITE		DI_CR_RW
-#define   DI_MODE_IMMED		0x00
-#define   DI_MODE_DMA		DI_CR_DMA
-
-	u32				cmdbuf0;
-	u32				cmdbuf1;
-	u32				cmdbuf2;
-};
-
+/*
+ * Drive Information.
+ */
 struct di_drive_info {
 	u16				rev;
 	u16				code;
@@ -136,10 +157,35 @@ struct di_drive_info {
 	u8				pad[0x18];
 };
 
+/*
+ * Disk ID.
+ */
 struct di_disk_id {
 	u8				id[32];
 };
 
+/*
+ * An operation code.
+ */
+struct di_opcode {
+	u16				op;
+#define DI_OP(id,flags)		(((u8)(id)<<8)|((u8)(flags)))
+#define DI_OP_ID(op)		((u8)((op)>>8))
+#define DI_OP_FLAGS(op)		((u8)(op))
+
+#define   DI_DIR_READ		0x00
+#define   DI_DIR_WRITE		DI_CR_RW
+#define   DI_MODE_IMMED		0x00
+#define   DI_MODE_DMA		DI_CR_DMA
+
+	char				*name;
+
+	u32				cmdbuf0;
+};
+
+/*
+ * Drive code container.
+ */
 struct di_drive_code {
 	u32				address;
 	size_t				len;
@@ -148,6 +194,9 @@ struct di_drive_code {
 
 struct di_device;
 
+/*
+ * A DVD Interface command.
+ */
 struct di_command {
 	u16				opidx;
 
@@ -164,6 +213,9 @@ struct di_command {
 	void				*done_data;
 	void				(*done)(struct di_command *cmd);
 
+	u16				retries;
+	u16				max_retries;
+
 	u32				result;
 
 	struct di_device		*ddev;
@@ -171,6 +223,16 @@ struct di_command {
 
 #define di_command_ok(cmd)	((cmd)->result == DI_SR_TCINT)
 
+enum {
+	__DI_INTEROPERABLE = 0,
+	__DI_MEDIA_CHANGED,
+	__DI_START_QUEUE,
+	__DI_RESETTING
+};
+
+/*
+ * The DVD Interface device.
+ */
 struct di_device {
 	spinlock_t			lock;
 
@@ -180,6 +242,9 @@ struct di_device {
 	void __iomem			*io_base;
 
 	struct di_command		*cmd;
+	struct di_command		*failed_cmd;
+
+	struct di_command		status;
 
 	struct gendisk                  *disk;
 	struct request_queue            *queue;
@@ -188,12 +253,17 @@ struct di_device {
 	struct request                  *req;
 	struct di_command		req_cmd;
 
-	int				flags;
-#define DI_INTEROPERABLE (1<<0)
-#define DI_MEDIA_CHANGED (1<<1)
-#define DI_START_QUEUE   (1<<2)
+	u32				drive_status;
+
+	unsigned long			flags;
+#define DI_INTEROPERABLE	(1<<__DI_INTEROPERABLE)
+#define DI_MEDIA_CHANGED	(1<<__DI_MEDIA_CHANGED)
+#define DI_START_QUEUE		(1<<__DI_START_QUEUE)
+#define DI_RESETTING		(1<<__DI_RESETTING)
 
 	unsigned long			nr_sectors;
+
+	struct timer_list		motor_off_timer;
 
 #ifdef CONFIG_PROC_FS
 	struct proc_dir_entry		*proc;
@@ -212,9 +282,9 @@ struct di_device {
  * We do not accept original media with this driver, as there is currently no
  * general need for that.
  * If you ever develop an application (a media player for example) which works
- * with original media, just change di_accept_originals and recompile. 
+ * with original media, just change di_accept_gods and recompile. 
  */
-static const int di_accept_originals = 0;
+static const int di_accept_gods = 0;
 
 
 /*
@@ -246,7 +316,7 @@ static struct di_drive_code drive_20020402[] = {
 };
 
 /*
- * Drive 06 (XXX) firmware extensions.
+ * Drive 06 (20010608) firmware extensions.
  */
 
 #include "drive_20010608.h"
@@ -275,8 +345,9 @@ static struct di_drive_code drive_20020823[] = {
 
 
 /*
- * Drive operations table.
- * We just include here some of the available functions.
+ * Drive operations table, incomplete.
+ * We just include here some of the available functions, in no particular
+ * order.
  */
 #define CMDBUF(a,b,c,d) (((a)<<24)|((b)<<16)|((c)<<8)|(d))
 
@@ -285,82 +356,115 @@ static struct di_opcode di_opcodes[] = {
 #define DI_OP_NOP		0
 	[DI_OP_NOP] = {
 		.op = DI_OP(DI_OP_NOP, 0),
+		.name = "NOP",
 		.cmdbuf0 = 0,
-		.cmdbuf1 = 0,
-		.cmdbuf2 = 0,
 	},
 
 #define DI_OP_INQ		(DI_OP_NOP+1)
 	[DI_OP_INQ] = {
 		.op = DI_OP(DI_OP_INQ, DI_DIR_READ | DI_MODE_DMA),
+		.name = "INQ",
 		.cmdbuf0 = 0x12000000,
-		.cmdbuf1 = 0,
-		.cmdbuf2 = 32,
 	},
 
 #define DI_OP_STOPMOTOR		(DI_OP_INQ+1)
 	[DI_OP_STOPMOTOR] = {
 		.op = DI_OP(DI_OP_STOPMOTOR, DI_DIR_READ | DI_MODE_IMMED),
+		.name = "STOPMOTOR",
 		.cmdbuf0 = 0xe3000000,
-		.cmdbuf1 = 0,
-		.cmdbuf2 = 0,
 	},
 
 #define DI_OP_READDISKID	(DI_OP_STOPMOTOR+1)
 	[DI_OP_READDISKID] = {
 		.op = DI_OP(DI_OP_READDISKID, DI_DIR_READ | DI_MODE_DMA),
+		.name = "READDISKID",
 		.cmdbuf0 = 0xa8000040,
-		.cmdbuf1 = 0,
-		.cmdbuf2 = 32,
 	},
 
 #define DI_OP_READSECTOR	(DI_OP_READDISKID+1)
 	[DI_OP_READSECTOR] = {
 		.op = DI_OP(DI_OP_READSECTOR, DI_DIR_READ | DI_MODE_DMA),
+		.name = "READSECTOR",
 		.cmdbuf0 = 0xa8000000,
-		.cmdbuf1 = 0,
-		.cmdbuf2 = 0,
 	},
 
-#define DI_OP_UNLOCK1		(DI_OP_READSECTOR+1)
-	[DI_OP_UNLOCK1] = {
-		.op = DI_OP(DI_OP_UNLOCK1, DI_DIR_READ | DI_MODE_IMMED),
-		.cmdbuf0 = CMDBUF(0xff, 0x01, 'M', 'A'),
-		.cmdbuf1 = CMDBUF('T', 'S', 'H', 'I'),
-		.cmdbuf2 = CMDBUF('T', 'A', 0x02, 0x00),
+#define DI_OP_ENABLE1		(DI_OP_READSECTOR+1)
+	[DI_OP_ENABLE1] = {
+		.op = DI_OP(DI_OP_ENABLE1, DI_DIR_READ | DI_MODE_IMMED),
+		.name = "MATSHITA",
+		.cmdbuf0 = 0,
 	},
 
-#define DI_OP_UNLOCK2		(DI_OP_UNLOCK1+1)
-	[DI_OP_UNLOCK2] = {
-		.op = DI_OP(DI_OP_UNLOCK2, DI_DIR_READ | DI_MODE_IMMED),
-		.cmdbuf0 = CMDBUF(0xff, 0x00, 'D', 'V'),
-		.cmdbuf1 = CMDBUF('D', '-', 'G', 'A'),
-		.cmdbuf2 = CMDBUF('M', 'E', 0x03, 0x00),
+#define DI_OP_ENABLE2		(DI_OP_ENABLE1+1)
+	[DI_OP_ENABLE2] = {
+		.op = DI_OP(DI_OP_ENABLE2, DI_DIR_READ | DI_MODE_IMMED),
+		.name = "DVD-GAME",
+		.cmdbuf0 = 0,
 	},
 
-#define DI_OP_READMEM		(DI_OP_UNLOCK2+1)
+#define DI_OP_READMEM		(DI_OP_ENABLE2+1)
 	[DI_OP_READMEM] = {
 		.op = DI_OP(DI_OP_READMEM, DI_DIR_READ | DI_MODE_IMMED),
+		.name = "READMEM",
 		.cmdbuf0 = 0xfe010000,
-		.cmdbuf1 = 0,
-		.cmdbuf2 = 0x00010000,
 	},
 
 #define DI_OP_WRITEMEM		(DI_OP_READMEM+1)
 	[DI_OP_WRITEMEM] = {
 		.op = DI_OP(DI_OP_WRITEMEM, DI_DIR_READ | DI_MODE_DMA),
+		.name = "WRITEMEM",
 		.cmdbuf0 = 0xfe010100,
-		.cmdbuf1 = 0,
-		.cmdbuf2 = 0,
 	},
 
-#define DI_OP_MAXOP		DI_OP_WRITEMEM
+#define DI_OP_GETSTATUS		(DI_OP_WRITEMEM+1)
+	[DI_OP_GETSTATUS] = {
+		.op = DI_OP(DI_OP_GETSTATUS, DI_DIR_READ | DI_MODE_IMMED),
+		.name = "GETSTATUS",
+		.cmdbuf0 = 0xe0000000,
+	},
+
+/* thanks to blackcheck for pointing this one */
+#define DI_OP_SPINMOTOR		(DI_OP_GETSTATUS+1)
+	[DI_OP_SPINMOTOR] = {
+		.op = DI_OP(DI_OP_SPINMOTOR, DI_DIR_READ | DI_MODE_IMMED),
+		.name = "SPINMOTOR",
+		.cmdbuf0 = 0xfe110000,
+#define DI_SPINMOTOR_MASK	0x0000ff00
+#define DI_SPINMOTOR_DOWN	0x00000000
+#define DI_SPINMOTOR_UP		0x00000100
+#define DI_SPINMOTOR_CHECKDISK	0x00008000
+	},
+
+/*
+ * The following commands are part of the firmware extensions.
+ */
+
+#define DI_OP_SETSTATUS		(DI_OP_SPINMOTOR+1)
+	[DI_OP_SETSTATUS] = {
+		.op = DI_OP(DI_OP_SETSTATUS, DI_DIR_READ | DI_MODE_IMMED),
+		.name = "SETSTATUS",
+		.cmdbuf0 = 0xee000000,
+#define DI_SETSTATUS_MASK	0x00ff0000
+#define DI_SETSTATUS_SHIFT	16
+	},
+
+#define DI_OP_ENABLEEXTENSIONS	(DI_OP_SETSTATUS+1)
+	[DI_OP_ENABLEEXTENSIONS] = {
+		.op = DI_OP(DI_OP_ENABLEEXTENSIONS, DI_DIR_READ|DI_MODE_IMMED),
+		.name = "ENABLEEXTENSIONS",
+		.cmdbuf0 = 0x55000000,
+#define DI_ENABLEEXTENSIONS_MASK	0x00ff0000
+#define DI_ENABLEEXTENSIONS_SHIFT	16
+	},
+
+#define DI_OP_MAXOP		DI_OP_ENABLEEXTENSIONS
 };
 
 #define DI_OP_CUSTOM		((u16)~0)
 
 
 static void di_reset(struct di_device *ddev);
+static int di_run_command(struct di_command *cmd);
 
 /*
  * Returns the operation code related data for a command.
@@ -396,22 +500,22 @@ static void di_op_basic(struct di_command *cmd,
 	memset(cmd, 0, sizeof(*cmd));
 	cmd->ddev = ddev;
 	cmd->opidx = opidx;
+	cmd->max_retries = cmd->retries = DI_COMMAND_RETRIES;
 	opcode = di_get_opcode(cmd);
 	if (opcode) {
 		cmd->cmdbuf0 = opcode->cmdbuf0;
-		cmd->cmdbuf1 = opcode->cmdbuf1;
-		cmd->cmdbuf2 = opcode->cmdbuf2;
 	}
 }
 
 /*
  * Builds an "Inquiry" command.
  */
-static inline void di_op_inq(struct di_command *cmd,
-			     struct di_device *ddev,
-			     struct di_drive_info *drive_info)
+static void di_op_inq(struct di_command *cmd,
+		      struct di_device *ddev,
+		      struct di_drive_info *drive_info)
 {
 	di_op_basic(cmd, ddev, DI_OP_INQ);
+	cmd->cmdbuf2 = sizeof(*drive_info);
 	cmd->data = drive_info;
 	cmd->len = sizeof(*drive_info);
 }
@@ -428,11 +532,12 @@ static inline void di_op_stopmotor(struct di_command *cmd,
 /*
  * Builds a "Read Disc ID" command.
  */
-static inline void di_op_readdiskid(struct di_command *cmd,
-			      struct di_device *ddev,
-			      struct di_disk_id *disk_id)
+static void di_op_readdiskid(struct di_command *cmd,
+			     struct di_device *ddev,
+			     struct di_disk_id *disk_id)
 {
 	di_op_basic(cmd, ddev, DI_OP_READDISKID);
+	cmd->cmdbuf2 = sizeof(*disk_id);
 	cmd->data = disk_id;
 	cmd->len = sizeof(*disk_id);
 }
@@ -440,9 +545,9 @@ static inline void di_op_readdiskid(struct di_command *cmd,
 /*
  * Builds a "Read Sector" command.
  */
-static inline void di_op_readsector(struct di_command *cmd,
-				    struct di_device *ddev,
-				    u32 sector, void *data, size_t len)
+static void di_op_readsector(struct di_command *cmd,
+			     struct di_device *ddev,
+			     u32 sector, void *data, size_t len)
 {
 	di_op_basic(cmd, ddev, DI_OP_READSECTOR);
 	cmd->cmdbuf1 = sector;
@@ -452,21 +557,25 @@ static inline void di_op_readsector(struct di_command *cmd,
 }
 
 /*
- * Builds the first unlock command.
+ * Builds the first enable command.
  */
-static inline void di_op_unlock1(struct di_command *cmd,
-				 struct di_device *ddev)
+static void di_op_enable1(struct di_command *cmd, struct di_device *ddev)
 {
-	di_op_basic(cmd, ddev, DI_OP_UNLOCK1);
+	di_op_basic(cmd, ddev, DI_OP_ENABLE1);
+	cmd->cmdbuf0 = CMDBUF(0xff, 0x01, 'M', 'A');
+	cmd->cmdbuf1 = CMDBUF('T', 'S', 'H', 'I');
+	cmd->cmdbuf2 = CMDBUF('T', 'A', 0x02, 0x00);
 }
 
 /*
- * Builds the second unlock command.
+ * Builds the second enable command.
  */
-static inline void di_op_unlock2(struct di_command *cmd,
-				 struct di_device *ddev)
+static void di_op_enable2(struct di_command *cmd, struct di_device *ddev)
 {
-	di_op_basic(cmd, ddev, DI_OP_UNLOCK2);
+	di_op_basic(cmd, ddev, DI_OP_ENABLE2);
+	cmd->cmdbuf0 = CMDBUF(0xff, 0x00, 'D', 'V');
+	cmd->cmdbuf1 = CMDBUF('D', '-', 'G', 'A');
+	cmd->cmdbuf2 = CMDBUF('M', 'E', 0x03, 0x00);
 }
 
 /*
@@ -476,6 +585,7 @@ static inline void di_op_readmem(struct di_command *cmd,
 				 struct di_device *ddev)
 {
 	di_op_basic(cmd, ddev, DI_OP_READMEM);
+	cmd->cmdbuf2 = 0x00010000;
 }
 
 /*
@@ -485,6 +595,49 @@ static inline void di_op_writemem(struct di_command *cmd,
 				 struct di_device *ddev)
 {
 	di_op_basic(cmd, ddev, DI_OP_WRITEMEM);
+}
+
+/*
+ * Builds a "get drive status" command.
+ */
+static inline void di_op_getstatus(struct di_command *cmd,
+				   struct di_device *ddev)
+{
+	di_op_basic(cmd, ddev, DI_OP_GETSTATUS);
+}
+
+/*
+ * Builds a "spin motor" command.
+ */
+static void di_op_spinmotor(struct di_command *cmd,
+			    struct di_device *ddev, u32 flags)
+{
+	di_op_basic(cmd, ddev, DI_OP_SPINMOTOR);
+	cmd->cmdbuf0 |= (flags & DI_SPINMOTOR_MASK);
+	cmd->max_retries = 0;
+}
+
+/*
+ * Builds a "set drive status" command.
+ */
+static void di_op_setstatus(struct di_command *cmd,
+			    struct di_device *ddev, u8 status)
+{
+	di_op_basic(cmd, ddev, DI_OP_SETSTATUS);
+	cmd->cmdbuf0 |= ((status << DI_SETSTATUS_SHIFT) & DI_SETSTATUS_MASK);
+}
+
+/*
+ * Builds a "enable extensions" command.
+ * The extended firmware will transparently disable the extensions when
+ * original media is found.
+ */
+static void di_op_enableextensions(struct di_command *cmd,
+				  struct di_device *ddev, u8 enable)
+{
+	di_op_basic(cmd, ddev, DI_OP_ENABLEEXTENSIONS);
+	cmd->cmdbuf0 |= ((enable << DI_ENABLEEXTENSIONS_SHIFT) &
+			DI_ENABLEEXTENSIONS_MASK);
 }
 
 /*
@@ -514,6 +667,109 @@ enum dma_data_direction di_opidx_to_dma_dir(struct di_command *cmd)
 		return DMA_FROM_DEVICE;
 	}
 }
+
+/*
+ * Returns the printable form of the status part of a drive status.
+ */
+static char *di_printable_status(u32 drive_status)
+{
+	char *s = "unknown";
+
+	switch(DI_STATUS(drive_status)) {
+		case DI_STATUS_READY:
+			s = "ready";
+			break;
+		case DI_STATUS_COVER_OPENED:
+			s = "cover opened";
+			break;
+		case DI_STATUS_DISK_CHANGE:
+			s = "disk change";
+			break;
+		case DI_STATUS_NO_DISK:
+			s = "no disk";
+			break;
+		case DI_STATUS_MOTOR_STOP:
+			s = "motor stop";
+			break;
+		case DI_STATUS_DISK_ID_NOT_READ:
+			s = "disk id not read";
+			break;
+	}
+	return s;
+}
+
+/*
+ * Returns the printable form of the error part of a drive status.
+ */
+static char *di_printable_error(u32 drive_status)
+{
+	char *s = "unknown";
+
+	switch(DI_ERROR(drive_status)) {
+		case DI_ERROR_NO_ERROR:
+			s = "no error";
+		case DI_ERROR_MOTOR_STOPPED:
+			s = "motor stopped";
+			break;
+		case DI_ERROR_DISK_ID_NOT_READ:
+			s = "disk id not read";
+			break;
+		case DI_ERROR_MEDIUM_NOT_PRESENT:
+			s = "medium not present";
+			break;
+		case DI_ERROR_SEEK_INCOMPLETE:
+			s = "seek incomplete";
+			break;
+		case DI_ERROR_UNRECOVERABLE_READ:
+			s = "unrecoverable read";
+			break;
+		case DI_ERROR_INVALID_COMMAND:
+			s = "invalid command";
+			break;
+		case DI_ERROR_BLOCK_OUT_OF_RANGE:
+			s = "block out of range";
+			break;
+		case DI_ERROR_INVALID_FIELD:
+			s = "invalid field";
+			break;
+		case DI_ERROR_MEDIUM_CHANGED:
+			s = "medium changed";
+			break;
+	}
+
+	return s;
+}
+
+/*
+ * Prints the given drive status, only if debug enabled.
+ */
+static void di_debug_print_drive_status(u32 drive_status)
+{
+	DBG("%08x, [%s, %s]\n", drive_status,
+	    di_printable_status(drive_status),
+	    di_printable_error(drive_status));
+}
+
+#if 0
+/*
+ * Prints the given drive status.
+ */
+static void di_print_drive_status(u32 drive_status)
+{
+	di_printk(KERN_INFO, "drive_status=%08x, [%s, %s]\n", drive_status,
+		  di_printable_status(drive_status),
+		  di_printable_error(drive_status));
+}
+#endif
+
+/*
+ * Prints the given disk identifier.
+ */
+static void di_print_disk_id(struct di_disk_id *disk_id)
+{
+	di_printk(KERN_INFO, "disk_id = [%s]\n", disk_id->id);
+}
+
 
 /*
  * Starts a DMA transfer.
@@ -573,15 +829,16 @@ static void di_wait_for_dma_transfer_raw(struct di_device *ddev)
 
 	/* if the drive got stuck, reset it */
 	if (__wait_for_dma_transfer_or_timeout(cr_reg, DI_COMMAND_TIMEOUT)) {
-		di_printk(KERN_ERR, "dvd stuck!\n");
+		DBG("dvd stuck!\n");
 		di_reset(ddev);
-		ddev->flags |= DI_MEDIA_CHANGED;
 	}
 
-	/* ack the Transfer Complete interrupt */
+	/* ack and enable the Transfer Complete interrupt */
 	spin_lock_irqsave(&ddev->io_lock, flags);
-	writel(readl(sr_reg) | DI_SR_TCINT, sr_reg);
+	writel(readl(sr_reg) | (DI_SR_TCINT|DI_SR_TCINTMASK), sr_reg);
 	spin_unlock_irqrestore(&ddev->io_lock, flags);
+
+	return;
 }
 
 /*
@@ -592,12 +849,14 @@ static void di_prepare_command(struct di_command *cmd, int tstart)
 	struct di_opcode *opcode = di_get_opcode(cmd);
 	void __iomem *io_base = cmd->ddev->io_base;
 
-	//DBG("buf0 = 0x%08x, buf1 = 0x%08x, buf2 = 0x%08x\n",
-	//    cmd->cmdbuf0, cmd->cmdbuf1, cmd->cmdbuf2);
+	/*DBG("buf0 = 0x%08x, buf1 = 0x%08x, buf2 = 0x%08x\n",
+	    cmd->cmdbuf0, cmd->cmdbuf1, cmd->cmdbuf2);*/
 
 	writel(cmd->cmdbuf0, io_base + DI_CMDBUF0);
 	writel(cmd->cmdbuf1, io_base + DI_CMDBUF1);
 	writel(cmd->cmdbuf2, io_base + DI_CMDBUF2);
+
+	cmd->ddev->drive_status = 0;
 
 	if (tstart) {
 		writel(DI_CR_TSTART | (opcode->op & 0x6), io_base + DI_CR);
@@ -620,7 +879,7 @@ static int di_start_command(struct di_command *cmd)
 	BUG_ON(ddev->cmd);
 
 	ddev->cmd = cmd;
-	cmd->dma_len = 0;
+	cmd->dma_len = 0; /* no dma here */
 	di_prepare_command(cmd, 1);
 
 	spin_unlock_irqrestore(&ddev->lock, flags);
@@ -657,38 +916,138 @@ static int di_start_dma_command(struct di_command *cmd)
 }
 
 /*
+ * Completes a "get drive status" command, after a failed command.
+ */
+static void di_complete_getstatus(struct di_command *cmd)
+{
+	struct di_device *ddev = cmd->ddev;
+	void __iomem *io_base = ddev->io_base;
+	u32 __iomem *data_reg = io_base + DI_DATA;
+
+	ddev->drive_status = readl(data_reg);
+}
+
+/*
  * Called after a transfer is completed.
  */
 static void di_complete_transfer(struct di_device *ddev, u32 result)
 {
 	struct di_command *cmd;
+	struct di_opcode *opcode;
+	u32 drive_status;
 	unsigned long flags;
 
 	spin_lock_irqsave(&ddev->lock, flags);
 
-	//di_wait_for_dma_transfer_raw(ddev);
-
+	/* do nothing if we have nothing to complete */
 	cmd = ddev->cmd;
-	if (cmd) {
-		if (cmd->dma_len) {
-			dma_unmap_single(&ddev->pdev.dev,
-					 cmd->dma_addr, cmd->dma_len,
-					 di_opidx_to_dma_dir(cmd));
-		}
-		ddev->cmd = NULL;
+	if (!cmd) {
 		spin_unlock_irqrestore(&ddev->lock, flags);
-		cmd->result = result;
-		di_command_done(cmd);
-		if (ddev->flags & DI_START_QUEUE) {
-			spin_lock(&ddev->queue_lock);
-			ddev->flags &= ~DI_START_QUEUE;
-			blk_start_queue(ddev->queue);
-			spin_unlock(&ddev->queue_lock);
-		}
-		return;
+		goto out;
 	}
 
+	/* free the command slot */
+	ddev->cmd = NULL;
 	spin_unlock_irqrestore(&ddev->lock, flags);
+
+	/* deal with caches after a dma transfer */
+	if (cmd->dma_len) {
+		dma_unmap_single(&ddev->pdev.dev,
+				 cmd->dma_addr, cmd->dma_len,
+				 di_opidx_to_dma_dir(cmd));
+	}
+
+	opcode = di_get_opcode(cmd);
+
+	/*
+	 * If a command fails we check the drive status. Depending on that
+	 * we may or not retry later the command.
+	 */
+	cmd->result = result;
+	if (!di_command_ok(cmd)) {
+		/* the MATSHITA command always reports failure, ignore it */
+		if (DI_OP_ID(opcode->op) != DI_OP_ENABLE1) {
+			BUG_ON(ddev->failed_cmd != NULL);
+
+			ddev->failed_cmd = cmd;
+
+			/*
+			 * Issue immediately a "get drive status"
+			 * after a failed command.
+			 */
+			cmd = &ddev->status;
+			di_op_getstatus(cmd, ddev);
+			cmd->done = di_complete_getstatus;
+			di_run_command(cmd);
+			goto out;
+		}
+	} else {
+		if (cmd->retries != cmd->max_retries) {
+			DBG("command %s succeeded after %d retries :-)\n",
+			    opcode->name, cmd->max_retries - cmd->retries);
+		}
+	}
+
+	/* complete a successful command, or the MATSHITA one */
+	di_command_done(cmd);
+
+	spin_lock_irqsave(&ddev->lock, flags);
+	if (ddev->failed_cmd) {
+		cmd = ddev->failed_cmd;
+		ddev->failed_cmd = NULL;
+		spin_unlock_irqrestore(&ddev->lock, flags);
+
+		drive_status = ddev->drive_status;
+		opcode = di_get_opcode(cmd);
+
+		/* retry a previously failed command if appropiate */
+		if (cmd->retries > 0) {
+			if (di_may_retry(drive_status)) {
+				DBG("command %s failed, %d retries left\n",
+				    opcode->name, cmd->retries);
+				di_debug_print_drive_status(drive_status);
+				
+				cmd->retries--;
+				di_run_command(cmd);
+				goto out;
+			} else {
+				DBG("command %s failed,"
+				    " aborting due to drive status\n",
+				    opcode->name);
+			}
+		} else {
+			DBG("command %s failed\n", opcode->name);
+		}
+
+		di_debug_print_drive_status(drive_status);
+
+		/* complete the failed command */
+		di_command_done(cmd);
+
+		/* update the driver status */
+		switch(DI_ERROR(drive_status)) {
+			case DI_ERROR_MOTOR_STOPPED:
+			case DI_ERROR_MEDIUM_NOT_PRESENT:
+			case DI_ERROR_MEDIUM_CHANGED:
+				set_bit(__DI_MEDIA_CHANGED, &ddev->flags);
+				break;
+			default:
+				break;
+		}
+
+	} else {
+		spin_unlock_irqrestore(&ddev->lock, flags);
+	}
+
+	/* start the block layer queue if someone requested it */
+	if (test_and_clear_bit(__DI_START_QUEUE, &ddev->flags)) {
+		spin_lock(&ddev->queue_lock);
+		blk_start_queue(ddev->queue);
+		spin_unlock(&ddev->queue_lock);
+	}
+
+out:
+	return;
 }
 
 /*
@@ -717,6 +1076,9 @@ static int di_run_command(struct di_command *cmd)
 {
 	struct di_opcode *opcode = di_get_opcode(cmd);
 	int retval;
+
+	if (cmd->retries > cmd->max_retries)
+		cmd->retries = cmd->max_retries;
 
 	if (!(opcode->op & DI_MODE_DMA)) {
 		retval = di_start_command(cmd);
@@ -758,13 +1120,13 @@ static irqreturn_t di_irq_handler(int irq, void *dev0, struct pt_regs *regs)
 
 	sr = readl(sr_reg);
 	mask = sr & (DI_SR_BRKINTMASK | DI_SR_TCINTMASK | DI_SR_DEINTMASK);
-	reason = sr; // & (mask << 1);
+	reason = sr; /* & (mask << 1); */
 	if (reason) {
 		writel(sr | reason, sr_reg);
 		spin_unlock_irqrestore(&ddev->io_lock, flags);
 
 		if (reason & DI_SR_TCINT) {
-			//DBG("TCINT\n");
+			/* DBG("TCINT\n"); */
 			di_complete_transfer(ddev, DI_SR_TCINT);
 		}
 		if (reason & DI_SR_BRKINT) {
@@ -772,7 +1134,6 @@ static irqreturn_t di_irq_handler(int irq, void *dev0, struct pt_regs *regs)
 			di_complete_transfer(ddev, DI_SR_BRKINT);
 		}
 		if (reason & DI_SR_DEINT) {
-			DBG("DEINT\n");
 			di_complete_transfer(ddev, DI_SR_DEINT);
 		}
 
@@ -781,11 +1142,20 @@ static irqreturn_t di_irq_handler(int irq, void *dev0, struct pt_regs *regs)
 
 	cvr = readl(cvr_reg);
 	mask = cvr & DI_CVR_CVRINTMASK;
-	reason = cvr; // & (mask << 1);
+	reason = cvr; /* & (mask << 1); */
 	if ((reason & DI_CVR_CVRINT)) {
 		writel(cvr | DI_CVR_CVRINT, cvr_reg);
-		ddev->flags |= DI_MEDIA_CHANGED;
-		DBG("dvd cover interrupt\n");
+		set_bit(__DI_MEDIA_CHANGED, &ddev->flags);
+		if (test_and_clear_bit(__DI_RESETTING, &ddev->flags)) {
+			if (ddev->flags & DI_INTEROPERABLE) {
+				DBG("extensions loaded"
+				    " and hopefully working\n");
+			} else {
+				DBG("drive reset, no extensions loaded yet\n");
+			}
+		} else {
+			DBG("dvd cover interrupt\n");
+		}
 	}
 
 	spin_unlock_irqrestore(&ddev->io_lock, flags);
@@ -793,6 +1163,56 @@ static irqreturn_t di_irq_handler(int irq, void *dev0, struct pt_regs *regs)
 	return IRQ_HANDLED;
 }
 
+/*
+ * Resets the drive (hard).
+ */
+static void di_reset(struct di_device *ddev)
+{
+	u32 __iomem *reset_reg = (u32 __iomem *)0xcc003024;
+	u32 reset;
+#define FLIPPER_RESET_DVD 0x00000004
+
+	ddev->flags = DI_RESETTING|DI_MEDIA_CHANGED;
+
+	reset = readl(reset_reg);
+	writel((reset & ~FLIPPER_RESET_DVD) | 1, reset_reg);
+	mdelay(500);
+	writel((reset | FLIPPER_RESET_DVD) | 1, reset_reg);
+	mdelay(500);
+}
+
+#if 0
+/*
+ * Gets the current drive status.
+ */
+static u32 di_get_drive_status(struct di_device *ddev)
+{
+	void __iomem *io_base = ddev->io_base;
+	u32 __iomem *data_reg = io_base + DI_DATA;
+	struct di_command cmd;
+	u32 drive_status;
+
+	di_op_getstatus(&cmd, ddev);
+	di_run_command_and_wait(&cmd);
+	drive_status = readl(data_reg);
+
+	return drive_status;
+}
+#endif
+
+/*
+ * Enables the "privileged" command set.
+ */
+static void di_enable_privileged_commands(struct di_device *ddev)
+{
+	struct di_command cmd;
+
+	/* send these two consecutive enable commands */
+	di_op_enable1(&cmd, ddev);
+	di_run_command_and_wait(&cmd);
+	di_op_enable2(&cmd, ddev);
+	di_run_command_and_wait(&cmd);
+}
 
 /*
  * Patches drive addressable memory.
@@ -806,45 +1226,37 @@ static void di_patch_mem(struct di_device *ddev, u32 address,
 	const int max_chunk_size = 3 * sizeof(cmd.cmdbuf0);
 
 	while(len > 0) {
+		/* we can write in groups of 12 bytes at max */
 		if (len > max_chunk_size)
 			chunk_size = max_chunk_size;
 		else
 			chunk_size = len;
 
+		/* prepare for writing to drive's memory ... */
 		di_op_writemem(&cmd, ddev);
 		cmd.cmdbuf1 = address;
 		cmd.cmdbuf2 = chunk_size << 16;
 		di_run_command_and_wait(&cmd);
 
+		/* ... and actually write to it */
 		opcode.op = DI_OP(DI_OP_CUSTOM, DI_DIR_READ | DI_MODE_IMMED);
 		di_op_custom(&cmd, ddev, &opcode);
 		memcpy(&cmd.cmdbuf0, data, chunk_size);
 		di_run_command(&cmd);
+
+		/*
+		 * We can't rely on drive operating as expected here, so we
+		 * explicitly poll for end of transfer and timeout eventually.
+		 * Anyway, we assume everything was ok.
+		 */
 		di_wait_for_dma_transfer_raw(ddev);
 		di_complete_transfer(ddev, DI_SR_TCINT);
 
+		/* ok, next chunk */
 		address += chunk_size;
 		data += chunk_size;
 		len -= chunk_size;
 	}
-}
-
-/*
- * Resets the drive (hard).
- */
-static void di_reset(struct di_device *ddev)
-{
-	u32 __iomem *reset_reg = (u32 __iomem *)0xcc003024;
-	u32 reset;
-#define FLIPPER_RESET_DVD 0x00000004
-
-	reset = readl(reset_reg);
-	writel((reset & ~FLIPPER_RESET_DVD) | 1, reset_reg);
-	mdelay(500);
-	writel((reset | FLIPPER_RESET_DVD) | 1, reset_reg);
-	mdelay(500);
-
-	ddev->flags = DI_MEDIA_CHANGED;
 }
 
 /*
@@ -870,19 +1282,16 @@ static void di_make_interoperable(struct di_device *ddev)
 			 __attribute__ ((aligned (DI_DMA_ALIGN+1)));
 	struct di_command cmd;
 
-	/* enable the extended command set */
-	di_op_unlock1(&cmd, ddev);
-	di_run_command_and_wait(&cmd);
-	di_op_unlock2(&cmd, ddev);
-	di_run_command_and_wait(&cmd);
-
-	/* get the drive model */
+	/* we'll use the drive model to select the appropiate firmware */
 	memset(&drive_info, 0, sizeof(drive_info));
 	di_op_inq(&cmd, ddev, &drive_info);
 	di_run_command_and_wait(&cmd);
 
-	di_printk(KERN_INFO, "drive_info: rev=%x, code=%x, date=%x\n",
-		drive_info.rev, drive_info.code, drive_info.date);
+	DBG("drive_info: rev=%x, code=%x, date=%x\n",
+	    drive_info.rev, drive_info.code, drive_info.date);
+
+	/* we require here the privileged command set */
+	di_enable_privileged_commands(ddev);
 
 	/* extend the firmware to allow use of normal media */
 	di_printk(KERN_INFO, "loading drive %x extensions\n",
@@ -892,35 +1301,113 @@ static void di_make_interoperable(struct di_device *ddev)
 		case 0x20020402:
 			di_patch(ddev, drive_20020402,
 				 ARRAY_SIZE(drive_20020402));
-			di_patch(ddev, &generic_drive_code_trigger, 1);
-			ddev->flags |= DI_INTEROPERABLE;
 			break;
 		case 0x20010608:
 			di_patch(ddev, drive_20010608,
 				 ARRAY_SIZE(drive_20010608));
-			di_patch(ddev, &generic_drive_code_trigger, 1);
-			ddev->flags |= DI_INTEROPERABLE;
 			break;
 		case 0x20020823:
 			di_patch(ddev, drive_20020823,
 				 ARRAY_SIZE(drive_20020823));
-			di_patch(ddev, &generic_drive_code_trigger, 1);
-			ddev->flags |= DI_INTEROPERABLE;
 			break;
 		default:
 			di_printk(KERN_ERR, "sorry, drive %x is not yet"
 				  " supported\n",
 				  drive_info.date);
+			goto out;
 			break;
+	}
+
+	/* the drive will become interoperable, and will go through a reset */
+	set_bit(__DI_INTEROPERABLE, &ddev->flags);
+	set_bit(__DI_RESETTING, &ddev->flags);
+
+	/* here we go ... */
+	di_patch(ddev, &generic_drive_code_trigger, 1);
+
+out:
+	return;
+}
+
+/*
+ * Stops the drive's motor, according to a previous schedule.
+ */
+static void di_motor_off(unsigned long ddev0)
+{
+	struct di_device *ddev = (struct di_device *)ddev0;
+	struct di_command cmd;
+
+	/* postpone a bit the motor off if there are pending commands */
+	if (!ddev->cmd) {
+		di_op_stopmotor(&cmd, ddev);
+		di_run_command(&cmd);
+		di_wait_for_dma_transfer_raw(ddev);
+		di_complete_transfer(ddev, DI_SR_TCINT);
+	} else {
+		mod_timer(&ddev->motor_off_timer, jiffies + 1*HZ);
 	}
 }
 
 /*
- * Prints the disk identifier.
+ * Cancels a previously scheduled motor off.
  */
-static void di_print_disk_id(struct di_disk_id *disk_id)
+static inline void di_cancel_motor_off(struct di_device *ddev)
 {
-	di_printk(KERN_INFO, "disk_id = [%s]\n", disk_id->id);
+	del_timer(&ddev->motor_off_timer);
+}
+
+/*
+ * Stops the drive's motor after the specified amount of seconds has elapsed.
+ */
+static void di_schedule_motor_off(struct di_device *ddev, unsigned int secs)
+{
+	del_timer(&ddev->motor_off_timer);
+	ddev->motor_off_timer.expires = jiffies + secs*HZ;
+	ddev->motor_off_timer.data = (unsigned long)ddev;
+	add_timer(&ddev->motor_off_timer);
+}
+
+/*
+ * Spins down the drive, immediatelly.
+ */
+static void di_spin_down_drive(struct di_device *ddev)
+{
+	struct di_command cmd;
+
+	di_op_stopmotor(&cmd, ddev);
+	di_run_command_and_wait(&cmd);
+}
+
+/*
+ * Spins up the drive.
+ */
+static void di_spin_up_drive(struct di_device *ddev, u8 enable_extensions)
+{
+	struct di_command cmd;
+
+	/* first, make sure the drive is interoperable ... */
+	if (!(ddev->flags & DI_INTEROPERABLE)) {
+		di_spin_down_drive(ddev);
+
+		/* this actually will reset and spin up the drive */
+		di_make_interoperable(ddev);
+	}
+
+	/* ... and that extensions are enabled and working */
+	di_op_enableextensions(&cmd, ddev, enable_extensions);
+	di_run_command_and_wait(&cmd);
+
+	/* the spin motor command requires the privileged mode */
+	di_enable_privileged_commands(ddev);
+
+	di_op_spinmotor(&cmd, ddev, DI_SPINMOTOR_UP);
+	di_run_command_and_wait(&cmd);
+
+	if (!ddev->drive_status) {
+		di_op_setstatus(&cmd, ddev, DI_STATUS_DISK_ID_NOT_READ+1);
+		cmd.cmdbuf0 |= 0x00000300; /* XXX cheqmate */
+		di_run_command_and_wait(&cmd);
+	}
 }
 
 /*
@@ -931,53 +1418,55 @@ static int di_read_toc(struct di_device *ddev)
 	static struct di_disk_id disk_id
 			 __attribute__ ((aligned (DI_DMA_ALIGN+1)));
 	struct di_command cmd;
-	int nr_attempts = 2;
 	int accepted_media = 0;
 	int retval = 0;
+	const u8 enable_extensions = 1;
 
+	di_cancel_motor_off(ddev);
+
+	/* spin up the drive if needed */
 	if ((ddev->flags & DI_MEDIA_CHANGED)) {
-		di_reset(ddev);
+		di_spin_up_drive(ddev, enable_extensions);
 	}
 
+	/* check that disk id can be read and that the media is appropiate */
 	memset(&disk_id, 0, sizeof(disk_id));
-	while(nr_attempts > 0) {
-		di_op_readdiskid(&cmd, ddev, &disk_id);
-		di_run_command_and_wait(&cmd);
-		if (di_command_ok(&cmd)) {
-			if (disk_id.id[0]) {
-				di_print_disk_id(&disk_id);
-				if (!di_accept_originals) {
-					di_printk(KERN_INFO, "sorry, original"
-						  " media support is"
-						  " disabled\n");
-					break;
-				}
-			}
-
-			if (!disk_id.id[0] || di_accept_originals) {
-				accepted_media = 1;
-				break;
-			}
+	di_op_readdiskid(&cmd, ddev, &disk_id);
+	di_run_command_and_wait(&cmd);
+	if (di_command_ok(&cmd)) {
+		if (disk_id.id[0] && !di_accept_gods) {
+			di_print_disk_id(&disk_id);
+			di_printk(KERN_ERR, "sorry, gamecube media"
+				  " support is disabled\n");
+		} else {
+			accepted_media = 1;
 		}
-
-		if (!(ddev->flags & DI_INTEROPERABLE))
-			di_make_interoperable(ddev);
-
-		--nr_attempts;
+	} else {
+		set_bit(__DI_MEDIA_CHANGED, &ddev->flags);
 	}
 
 	if (accepted_media) {
+		/*
+		 * This is currently hardcoded. Scream|CT got this number
+		 * by reading up to where the lens physically allowed.
+		 */
 		ddev->nr_sectors = DI_MAX_SECTORS; /* in DVD sectors */
-		ddev->flags &= ~DI_MEDIA_CHANGED;
+		clear_bit(__DI_MEDIA_CHANGED, &ddev->flags);
+
+		DBG("media ready for operation\n");
 	} else {
 		ddev->nr_sectors = 0;
 		retval = -ENOMEDIUM;
+
+		di_spin_down_drive(ddev);
+
+		DBG("media NOT ready\n");
 	}
 
 	/* transform to kernel sectors */
 	ddev->nr_sectors <<= (DI_SECTOR_SHIFT - KERNEL_SECTOR_SHIFT);
-
 	set_capacity(ddev->disk, ddev->nr_sectors);
+
 	return retval;
 }
 
@@ -991,12 +1480,12 @@ static void di_request_done(struct di_command *cmd)
 	struct request *req;
 	unsigned long flags;
 
-	spin_lock_irqsave(&ddev->io_lock, flags);
+	spin_lock_irqsave(&ddev->lock, flags);
 
 	req = ddev->req;
 	ddev->req = NULL;
 
-	spin_unlock_irqrestore(&ddev->io_lock, flags);
+	spin_unlock_irqrestore(&ddev->lock, flags);
 
 	if (req) {
 		if (!end_that_request_first(req,
@@ -1024,32 +1513,36 @@ static void di_do_request(request_queue_t *q)
 	size_t len;
 
 	while ((req = elv_next_request(q))) {
+		/* keep our reads within limits */
 		if (req->sector + req->current_nr_sectors > ddev->nr_sectors) {
 			di_printk(KERN_ERR, "reading past end\n");
 			end_request(req, 0);
 			continue;
 		}
 
+		/* it doesn't make sense to write to this device */
 		if (rq_data_dir(req) == WRITE) {
 			di_printk(KERN_ERR, "write attempted\n");
 			end_request(req, 0);
 			continue;
 		}
 
+		/* it is not a good idea to open the lid ... */
 		if ((ddev->flags & DI_MEDIA_CHANGED)) {
 			di_printk(KERN_ERR, "media changed, aborting\n");
 			end_request(req, 0);
 			continue;
 		}
 
-		spin_lock_irqsave(&ddev->io_lock, flags);
+		spin_lock_irqsave(&ddev->lock, flags);
 
 		/* we can schedule just a single request each time */
 		if (ddev->req || ddev->cmd) {
 			blk_stop_queue(q);
-			if (ddev->cmd)
-				ddev->flags |= DI_START_QUEUE;
-			spin_unlock_irqrestore(&ddev->io_lock, flags);
+			if (ddev->cmd) {
+				set_bit(__DI_START_QUEUE, &ddev->flags);
+			}
+			spin_unlock_irqrestore(&ddev->lock, flags);
 			break;
 		}
 
@@ -1057,17 +1550,17 @@ static void di_do_request(request_queue_t *q)
 
 		/* ignore requests that we can't handle */
 		if (!blk_fs_request(req)) {
-			spin_unlock_irqrestore(&ddev->io_lock, flags);
+			spin_unlock_irqrestore(&ddev->lock, flags);
 			continue;
 		}
 
-		/* store the request being handled */
+		/* store the request being handled ... */
 		ddev->req = req;
 		blk_stop_queue(q);
 
-		spin_unlock_irqrestore(&ddev->io_lock, flags);
+		spin_unlock_irqrestore(&ddev->lock, flags);
 
-		/* launch the corresponding read sector command */
+		/* ... and launch the corresponding read sector command */
 		start = req->sector << KERNEL_SECTOR_SHIFT;
 		len = req->current_nr_sectors << KERNEL_SECTOR_SHIFT;
 
@@ -1088,6 +1581,7 @@ static int di_open(struct inode *inode, struct file *filp)
 	unsigned long flags;
 	int retval = 0;
 
+	/* this is a read only device */
 	if (filp->f_mode & FMODE_WRITE) {
 		retval = -EROFS;
 		goto out;
@@ -1108,6 +1602,7 @@ static int di_open(struct inode *inode, struct file *filp)
 		goto out_unlock;
 	}
 
+	/* this will take of validating the media */
 	check_disk_change(inode->i_bdev);
 	if (!ddev->nr_sectors) {
 		retval = -ENOMEDIUM;
@@ -1132,7 +1627,6 @@ out:
 static int di_release(struct inode *inode, struct file *filp)
 {
 	struct di_device *ddev = inode->i_bdev->bd_disk->private_data;
-	struct di_command cmd;
 	unsigned long flags;
 
 	spin_lock_irqsave(&ddev->queue_lock, flags);
@@ -1145,15 +1639,14 @@ static int di_release(struct inode *inode, struct file *filp)
 	spin_unlock_irqrestore(&ddev->queue_lock, flags);
 
 	if (ddev->ref_count == 0) {
+		/*
+		 * We do not immediately stop the motor, which saves us
+		 * a spin down/spin up in applications that re-open quickly
+		 * the device, like mount when -t is not specified.
+		 */
+		di_schedule_motor_off(ddev, 1);
 
-		/* XXX check if command scheduler is busy */
-		while(ddev->cmd)
-			cpu_relax();
-
-		di_op_stopmotor(&cmd, ddev);
-		di_run_command_and_wait(&cmd);
-
-		ddev->flags |= DI_MEDIA_CHANGED;
+		set_bit(__DI_MEDIA_CHANGED, &ddev->flags);
 	}
 
 	return 0;
@@ -1274,11 +1767,14 @@ static int di_init_irq(struct di_device *ddev)
 	u32 __iomem *sr_reg = io_base + DI_SR;
 	u32 __iomem *cvr_reg = io_base + DI_CVR;
 	u32 sr, cvr;
-	struct di_command cmd;
 	unsigned long flags;
 	int retval;
 
-	ddev->flags |= DI_MEDIA_CHANGED;
+	init_timer(&ddev->motor_off_timer);
+	ddev->motor_off_timer.function =
+		(void (*)(unsigned long))di_motor_off;
+
+	set_bit(__DI_MEDIA_CHANGED, &ddev->flags);
 
 	/* request interrupt */
 	retval = request_irq(ddev->irq, di_irq_handler, 0,
@@ -1300,24 +1796,23 @@ static int di_init_irq(struct di_device *ddev)
 
 	spin_unlock_irqrestore(&ddev->io_lock, flags);
 
-	/* stop DVD motor */
-	di_op_stopmotor(&cmd, ddev);
-	di_run_command_and_wait(&cmd);
+	/* start with a known and clean state */
+	di_reset(ddev);
+
+	di_schedule_motor_off(ddev, DI_MOTOR_OFF_TIMEOUT);
 
 out:
 	return retval;
 }
 
 /*
- * Relinquishes control of the haardware.
+ * Relinquishes control of the hardware.
  */
 static void di_exit_irq(struct di_device *ddev)
 {
-	struct di_command cmd;
-
 	/* stop DVD motor */
-	di_op_stopmotor(&cmd, ddev);
-	di_run_command_and_wait(&cmd);
+	di_cancel_motor_off(ddev);
+	di_spin_down_drive(ddev);
 
 	di_quiesce(ddev);
 
