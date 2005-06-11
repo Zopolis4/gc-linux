@@ -36,7 +36,7 @@
 #define DRV_DESCRIPTION	"Nintendo GameCube DVD Interface driver"
 #define DRV_AUTHOR	"Albert Herranz"
 
-static char di_driver_version[] = "0.3";
+static char di_driver_version[] = "0.4";
 
 #define di_printk(level, format, arg...) \
 	printk(level DRV_MODULE_NAME ": " format , ## arg)
@@ -125,8 +125,10 @@ static char di_driver_version[] = "0.3";
 #define DI_ERROR_INVALID_FIELD		0x052400
 #define DI_ERROR_MEDIUM_CHANGED		0x062800
 
-#define di_may_retry(s)		(DI_STATUS(s) == DI_STATUS_READY || \
-				 DI_STATUS(s) == DI_STATUS_DISK_ID_NOT_READ)
+#define di_may_retry(s)		((DI_STATUS(s) == DI_STATUS_READY || \
+				  DI_STATUS(s) == DI_STATUS_DISK_ID_NOT_READ) \
+				 && \
+				 (DI_ERROR(s) != DI_ERROR_SEEK_INCOMPLETE))
 
 /* DI Sector Size */
 #define DI_SECTOR_SHIFT		11
@@ -177,6 +179,7 @@ struct di_opcode {
 #define   DI_DIR_WRITE		DI_CR_RW
 #define   DI_MODE_IMMED		0x00
 #define   DI_MODE_DMA		DI_CR_DMA
+#define   DI_IGNORE_ERRORS	(1<<7)
 
 	char				*name;
 
@@ -450,7 +453,8 @@ static struct di_opcode di_opcodes[] = {
 
 #define DI_OP_ENABLEEXTENSIONS	(DI_OP_SETSTATUS+1)
 	[DI_OP_ENABLEEXTENSIONS] = {
-		.op = DI_OP(DI_OP_ENABLEEXTENSIONS, DI_DIR_READ|DI_MODE_IMMED),
+		.op = DI_OP(DI_OP_ENABLEEXTENSIONS, DI_DIR_READ|DI_MODE_IMMED|
+							DI_IGNORE_ERRORS),
 		.name = "ENABLEEXTENSIONS",
 		.cmdbuf0 = 0x55000000,
 #define DI_ENABLEEXTENSIONS_MASK	0x00ff0000
@@ -500,7 +504,7 @@ static void di_op_basic(struct di_command *cmd,
 	memset(cmd, 0, sizeof(*cmd));
 	cmd->ddev = ddev;
 	cmd->opidx = opidx;
-	cmd->max_retries = cmd->retries = DI_COMMAND_RETRIES;
+	cmd->max_retries = cmd->retries = 0;
 	opcode = di_get_opcode(cmd);
 	if (opcode) {
 		cmd->cmdbuf0 = opcode->cmdbuf0;
@@ -540,6 +544,7 @@ static void di_op_readdiskid(struct di_command *cmd,
 	cmd->cmdbuf2 = sizeof(*disk_id);
 	cmd->data = disk_id;
 	cmd->len = sizeof(*disk_id);
+	cmd->max_retries = cmd->retries = DI_COMMAND_RETRIES;
 }
 
 /*
@@ -554,6 +559,7 @@ static void di_op_readsector(struct di_command *cmd,
 	cmd->cmdbuf2 = len;
 	cmd->data = data;
 	cmd->len = len;
+	cmd->max_retries = cmd->retries = DI_COMMAND_RETRIES;
 }
 
 /*
@@ -614,7 +620,6 @@ static void di_op_spinmotor(struct di_command *cmd,
 {
 	di_op_basic(cmd, ddev, DI_OP_SPINMOTOR);
 	cmd->cmdbuf0 |= (flags & DI_SPINMOTOR_MASK);
-	cmd->max_retries = 0;
 }
 
 /*
@@ -743,14 +748,13 @@ static char *di_printable_error(u32 drive_status)
 /*
  * Prints the given drive status, only if debug enabled.
  */
-static void di_debug_print_drive_status(u32 drive_status)
+static inline void di_debug_print_drive_status(u32 drive_status)
 {
 	DBG("%08x, [%s, %s]\n", drive_status,
 	    di_printable_status(drive_status),
 	    di_printable_error(drive_status));
 }
 
-#if 0
 /*
  * Prints the given drive status.
  */
@@ -760,7 +764,6 @@ static void di_print_drive_status(u32 drive_status)
 		  di_printable_status(drive_status),
 		  di_printable_error(drive_status));
 }
-#endif
 
 /*
  * Prints the given disk identifier.
@@ -1016,10 +1019,12 @@ static void di_complete_transfer(struct di_device *ddev, u32 result)
 				    opcode->name);
 			}
 		} else {
-			DBG("command %s failed\n", opcode->name);
+			if (!(opcode->op & DI_IGNORE_ERRORS))
+				DBG("command %s failed\n", opcode->name);
 		}
 
-		di_debug_print_drive_status(drive_status);
+		if (!(opcode->op & DI_IGNORE_ERRORS))
+			di_print_drive_status(drive_status);
 
 		/* complete the failed command */
 		di_command_done(cmd);
@@ -1126,7 +1131,6 @@ static irqreturn_t di_irq_handler(int irq, void *dev0, struct pt_regs *regs)
 		spin_unlock_irqrestore(&ddev->io_lock, flags);
 
 		if (reason & DI_SR_TCINT) {
-			/* DBG("TCINT\n"); */
 			di_complete_transfer(ddev, DI_SR_TCINT);
 		}
 		if (reason & DI_SR_BRKINT) {
@@ -1385,17 +1389,17 @@ static void di_spin_up_drive(struct di_device *ddev, u8 enable_extensions)
 {
 	struct di_command cmd;
 
-	/* first, make sure the drive is interoperable ... */
+	/* first, make sure the drive is interoperable */
 	if (!(ddev->flags & DI_INTEROPERABLE)) {
 		di_spin_down_drive(ddev);
 
 		/* this actually will reset and spin up the drive */
 		di_make_interoperable(ddev);
+	} else {
+		/* assume enabled extensions */
+		di_op_enableextensions(&cmd, ddev, enable_extensions);
+		di_run_command_and_wait(&cmd);
 	}
-
-	/* ... and that extensions are enabled and working */
-	di_op_enableextensions(&cmd, ddev, enable_extensions);
-	di_run_command_and_wait(&cmd);
 
 	/* the spin motor command requires the privileged mode */
 	di_enable_privileged_commands(ddev);
@@ -1449,6 +1453,17 @@ static int di_read_toc(struct di_device *ddev)
 		/*
 		 * This is currently hardcoded. Scream|CT got this number
 		 * by reading up to where the lens physically allowed.
+		 *
+		 * This is currently causing us problems.
+		 * For example, recent 'mount' versions will read 4k from
+		 * the end of the device when guessing filesystem types.
+		 * The end of device we are reporting is not the real one,
+		 * so the drive will fail to read that part if it was not
+		 * burned.
+		 *
+		 * As a temporary solution, specify always a filesystem
+		 * type when using mount, or fill the whole disk when
+		 * burning.
 		 */
 		ddev->nr_sectors = DI_MAX_SECTORS; /* in DVD sectors */
 		clear_bit(__DI_MEDIA_CHANGED, &ddev->flags);
@@ -1602,7 +1617,7 @@ static int di_open(struct inode *inode, struct file *filp)
 		goto out_unlock;
 	}
 
-	/* this will take of validating the media */
+	/* this will take care of validating the media */
 	check_disk_change(inode->i_bdev);
 	if (!ddev->nr_sectors) {
 		retval = -ENOMEDIUM;
@@ -1714,9 +1729,9 @@ static int di_ioctl(struct inode *inode, struct file *filp,
 	case BLKFLSBUF:
 		return ioctl_by_bdev(inode->i_bdev,cmd,arg);
 	default:
-		return -ENOTTY;
+		return -EINVAL;
 	}
-	return -ENOTTY;
+	return -EINVAL;
 }
 
 static struct block_device_operations di_fops = {
@@ -1767,6 +1782,7 @@ static int di_init_irq(struct di_device *ddev)
 	u32 __iomem *sr_reg = io_base + DI_SR;
 	u32 __iomem *cvr_reg = io_base + DI_CVR;
 	u32 sr, cvr;
+	struct di_command cmd;
 	unsigned long flags;
 	int retval;
 
@@ -1796,8 +1812,17 @@ static int di_init_irq(struct di_device *ddev)
 
 	spin_unlock_irqrestore(&ddev->io_lock, flags);
 
-	/* start with a known and clean state */
-	di_reset(ddev);
+	/*
+	 * We check if the drive is already interoperable by issuing one of
+	 * the extended commands.
+	 */
+	di_op_enableextensions(&cmd, ddev, 1);
+	di_run_command_and_wait(&cmd);
+	if (ddev->drive_status) {
+		di_make_interoperable(ddev);
+	} else {
+		set_bit(__DI_INTEROPERABLE, &ddev->flags);
+	}
 
 	di_schedule_motor_off(ddev, DI_MOTOR_OFF_TIMEOUT);
 

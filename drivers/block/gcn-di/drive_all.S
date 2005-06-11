@@ -1,5 +1,5 @@
 /*
- * DVD-R compatible "cactus" firmware extensions
+ * DVD±R compatible "cactus" firmware extensions
  * Copyright (C) 2005 The GameCube Linux Team
  * Copyright (C) 2005 Albert Herranz
  *
@@ -70,8 +70,8 @@
 	.org 0x082f49 /* 04, 08 */
 	memset:
 
-	.equ adb1_break_address,	0x08a7db
-	.org 0x08a88d
+	.equ adb1_break_address,	0x089cd6
+	.org 0x089d4e
 	adb1_fixup_exit:
 
 	.equ adb0_break_address,	0x08ae28
@@ -111,8 +111,8 @@
 	.org 0x082f50
 	memset:
 
-	.equ adb1_break_address,	0x08aaf0
-	.org 0x08aba2
+	.equ adb1_break_address,	0x089d42
+	.org 0x089dd0
 	adb1_fixup_exit:
 
 	.equ adb0_break_address,	0x08b145
@@ -152,8 +152,8 @@
 	.org 0x082f49 /* 04, 08 */
 	memset:
 
-	.equ adb1_break_address,	0x08a828
-	.org 0x08a8da
+	.equ adb1_break_address,	0x089d32
+	.org 0x089da7
 	adb1_fixup_exit:
 
 	.equ adb0_break_address,	0x08ae75
@@ -204,7 +204,9 @@ _main:
 	mov	a0, (ADB1)
 	mov	adb0_break_address, a0
 	mov	a0, (ADB0)
-	mov	ADB1ON|ADB0ON, d0
+
+	/* just enable the layout fix */
+	mov	ADB0ON, d0
 	movb	d0, (ADBCTL)
 
 	/* return to the original firmware */
@@ -267,7 +269,7 @@ extra_command_parser:
 
 enable_or_disable_extensions:
 	/* 0x55, enable, 0x00, 0x00 */
-	/* 1=enable, otherwise=disable */
+	/* otherwise=enable, 0=disable */
 	movbu	(cmdbuf0+1), d0
 	jsr	di_enable_or_disable_extensions
 	jmp	get_drive_status
@@ -374,6 +376,7 @@ di_disable_extensions:
 	mov	0, d0
 
 di_enable_or_disable_extensions:
+	/* enable additional media if extensions are enabled */
 	movbu	(ADBCTL), d1
 	cmp	0, d0
 	bne	1f
@@ -453,8 +456,7 @@ adb1_break_handler:
 	rts
 
 adb1_fixup:
-	/* no disk id */
-	sub	d0, d0
+	/* accept additional media */
 	jmp	adb1_fixup_exit
 
 
