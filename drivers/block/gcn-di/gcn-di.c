@@ -1185,7 +1185,6 @@ static void di_reset(struct di_device *ddev)
 	mdelay(500);
 }
 
-#if 0
 /*
  * Gets the current drive status.
  */
@@ -1202,7 +1201,6 @@ static u32 di_get_drive_status(struct di_device *ddev)
 
 	return drive_status;
 }
-#endif
 
 /*
  * Enables the "privileged" command set.
@@ -1388,6 +1386,7 @@ static void di_spin_down_drive(struct di_device *ddev)
 static void di_spin_up_drive(struct di_device *ddev, u8 enable_extensions)
 {
 	struct di_command cmd;
+	u32 drive_status;
 
 	/* first, make sure the drive is interoperable */
 	if (!(ddev->flags & DI_INTEROPERABLE)) {
@@ -1396,9 +1395,16 @@ static void di_spin_up_drive(struct di_device *ddev, u8 enable_extensions)
 		/* this actually will reset and spin up the drive */
 		di_make_interoperable(ddev);
 	} else {
-		/* assume enabled extensions */
-		di_op_enableextensions(&cmd, ddev, enable_extensions);
-		di_run_command_and_wait(&cmd);
+		/*
+		 * We only re-enable the extensions if the drive is not
+		 * in a peding read disk id state. Otherwise, we assume the
+		 * drive has already accepted the disk.
+		 */
+		drive_status = di_get_drive_status(ddev);
+		if (DI_STATUS(drive_status) != DI_STATUS_DISK_ID_NOT_READ) {
+			di_op_enableextensions(&cmd, ddev, enable_extensions);
+			di_run_command_and_wait(&cmd);
+		}
 	}
 
 	/* the spin motor command requires the privileged mode */
