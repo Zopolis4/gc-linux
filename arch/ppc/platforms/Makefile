@@ -50,7 +50,6 @@ obj-$(CONFIG_GAMECUBE)		+= gamecube.o
 obj-$(CONFIG_GAMECUBE_RTC)	+= gcn-rtc.o
 obj-$(CONFIG_GAMECUBE_CONSOLE)	+= gcn-con.o
 obj-$(CONFIG_GAMECUBE_RESET)	+= gcn-rsw.o
-obj-$(CONFIG_GAMECUBE_DVDCOVER)	+= gcn-dvdcover.o
 
 ifeq ($(CONFIG_SMP),y)
 obj-$(CONFIG_PPC_PMAC)		+= pmac_smp.o

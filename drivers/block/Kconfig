@@ -63,7 +63,7 @@ config AMIGA_Z2RAM
 
 config GAMECUBE_DI
 	tristate "Nintendo Gamecube (alternate) DVD support"
-	depends on GAMECUBE && !GAMECUBE_DVDCOVER && EXPERIMENTAL
+	depends on GAMECUBE && EXPERIMENTAL
 	help
 	  This enables support for using DVD-R media on
 	  the Nintendo GameCube DVD drive.
@@ -74,7 +74,7 @@ config GAMECUBE_DI
 
 config GAMECUBE_DVD
 	tristate "Nintendo Gamecube DVD"
-	depends on GAMECUBE && !GAMECUBE_DI && !GAMECUBE_DVDCOVER
+	depends on GAMECUBE && !GAMECUBE_DI
 	help
 	  This enables support for using the mini-DVD drive on the 
 	  Nintendo Gamecube.
