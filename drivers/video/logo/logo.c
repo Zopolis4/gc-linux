@@ -12,6 +12,7 @@
 #include <linux/config.h>
 #include <linux/linux_logo.h>
 #include <linux/stddef.h>
+#include <linux/module.h>
 
 #ifdef CONFIG_M68K
 #include <asm/setup.h>
@@ -67,8 +68,10 @@ const struct linux_logo *fb_find_logo(int depth)
 		logo = &logo_linux_clut224;
 #endif
 #ifdef CONFIG_LOGO_DEC_CLUT224
-		/* DEC Linux logo on MIPS/MIPS64 */
+		/* DEC Linux logo on MIPS/MIPS64 or ALPHA */
+#ifndef CONFIG_ALPHA
 		if (mips_machgroup == MACH_GROUP_DEC)
+#endif
 			logo = &logo_dec_clut224;
 #endif
 #ifdef CONFIG_LOGO_GAMECUBE_CLUT224
@@ -102,4 +105,4 @@ const struct linux_logo *fb_find_logo(int depth)
 	}
 	return logo;
 }
-
+EXPORT_SYMBOL_GPL(fb_find_logo);
