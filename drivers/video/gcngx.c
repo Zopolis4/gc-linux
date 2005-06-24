@@ -266,6 +266,7 @@ static void gcngx_free_munmap(struct vm_area_struct *vma)
 static void gcngx_munmap(struct vm_area_struct *vma)
 {
 	struct fb_info *info = (struct fb_info*)vma->vm_private_data;
+	struct vc_data *vc;
 	
 	gcngx_destroy_fifo();
 	
@@ -277,7 +278,8 @@ static void gcngx_munmap(struct vm_area_struct *vma)
 	gcnfb_restorefb(info);
 #ifdef CONFIG_FRAMEBUFFER_CONSOLE
 	acquire_console_sem();
-	update_screen(fg_console);
+	vc = vc_cons[fg_console].d;
+	update_screen(vc);
 	unblank_screen();
 	release_console_sem();
 #endif
