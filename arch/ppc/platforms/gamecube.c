@@ -26,14 +26,6 @@
 
 #include "gamecube.h"
 
-/*
- * We happen to be ISA/PCI-free, hence !CONFIG_PCI. These
- * are only here to avoid the accompanying compile breakage.
- */
-unsigned long isa_io_base = 0;
-unsigned long isa_mem_base = 0;
-unsigned long pci_dram_offset = 0;
-
 
 static unsigned long gamecube_find_end_of_memory(void)
 {
