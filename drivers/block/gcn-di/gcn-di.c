@@ -1276,7 +1276,7 @@ static void di_patch(struct di_device *ddev,
 }
 
 /*
- * Configures the drive to accept DVD-R media.
+ * Configures the drive to accept DVD-R and DVD+R media.
  */
 static void di_make_interoperable(struct di_device *ddev)
 {
@@ -1337,15 +1337,18 @@ out:
 static void di_motor_off(unsigned long ddev0)
 {
 	struct di_device *ddev = (struct di_device *)ddev0;
-	struct di_command cmd;
+	struct di_command *cmd;
+	unsigned long flags;
 
 	/* postpone a bit the motor off if there are pending commands */
-	if (!ddev->cmd) {
-		di_op_stopmotor(&cmd, ddev);
-		di_run_command(&cmd);
-		di_wait_for_dma_transfer_raw(ddev);
-		di_complete_transfer(ddev, DI_SR_TCINT);
+	spin_lock_irqsave(&ddev->lock, flags);
+	if (!ddev->cmd && ddev->ref_count == 0) {
+	        ddev->cmd = cmd = &ddev->status;
+		spin_unlock_irqrestore(&ddev->lock, flags);
+		di_op_stopmotor(cmd, ddev);
+	        di_prepare_command(cmd, 1);
 	} else {
+		spin_unlock_irqrestore(&ddev->lock, flags);
 		mod_timer(&ddev->motor_off_timer, jiffies + 1*HZ);
 	}
 }
@@ -1599,6 +1602,8 @@ static void di_do_request(request_queue_t *q)
 static int di_open(struct inode *inode, struct file *filp)
 {
 	struct di_device *ddev = inode->i_bdev->bd_disk->private_data;
+	struct di_command *cmd;
+	DECLARE_COMPLETION(complete);
 	unsigned long flags;
 	int retval = 0;
 
@@ -1621,6 +1626,19 @@ static int di_open(struct inode *inode, struct file *filp)
 	    (ddev->ref_count && (filp->f_flags & O_EXCL))) {
 		retval = -EBUSY;
 		goto out_unlock;
+	}
+
+	/*
+	 * If we have a pending command, that's a previously scheduled
+	 * motor off. Wait for it to terminate before going on.
+	 */
+	if (ddev->cmd) {
+		cmd = ddev->cmd;
+		cmd->done_data = &complete;
+		cmd->done = di_wait_done;
+		spin_unlock_irqrestore(&ddev->queue_lock, flags);
+		wait_for_completion(&complete);
+        	spin_lock_irqsave(&ddev->queue_lock, flags);
 	}
 
 	/* this will take care of validating the media */
