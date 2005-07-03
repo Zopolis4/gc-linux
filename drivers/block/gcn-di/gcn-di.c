@@ -1342,7 +1342,7 @@ static void di_motor_off(unsigned long ddev0)
 
 	/* postpone a bit the motor off if there are pending commands */
 	spin_lock_irqsave(&ddev->lock, flags);
-	if (!ddev->cmd && ddev->ref_count == 0) {
+	if (!ddev->cmd) {
 	        ddev->cmd = cmd = &ddev->status;
 		spin_unlock_irqrestore(&ddev->lock, flags);
 		di_op_stopmotor(cmd, ddev);
@@ -1632,7 +1632,7 @@ static int di_open(struct inode *inode, struct file *filp)
 	 * If we have a pending command, that's a previously scheduled
 	 * motor off. Wait for it to terminate before going on.
 	 */
-	if (ddev->cmd) {
+	if (ddev->cmd && ddev->ref_count == 0) {
 		cmd = ddev->cmd;
 		cmd->done_data = &complete;
 		cmd->done = di_wait_done;
