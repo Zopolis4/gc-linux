@@ -810,7 +810,7 @@ static int __wait_for_dma_transfer_or_timeout(u32 __iomem *cr_reg,
 	unsigned long timeout = jiffies + secs*HZ;
 
 	/* busy-wait for transfer complete */
-	while(readl(cr_reg) & DI_CR_TSTART && time_before(jiffies, timeout)) {
+	while((readl(cr_reg) & DI_CR_TSTART) && time_before(jiffies, timeout)) {
 		cpu_relax();
 	}
 
