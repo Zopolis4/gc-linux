@@ -1,7 +1,7 @@
 #
 # Automatically generated make config: don't edit
 # Linux kernel version: 2.6.12
-# Thu Jun 23 18:46:14 2005
+# Wed Jul  6 11:04:28 2005
 #
 CONFIG_MMU=y
 CONFIG_GENERIC_HARDIRQS=y
@@ -187,7 +187,7 @@ CONFIG_PREVENT_FIRMWARE_BUILD=y
 # CONFIG_BLK_DEV_FD is not set
 # CONFIG_GAMECUBE_DI is not set
 # CONFIG_GAMECUBE_DVD is not set
-# CONFIG_GAMECUBE_ARAM is not set
+CONFIG_GAMECUBE_ARAM=m
 # CONFIG_BLK_DEV_COW_COMMON is not set
 CONFIG_BLK_DEV_LOOP=y
 # CONFIG_BLK_DEV_CRYPTOLOOP is not set
@@ -388,7 +388,7 @@ CONFIG_INPUT_KEYBOARD=y
 #
 # CONFIG_SERIO is not set
 # CONFIG_GAMEPORT is not set
-# CONFIG_GAMECUBE_SI is not set
+CONFIG_GAMECUBE_SI=m
 
 #
 # Character devices
