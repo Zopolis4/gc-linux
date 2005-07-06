@@ -1,7 +1,7 @@
 #
 # Automatically generated make config: don't edit
 # Linux kernel version: 2.6.12
-# Wed Jul  6 11:04:28 2005
+# Wed Jul  6 14:13:35 2005
 #
 CONFIG_MMU=y
 CONFIG_GENERIC_HARDIRQS=y
@@ -116,7 +116,6 @@ CONFIG_GAMECUBE=y
 # CONFIG_PQ2FADS is not set
 # CONFIG_LITE5200 is not set
 # CONFIG_MPC834x_SYS is not set
-CONFIG_GAMECUBE_RTC=y
 # CONFIG_GAMECUBE_CONSOLE is not set
 CONFIG_GAMECUBE_RESET=y
 # CONFIG_SMP is not set
@@ -133,12 +132,17 @@ CONFIG_ISA_DMA_API=y
 #
 CONFIG_GENERIC_ISA_DMA=y
 # CONFIG_PCI_DOMAINS is not set
-CONFIG_EXI=y
 
 #
 # PCCARD (PCMCIA/CardBus) support
 #
 # CONFIG_PCCARD is not set
+
+#
+# Expansion Interface (EXI) support
+#
+CONFIG_GAMECUBE_EXI=y
+CONFIG_GAMECUBE_RTC=y
 
 #
 # Advanced setup

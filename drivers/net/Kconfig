@@ -176,7 +176,7 @@ source "drivers/net/arm/Kconfig"
 
 config GAMECUBE_BBA
 	bool "Nintendo GameCube BroadBand Adapter network driver"
-	depends on NET_ETHERNET && GAMECUBE && EXI
+	depends on NET_ETHERNET && GAMECUBE && GAMECUBE_EXI
 	help
 	  Nintendo GameCube Broadband Adapter 10/100 Ethernet support.
 

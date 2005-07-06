@@ -96,7 +96,7 @@ config GAMECUBE_ARAM
 
 config GAMECUBE_MEMCARD
 	tristate "Nintendo GameCube memory card (EXPERIMENTAL)"
-	depends on GAMECUBE && EXI && EXPERIMENTAL && BROKEN
+	depends on GAMECUBE && GAMECUBE_EXI && EXPERIMENTAL && BROKEN
 	help
 	  This enables support for using memory cards compatible with the
 	  Nintendo GameCube.
@@ -107,7 +107,7 @@ config GAMECUBE_MEMCARD
 
 config GAMECUBE_SD
 	tristate "Nintendo GameCube SD and MMC memory card (EXPERIMENTAL)"
-	depends on GAMECUBE && EXI && EXPERIMENTAL && BROKEN
+	depends on GAMECUBE && GAMECUBE_EXI && EXPERIMENTAL && BROKEN
 	help
 	  This enables support for SD and MMC cards
 	  WARNING: driver is in alpha stage. Only reading supported. Card

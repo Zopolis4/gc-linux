@@ -82,7 +82,7 @@
  * # add the following lines to /drivers/block/Kconfig:
  *    config GAMECUBE_SD
  *      tristate "Nintendo GameCube SD and MMC memory card (EXPERIMENTAL)"
- *      depends on GAMECUBE && EXI && EXPERIMENTAL
+ *      depends on GAMECUBE && GAMECUBE_EXI && EXPERIMENTAL
  *      help
  *        This enables support for SD and MMC memory cards
  *

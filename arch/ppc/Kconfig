@@ -682,16 +682,6 @@ config PQ2ADS
 	depends on ADS8272
 	default y
 
-config GAMECUBE_RTC
-	bool "Nintendo GameCube Real Time Clock and SRAM"
-	depends on GAMECUBE && EXI
-	default y
-	help
-	  If you say yes to this option, support will be included for the
-	  Real Time Clock and SRAM of the Nintendo GameCube.
-	  
-	  If in doubt, say Y here.
-
 config GAMECUBE_CONSOLE
 	bool "Nintendo GameCube debug console"
 	depends on GAMECUBE
@@ -1211,19 +1201,9 @@ config PCI_PERMEDIA
 
 source "drivers/pci/Kconfig"
 
-config EXI
-	bool "EXI support (EXPERIMENTAL)"
-	depends on GAMECUBE && EXPERIMENTAL
-	default y
-	help
-	  This adds support for the Expansion Interface as found in
-	  the Nintendo GameCube. On the Expansion Interface sit the
-	  memory card slots, serial ports I & II, the Mask ROM, RTC,
-	  SRAM and UART.
-
-	  Say Y.
-
 source "drivers/pcmcia/Kconfig"
+
+source "drivers/exi/Kconfig"
 
 endmenu
 
