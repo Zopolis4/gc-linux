@@ -224,7 +224,8 @@ struct di_command {
 	struct di_device		*ddev;
 };
 
-#define di_command_ok(cmd)	((cmd)->result == DI_SR_TCINT)
+#define di_result_ok(result)	((result) == DI_SR_TCINT)
+#define di_command_ok(cmd)	(di_result_ok((cmd)->result))
 
 enum {
 	__DI_INTEROPERABLE = 0,
@@ -1174,6 +1175,7 @@ static void di_reset(struct di_device *ddev)
 {
 	u32 __iomem *reset_reg = (u32 __iomem *)0xcc003024;
 	u32 reset;
+
 #define FLIPPER_RESET_DVD 0x00000004
 
 	ddev->flags = DI_RESETTING|DI_MEDIA_CHANGED;
@@ -1205,7 +1207,7 @@ static u32 di_get_drive_status(struct di_device *ddev)
 /*
  * Enables the "privileged" command set.
  */
-static void di_enable_privileged_commands(struct di_device *ddev)
+static int di_enable_privileged_commands(struct di_device *ddev)
 {
 	struct di_command cmd;
 
@@ -1213,7 +1215,7 @@ static void di_enable_privileged_commands(struct di_device *ddev)
 	di_op_enable1(&cmd, ddev);
 	di_run_command_and_wait(&cmd);
 	di_op_enable2(&cmd, ddev);
-	di_run_command_and_wait(&cmd);
+	return di_run_command_and_wait(&cmd);
 }
 
 /*
@@ -1242,6 +1244,7 @@ static void di_patch_mem(struct di_device *ddev, u32 address,
 
 		/* ... and actually write to it */
 		opcode.op = DI_OP(DI_OP_CUSTOM, DI_DIR_READ | DI_MODE_IMMED);
+		opcode.name = "custom write";
 		di_op_custom(&cmd, ddev, &opcode);
 		memcpy(&cmd.cmdbuf0, data, chunk_size);
 		di_run_command(&cmd);
@@ -1283,6 +1286,17 @@ static void di_make_interoperable(struct di_device *ddev)
 	static struct di_drive_info drive_info
 			 __attribute__ ((aligned (DI_DMA_ALIGN+1)));
 	struct di_command cmd;
+	int result;
+
+	/* check that no one is banning access to the privileged command set */
+	result = di_enable_privileged_commands(ddev);
+	if (!di_result_ok(result)) {
+		DBG("Uhmm, looks like a bad-mannered drive code is"
+		    " already in place\n");
+		DBG("Let's hard reset the drive then...\n");
+
+		di_reset(ddev);
+	}
 
 	/* we'll use the drive model to select the appropiate firmware */
 	memset(&drive_info, 0, sizeof(drive_info));
@@ -1815,6 +1829,9 @@ static int di_init_irq(struct di_device *ddev)
 		(void (*)(unsigned long))di_motor_off;
 
 	set_bit(__DI_MEDIA_CHANGED, &ddev->flags);
+
+	/* calm down things a bit first */
+	di_quiesce(ddev);
 
 	/* request interrupt */
 	retval = request_irq(ddev->irq, di_irq_handler, 0,
