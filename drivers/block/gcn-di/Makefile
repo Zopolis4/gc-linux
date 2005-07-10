@@ -1,7 +1,8 @@
 obj-$(CONFIG_GAMECUBE_DI) += gcn-di.o
 
-$(obj)/gcn-di.o: $(obj)/drive_20020402.h \
-			$(obj)/drive_20010608.h \
+$(obj)/gcn-di.o: $(obj)/drive_20010608.h \
+			$(obj)/drive_20010831.h \
+			$(obj)/drive_20020402.h \
 			$(obj)/drive_20020823.h
 
 #CONFIG_GAMECUBE_DI_BUILD_FIRMWARE=y
@@ -24,14 +25,19 @@ cmd_build_difw = \
 	rm -f $(obj)/$(@F).o $(obj)/$(@F).elf $(obj)/$(@F).bin $(obj)/$(@F).s
 	
 
-targets += drive_20020402.h
-$(obj)/drive_20020402.h: DRIVE_MODEL := 0x20020402
-$(obj)/drive_20020402.h: $(src)/drive_all.S FORCE
-	$(call if_changed,build_difw)
-
 targets += drive_20010608.h
 $(obj)/drive_20010608.h: DRIVE_MODEL := 0x20010608
 $(obj)/drive_20010608.h: $(src)/drive_all.S FORCE
+	$(call if_changed,build_difw)
+
+targets += drive_20010831.h
+$(obj)/drive_20010831.h: DRIVE_MODEL := 0x20010831
+$(obj)/drive_20010831.h: $(src)/drive_all.S FORCE
+	$(call if_changed,build_difw)
+
+targets += drive_20020402.h
+$(obj)/drive_20020402.h: DRIVE_MODEL := 0x20020402
+$(obj)/drive_20020402.h: $(src)/drive_all.S FORCE
 	$(call if_changed,build_difw)
 
 targets += drive_20020823.h

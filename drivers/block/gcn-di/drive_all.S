@@ -30,8 +30,8 @@
 .equ 	ADB1ON,			(1<<3)
 
 
-.equ irq_handler_vector,	0x804c		/* 04, 06, 08 */
-.equ irq_depth,			0x805b		/* 04, 06, 08 */
+.equ irq_handler_vector,	0x804c		/* 04, 06, 08, Panasonic Q */
+.equ irq_depth,			0x805b		/* 04, 06, 08, Panasonic Q */
 
 .equ fake_command,		0xaa
 .equ set_drive_status_command,	0xee		/* same as in gcn-di.c */
@@ -61,7 +61,7 @@
 
 	.section	absolute
 
-	.org 0x0808aa /* 04, 06, 08 */
+	.org 0x0808aa /* 04, 06, 08, Panasonic Q */
 	initialize_drive:
 
 	.org 0x082f27 /* 04, 08 */
@@ -79,7 +79,6 @@
 	adb0_fixup_exit:
 
 	.equ disable_extensions_when_called_from,	0x0885c1 /* 04, 08 */
-
 
 #elif DRIVE_MODEL == 0x20010608 /* 06 */
 
@@ -102,7 +101,7 @@
 
 	.section	absolute
 
-	.org 0x0808aa /* 04, 06, 08 */
+	.org 0x0808aa /* 04, 06, 08, Panasonic Q */
 	initialize_drive:
 
 	.org 0x082f2e
@@ -143,7 +142,7 @@
 
 	.section	absolute
 
-	.org 0x0808aa /* 04, 06, 08 */
+	.org 0x0808aa /* 04, 06, 08, Panasonic Q */
 	initialize_drive:
 
 	.org 0x082f27 /* 04, 08 */
@@ -161,6 +160,46 @@
 	adb0_fixup_exit:
 
 	.equ disable_extensions_when_called_from,	0x0885c1 /* 04, 08 */
+
+#elif DRIVE_MODEL == 0x20010831 /* Panasonic Q */
+
+	.equ cmdbuf0,			0x80aa
+	.equ drive_status,		0x81a6
+	.equ drive_status2,		0x818a
+
+	.equ bert,			0x8078
+	.equ ernie,			0x8192
+	.equ cactus,			0x40ed02
+
+	.equ entry_return_address,	0x08d640
+
+	.equ data1,			0x008000
+	.equ data1_size,		0x6e
+	.equ data1_copy_from,		0x08ebf6
+
+	.equ bss,			0x00806e
+	.equ bss_size,			0x1ae
+
+	.section	absolute
+
+	.org 0x0808aa /* 04, 06, 08, Panasonic Q */
+	initialize_drive:
+
+	.org 0x082f7a
+	memcpy:
+
+	.org 0x082f9c
+	memset:
+
+	.equ adb1_break_address,	0x089e39
+	.org 0x089f84
+	adb1_fixup_exit:
+
+	.equ adb0_break_address,	0x08b302
+	.org 0x08b30d
+	adb0_fixup_exit:
+
+	.equ disable_extensions_when_called_from,	0x08867f
 
 #else
 	#error Sorry, unsupported drive.
@@ -462,7 +501,11 @@ adb1_fixup:
 
 .align 2
 saved_irq_handler:
+#if DRIVE_MODEL != 0x20010831
 	.long	0x00080A74	/* 04, 06, 08 */
+#else
+	.long	0x00080AA4	/* Panasonic Q */
+#endif
 enable_extensions:
 	.byte	0x01
 saved_cmdbuf0:

@@ -347,6 +347,20 @@ static struct di_drive_code drive_20020823[] = {
 	},
 };
 
+/*
+ * Panasonic Q (20010831) firmware extensions.
+ */
+
+#include "drive_20010831.h"
+
+static struct di_drive_code drive_20010831[] = {
+	[0] = {
+		.address = DI_DRIVE_CODE_BASE,
+		.len = sizeof(drive_20010831_firmware),
+		.code = (u8 *)drive_20010831_firmware,
+	},
+};
+
 
 /*
  * Drive operations table, incomplete.
@@ -1325,6 +1339,10 @@ static void di_make_interoperable(struct di_device *ddev)
 		case 0x20020823:
 			di_patch(ddev, drive_20020823,
 				 ARRAY_SIZE(drive_20020823));
+			break;
+		case 0x20010831:
+			di_patch(ddev, drive_20010831,
+				 ARRAY_SIZE(drive_20010831));
 			break;
 		default:
 			di_printk(KERN_ERR, "sorry, drive %x is not yet"
