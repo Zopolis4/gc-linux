@@ -231,7 +231,7 @@ _main:
 	/* zero out the bss */	
 	mov	bss, a0
 	sub	d0, d0
-	mov	bss_size, d0
+	mov	bss_size, d1
 	jsr	memset
 
 	/* replace the current irq handler with ours */
