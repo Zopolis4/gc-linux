@@ -158,9 +158,7 @@ static void gamecube_shutdown(void)
 
 static int gamecube_kexec_prepare(struct kimage *image)
 {
-	int retval = 0;
-
-	return retval;
+	return 0;
 }
 #endif /* CONFIG_KEXEC */
 
