@@ -174,12 +174,6 @@ config MII
 
 source "drivers/net/arm/Kconfig"
 
-config GAMECUBE_BBA
-	bool "Nintendo GameCube BroadBand Adapter network driver"
-	depends on NET_ETHERNET && GAMECUBE && GAMECUBE_EXI
-	help
-	  Nintendo GameCube Broadband Adapter 10/100 Ethernet support.
-
 config MACE
 	tristate "MACE (Power Mac ethernet) support"
 	depends on NET_ETHERNET && PPC_PMAC && PPC32
@@ -223,6 +217,15 @@ config OAKNET
 
 	  To compile this driver as a module, choose M here: the module
 	  will be called oaknet.
+
+config GAMECUBE_BBA
+	bool "Nintendo GameCube BroadBand Adapter (ethernet) support"
+	depends on NET_ETHERNET && GAMECUBE && GAMECUBE_EXI
+	help
+	  Say Y here to add ethernet support for the Broadband Adapter (BBA).
+
+	  To compile this driver as a module, choose M here: the module
+	  will be called gcn-bba.
 
 config ARIADNE
 	tristate "Ariadne support"
