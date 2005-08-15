@@ -1,7 +1,7 @@
 #
 # Automatically generated make config: don't edit
 # Linux kernel version: 2.6.12
-# Wed Jul  6 14:13:35 2005
+# Mon Aug 15 16:26:22 2005
 #
 CONFIG_MMU=y
 CONFIG_GENERIC_HARDIRQS=y
@@ -139,7 +139,7 @@ CONFIG_GENERIC_ISA_DMA=y
 # CONFIG_PCCARD is not set
 
 #
-# Expansion Interface (EXI) support
+# EXI (Expansion Interface) support
 #
 CONFIG_GAMECUBE_EXI=y
 CONFIG_GAMECUBE_RTC=y
