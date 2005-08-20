@@ -254,7 +254,7 @@ config PPC_STD_MMU
 
 config NOT_COHERENT_CACHE
 	bool
-	depends on 4xx || 8xx || GAMECUBE
+	depends on 4xx || 8xx
 	default y
 
 endmenu
