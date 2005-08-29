@@ -274,9 +274,14 @@ config PPC_STD_MMU
 	depends on 6xx || POWER3 || POWER4
 	default y
 
+# FIXME: This is meant for cache incoherent cores, which is not the case for
+# 750CXe (Gekko). However, according to isobel, turning this off stalls I/O
+# for drivers using the DMA API (gcn-{dvd,bba}). For now this remains a
+# band-aid for something else that's broken..
+#
 config NOT_COHERENT_CACHE
 	bool
-	depends on 4xx || 8xx || E200
+	depends on 4xx || 8xx || E200 || GAMECUBE
 	default y
 
 endmenu
