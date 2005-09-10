@@ -26,6 +26,15 @@
 
 #include "gamecube.h"
 
+/*
+ * include/asm-ppc/io.h assumes everyone else that is not APUS provides
+ * these.  Since we don't have either PCI or ISA busses, these are only
+ * here so things actually compile.
+ */
+unsigned long isa_io_base = 0;
+unsigned long isa_mem_base = 0;
+unsigned long pci_dram_offset = 0;
+
 
 static unsigned long gamecube_find_end_of_memory(void)
 {
