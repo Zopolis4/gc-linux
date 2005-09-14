@@ -1,9 +1,11 @@
 /*
  * drivers/block/gcn-sd.c
  *
- * Nintendo GameCube SD/MMC memory card driver
- * Copyright (C) 2004-2005 The GameCube Linux Team
- * Copyright (C) 2004,2005 by Rob Reilink (rob@reilink.net)
+ * MMC/SD card block driver for the Nintendo GameCube
+ * Copyright (C) 2005 The GameCube Linux Team
+ * Copyright (C) 2004,2005 Rob Reylink
+ * Copyright (C) 2005 Todd Jeffreys
+ * Copyright (C) 2005 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -13,411 +15,1423 @@
  */
 
 /*
+ * This is a block device driver for the Nintendo SD Card Adapter (DOL-019)
+ * and compatible hardware.
+ * The driver has been tested with SPI-enabled MMC cards, and SD cards.
  *
- *   THE AUTHOR OF THIS SOFTWARE AND HARDWARE CAN NOT BE HELD LIABLE
- *   FOR ANY POSSIBLE DAMAGE CAUSED TO THE GAMECUBE, THE SD- OR MMC
- *   CARD OR ANY OTHER HARDWARE USED. YOU USE THIS INFORMATION AND
- *   SOFTWARE AT YOUR OWN RISK
+ * The following table shows the device major and minors needed to access
+ * MMC/SD cards:
  *
- *		How to connect the SD/MMC card to the GC
+ * +------+-------------+-------+-------+
+ * | Slot | Target      | Major | Minor |
+ * +======+=============+=======+=======+
+ * | A    | disk        | 61    | 0     |
+ * | A    | partition 1 | 61    | 1     |
+ * | A    | partition 2 | 61    | 2     |
+ * | A    | partition 3 | 61    | 3     |
+ * | A    | partition 4 | 61    | 4     |
+ * | A    | partition 5 | 61    | 5     |
+ * | A    | partition 6 | 61    | 6     |
+ * | A    | partition 7 | 61    | 7     |
+ * +------+-------------+-------+-------+
+ * | B    | disk        | 61    | 8     |
+ * | B    | partition 1 | 61    | 9     |
+ * | B    | partition 2 | 61    | 10    |
+ * | B    | partition 3 | 61    | 11    |
+ * | B    | partition 4 | 61    | 12    |
+ * | B    | partition 5 | 61    | 13    |
+ * | B    | partition 6 | 61    | 14    |
+ * | B    | partition 7 | 61    | 15    |
+ * +------+-------------+-------+-------+
  *
- *   GC P5 (mem card B)           SD/MMC
- *    2  gnd                    3,6 vss1,vss2
- *    4  3v3                    4   vdd
- *    5  do                     2   DataIn
- *    7  di                     7   DataOut 
- *    9  /cs                    1   /CS
- *    11 clk                    5   clk
- *    1  connected to 12 (card detect)
+ * For example, run "mknod /dev/sdcardb1 b 61 9" to create a device file
+ * to access the 1st partition on the card inserted in memcard slot B.
  *
- *   According to 'good electronics practise' it is advised to solder a 100nF
- *   capacitor between vdd and vss near the SD/MMC connector
- *
- *   Please note the layout of the pads on the sd card:
- *     __________________
- *    /                  |
- *   /   1 2 3 4 5 6 7 8 |
- *   | 9                 |
- *   |                   |
- *   |                   |
- *   |                   |
- *   |                   |
- *   |                   |
- *   |                   |
- *   |                   |
- *   |                   |
- *   |___________________|
- *
- *   Pin 8 and 9 do not exist on the MMC card; that explains the 'weird' numbering
- *
- *  To connect the card to the gamecube you can either solder wires to the bottom
- *  side of the mainboard (they can be led to the outside through a hole in the metal
- *  shielding on the right of the cube, but be sure the wires do not get damaged by
- *  the sharp edge) or scrap a GC memory card. For the last option, ne sure that the
- *  original electronics are disconnected!
- *
- *  If you choose to connect it by soldering, do not use the memory card slot anymore!
- *  
- *  For the connection to the card, it seems you can use an old floppy connector, but
- *  there are also special SD connectors available. The SD connector accepts both SD 
- *  and MMC cards; the MMC connector only accepts MMC cards (they are thinner). It is
- *  therefore better to buy an SD connector.
- *
- *  Note that this software has only been tested with an SD card.
- *  The MMC-adaptor commercially available has not been tested, but might work as well
  */
 
-/* Software hints
- *
- * # This driver is in alpha stage:
- *     Only reading supported, not writing
- *     Card size is reported as about 100MB, it is not read from the card
- *     Cards are NOT hot-pluggable
- *     The driver cannot be compiled as module due to dependence of the
- *         EXI driver which is still 'work in progress'
- *
- * # add the following line to /drivers/block/Makefile:
- *    obj-$(CONFIG_GAMECUBE_SD)	+= gcn-sd.o
- * 
- * # add the following lines to /drivers/block/Kconfig:
- *    config GAMECUBE_SD
- *      tristate "Nintendo GameCube SD and MMC memory card (EXPERIMENTAL)"
- *      depends on GAMECUBE && GAMECUBE_EXI && EXPERIMENTAL
- *      help
- *        This enables support for SD and MMC memory cards
- *
- * # to support fat, it might be nescessary to select cp437=y under Filesystems->NLS
- *
- * # This is the author's first real kernel driver, so please tell me
- *   how it 'should have been done' ;)
- */
+#define SD_DEBUG
+
+#include <linux/kernel.h>
+#include <linux/module.h>
+#include <linux/init.h>
+#include <linux/delay.h>
+#include <linux/major.h>
+#include <linux/blkdev.h>
+#include <linux/hdreg.h>
+#include <linux/crc-ccitt.h>
 
 /*
- *  TODO: clean up this
+ * The existing Linux MMC layer does not support SPI operation yet.
+ * Anyway, we try to recycle here some common code.
  */
-#include <linux/module.h>	/* Needed by all modules */
-#include <linux/kernel.h>	/* Needed for KERN_ALERT */
-#include <linux/fs.h>
-#include <linux/init.h>
-#include <linux/ioport.h>
-#include <linux/exi.h>
-#include <asm/uaccess.h>
-#include <linux/blkdev.h>
+#include <linux/mmc/host.h>
+#include <linux/mmc/card.h>
+#include <linux/mmc/protocol.h>
 
-#ifndef EXI_LITE
-#error Sorry, this driver needs currently the gcn-exi-lite framework.
+#include <linux/exi.h>
+
+#define DRV_MODULE_NAME "gcn-sd"
+#define DRV_DESCRIPTION "MMC/SD card block driver for the Nintendo GameCube"
+#define DRV_AUTHOR      "Rob Reylink, " \
+			"Todd Jeffreys, " \
+                        "Albert Herranz"
+
+MODULE_AUTHOR(DRV_AUTHOR);
+MODULE_DESCRIPTION(DRV_DESCRIPTION);
+MODULE_LICENSE("GPL");
+
+static char sd_driver_version[] = "0.1-isobel";
+
+#define sd_printk(level, format, arg...) \
+	printk(level DRV_MODULE_NAME ": " format , ## arg)
+
+#ifdef SD_DEBUG
+#  define DBG(fmt, args...) \
+          printk(KERN_ERR "%s: " fmt, __FUNCTION__ , ## args)
+#else
+#  define DBG(fmt, args...)
 #endif
 
-#define DEVICE_NAME            "gcn-sd"
-#define DRIVER_AUTHOR          "Rob Reilink <rob@reilink.net>"
-#define DRIVER_DESC            "Gamecube SD-card driver"
-#define DRIVER_MODULE_NAME     "gcn-sd"
-#define PFX DRIVER_MODULE_NAME ": "
+#define SD_SLOTA_CHANNEL	0	/* EXI0xxx */
+#define SD_SLOTA_DEVICE		0	/* chip select, EXI0CSB0 */
 
-#define GCN_SD_MAJOR 0
+#define SD_SLOTB_CHANNEL	1	/* EXI1xxx */
+#define SD_SLOTB_DEVICE		0	/* chip select, EXI1CSB0 */
 
-#define SUCCESS 0
-#define FAIL -1
+#define SD_SPI_CLK		16000000
+#define SD_SPI_CLK_IDX		EXI_CLK_16MHZ
 
-#define GCN_SD_SPEED 4
+/* cycles in 8 clock units */
+#define SD_IDLE_CYCLES		80
+#define SD_FINISH_CYCLES	8
 
-static int Major;
-static struct request_queue *queue;
+/* several times in 8 clock units */
+#define MMC_SPI_N_CR		8	/* card response time */
 
-static struct gcn_sd_device_struct {
-	unsigned long size;
+/* data start and stop tokens */
+#define MMC_SPI_TOKEN_START_SINGLE_BLOCK_READ		0xfe
+#define MMC_SPI_TOKEN_START_MULTIPLE_BLOCK_READ		0xfe
+#define MMC_SPI_TOKEN_START_SINGLE_BLOCK_WRITE		0xfe
+#define MMC_SPI_TOKEN_START_MULTIPLE_BLOCK_WRITE	0xfc
+#define MMC_SPI_TOKEN_STOP_MULTIPLE_BLOCK_WRITE		0xfd
+
+/* R1 is 48bits in MultiMediaCard mode but just 1 byte in SPI mode */
+#define R1_SPI_IDLE_STATE	(1<<0)
+#define R1_SPI_ERASE_RESET	(1<<1)
+#define R1_SPI_ILLEGAL_COMMAND	(1<<2)
+#define R1_SPI_COM_CRC_ERROR	(1<<3)
+#define R1_SPI_ERASE_SEQ_ERROR	(1<<4)
+#define R1_SPI_ADDRESS_ERROR	(1<<5)
+#define R1_SPI_PARAMETER_ERROR	(1<<6)
+#define R1_SPI_ALWAYS_ZERO	(1<<7)
+
+/* R1b is (R1, ...) 1 byte + N*bytes in SPI mode */
+
+/* R2 is (R1, r2) 2 bytes in SPI mode */
+#define R2_SPI_CARD_IS_LOCKED	(1<<0)
+#define R2_SPI_WP_ERASE_SKIP	(1<<1)
+#define R2_SPI_ERROR		(1<<2)
+#define R2_SPI_CC_ERROR		(1<<3)
+#define R2_SPI_CARD_ECC_FAILED	(1<<4)
+#define R2_SPI_WP_VIOLATION	(1<<5)
+#define R2_SPI_ERASE_PARAMETER	(1<<6)
+#define R2_SPI_OUT_OF_RANGE	(1<<7)
+
+/* R3 is (R1, OCR) 5 bytes in SPI mode */
+
+/* this is still a missing command in the current MMC framework ... */
+#define MMC_READ_OCR		58
+
+#define MMC_SHIFT		3	/* 8 partitions */
+
+#define SD_MAJOR		61
+#define SD_NAME			"sdcard"
+
+#define KERNEL_SECTOR_SHIFT     9
+#define KERNEL_SECTOR_SIZE      (1 << KERNEL_SECTOR_SHIFT)	/*512 */
+
+/*
+ * OCR Bit positions to 10s of Vdd mV.
+ */
+static const unsigned short mmc_ocr_bit_to_vdd[] = {
+	150, 155, 160, 165, 170, 180, 190, 200,
+	210, 220, 230, 240, 250, 260, 270, 280,
+	290, 300, 310, 320, 330, 340, 350, 360
+};
+
+static const unsigned int tran_exp[] = {
+	10000, 100000, 1000000, 10000000,
+	0, 0, 0, 0
+};
+
+static const unsigned char tran_mant[] = {
+	0, 10, 12, 13, 15, 20, 25, 30,
+	35, 40, 45, 50, 55, 60, 70, 80,
+};
+
+static const unsigned int tacc_exp[] = {
+	1, 10, 100, 1000, 10000, 100000, 1000000, 10000000,
+};
+
+static const unsigned int tacc_mant[] = {
+	0, 10, 12, 13, 15, 20, 25, 30,
+	35, 40, 45, 50, 55, 60, 70, 80,
+};
+
+enum {
+	__SD_MEDIA_CHANGED = 0
+};
+
+/*
+ * Raw MMC/SD command.
+ */
+struct sd_command {
+	u8 cmd;
+	u32 arg;
+	u8 crc;
+} __attribute__ ((__packed__));	/* do not add padding, please */
+
+/*
+ * MMC/SD host.
+ *
+ * We have one host for each memory card slot. And a host can only drive a
+ * single card each time.
+ */
+struct sd_host {
 	spinlock_t lock;
-	struct gendisk *gd;
-} gcn_sd_device;
 
+	unsigned long flags;
+#define SD_MEDIA_CHANGED	(1<<__SD_MEDIA_CHANGED)
 
+	/* card related info */
+	struct mmc_card card;
+
+	/* timeouts in 8 clock cycles */
+	unsigned long read_timeout;
+	unsigned long write_timeout;
+
+	/* operations condition register */
+	u32 ocr_avail;		/* just 3.3V for the GameCube */
+	u32 ocr;
+
+	/* last card response */
+	u8 resp;
+
+	/* frequency */
+	unsigned int clock;
+	u8 exi_clock;
+
+	/* command buffer */
+	struct sd_command cmd;
+
+	struct gendisk *disk;
+	struct request_queue *queue;
+	spinlock_t queue_lock;
+
+	int ref_count;
+
+	struct exi_device *exi_device;
+};
 
 /*
- *  Funtions start here
+ * MMC/SD data structures manipulation.
  *
  */
 
 /*
- *  EXI/SD functions
- *
+ * FIXME: use a faster method (table)
+ * (the in-kernel crc 16 (ccitt crc) tables seem not compatible with us)
  */
-static char gcn_sd_cmd_short_nofinish(unsigned char cmd) {
-	unsigned char dat;
-	int tries;
-	exi_select(1,0,GCN_SD_SPEED);
-	dat=cmd|0x40;
-	exi_write(1,&dat,1);
-	dat=255;
-	for (tries=0;(tries < 30) && (dat == 0xff);tries++)
-		exi_read(1,&dat,1);
+u16 crc_xmodem_update(u16 crc, u8 data)
+{
+	int i;
 
-	return dat;
-}
+	crc = crc ^ ((u16) data << 8);
 
-static char gcn_sd_cmd_nofinish(unsigned char cmd, unsigned long data) {
-	unsigned char snd[6],ret;
-	int tries;
-	exi_select(1,0,GCN_SD_SPEED);
-	snd[0]=cmd|0x40;
-	snd[1]=data >> 24;
-	snd[2]=(data >> 16) & 0xff;
-	snd[3]=(data >> 8) & 0xff;
-	snd[4]=data & 0xff;
-	snd[5]=0x95;
-
-	exi_write(1,&snd,6);
-	
-	//wait loop
-	ret=0xff;
-	for(tries=0;(tries<100) && (ret==0xff);tries++)
-		exi_read(1,&ret,1);
-	return ret;
-}
-
-static void gcn_sd_finish(void) {
-	unsigned char zero=0;
-	exi_deselect(1);
-	/*last dummy write. This may look weird, accessing the device
-	  after it has been deselected, but the SD manual states that a SD
-	  card needs 8 extra clock cycles *after* deselection, and this is
-	  how to generate those
-	*/  
-	exi_write(1, &zero, 1);
-
-}
-
-inline static char gcn_sd_cmd(unsigned char cmd) {
-	char i=gcn_sd_cmd_nofinish(cmd,0);
-	gcn_sd_finish();
-	return i;
-} 
-
-inline static char gcn_sd_cmd_short(unsigned char cmd) {
-	char i=gcn_sd_cmd_short_nofinish(cmd);
-	gcn_sd_finish();
-	return i;
-}
-
-/* returns: found?SUCCESS:FAIL */
-static int gcn_sd_init(void) {
-	int i,ret; long c;
-	int tries=0;
-
-	//Send 80 clocks while not selected
-	exi_select(1,1,GCN_SD_SPEED);  //SLOOW TODO:fast, select=-1 ofzo (niets selecten)
-	exi_deselect(1);
-	for(i=0;i<20;i++) {
-	 	c=0xffffffff;
-		exi_write(1,&c,4);
+	for (i = 0; i < 8; i++) {
+		if (crc & 0x8000)
+			crc = (crc << 1) ^ 0x1021;
+		else
+			crc <<= 1;
 	}
 
-	
-	//send CMD0 to init
-	gcn_sd_cmd(0);
-	gcn_sd_cmd_short(0);
-	for(tries=0;tries<100;tries++) {
-		if ((ret=gcn_sd_cmd_short(58))==0) return SUCCESS;
-		printk(KERN_ALERT PFX "cmd 58 returned %d\n",ret);
-		if ((ret=gcn_sd_cmd_short(1))==0) return SUCCESS;
-		printk(KERN_ALERT PFX "cmd 1 returned %d\n",ret);
+	return crc;
+}
+
+#define UNSTUFF_BITS(resp,start,size)				\
+	({							\
+	const int __size = size;				\
+	const u32 __mask = (__size < 32 ? 1 << __size : 0) - 1;	\
+	const int __off = 3 - ((start) / 32);			\
+	const int __shft = (start) & 31;			\
+	u32 __res;						\
+								\
+	__res = resp[__off] >> __shft;				\
+	if (__size + __shft > 32)				\
+		__res |= resp[__off-1] << ((32 - __shft) % 32);	\
+	__res & __mask;						\
+	})
+
+/*
+ * Given the decoded CSD structure, decode the raw CID to our CID structure.
+ */
+static void mmc_decode_cid(struct mmc_card *card)
+{
+	u32 *resp = card->raw_cid;
+
+	memset(&card->cid, 0, sizeof(struct mmc_cid));
+
+	if (mmc_card_sd(card)) {
+		card->cid.manfid = UNSTUFF_BITS(resp, 120, 8);
+		card->cid.oemid = UNSTUFF_BITS(resp, 104, 16);
+		card->cid.prod_name[0] = UNSTUFF_BITS(resp, 96, 8);
+		card->cid.prod_name[1] = UNSTUFF_BITS(resp, 88, 8);
+		card->cid.prod_name[2] = UNSTUFF_BITS(resp, 80, 8);
+		card->cid.prod_name[3] = UNSTUFF_BITS(resp, 72, 8);
+		card->cid.prod_name[4] = UNSTUFF_BITS(resp, 64, 8);
+		card->cid.hwrev = UNSTUFF_BITS(resp, 60, 4);
+		card->cid.fwrev = UNSTUFF_BITS(resp, 56, 4);
+		card->cid.serial = UNSTUFF_BITS(resp, 24, 32);
+		card->cid.year = UNSTUFF_BITS(resp, 12, 8);
+		card->cid.month = UNSTUFF_BITS(resp, 8, 4);
+		card->cid.year += 2000;
+	} else {
+		/*
+		 * The selection of the format here is guesswork based upon
+		 * information people have sent to date.
+		 */
+		switch (card->csd.mmca_vsn) {
+		case 0:	/* MMC v1.0 - v1.2 */
+		case 1:	/* MMC v1.4 */
+			card->cid.manfid = UNSTUFF_BITS(resp, 104, 24);
+			card->cid.prod_name[0] = UNSTUFF_BITS(resp, 96, 8);
+			card->cid.prod_name[1] = UNSTUFF_BITS(resp, 88, 8);
+			card->cid.prod_name[2] = UNSTUFF_BITS(resp, 80, 8);
+			card->cid.prod_name[3] = UNSTUFF_BITS(resp, 72, 8);
+			card->cid.prod_name[4] = UNSTUFF_BITS(resp, 64, 8);
+			card->cid.prod_name[5] = UNSTUFF_BITS(resp, 56, 8);
+			card->cid.prod_name[6] = UNSTUFF_BITS(resp, 48, 8);
+			card->cid.hwrev = UNSTUFF_BITS(resp, 44, 4);
+			card->cid.fwrev = UNSTUFF_BITS(resp, 40, 4);
+			card->cid.serial = UNSTUFF_BITS(resp, 16, 24);
+			card->cid.month = UNSTUFF_BITS(resp, 12, 4);
+			card->cid.year = UNSTUFF_BITS(resp, 8, 4);
+			card->cid.year += 1997;
+			break;
+		case 2:	/* MMC v2.0 - v2.2 */
+		case 3:	/* MMC v3.1 - v3.3 */
+			card->cid.manfid = UNSTUFF_BITS(resp, 120, 8);
+			card->cid.oemid = UNSTUFF_BITS(resp, 104, 16);
+			card->cid.prod_name[0] = UNSTUFF_BITS(resp, 96, 8);
+			card->cid.prod_name[1] = UNSTUFF_BITS(resp, 88, 8);
+			card->cid.prod_name[2] = UNSTUFF_BITS(resp, 80, 8);
+			card->cid.prod_name[3] = UNSTUFF_BITS(resp, 72, 8);
+			card->cid.prod_name[4] = UNSTUFF_BITS(resp, 64, 8);
+			card->cid.prod_name[5] = UNSTUFF_BITS(resp, 56, 8);
+			card->cid.serial = UNSTUFF_BITS(resp, 16, 32);
+			card->cid.month = UNSTUFF_BITS(resp, 12, 4);
+			card->cid.year = UNSTUFF_BITS(resp, 8, 4);
+			card->cid.year += 1997;
+			break;
+		default:
+			sd_printk(KERN_ERR, "card has unknown MMCA"
+				  " version %d\n", card->csd.mmca_vsn);
+			mmc_card_set_bad(card);
+			break;
+		}
 	}
-	return FAIL;
+}
+
+/*
+ * Given a 128-bit response, decode to our card CSD structure.
+ */
+static void mmc_decode_csd(struct mmc_card *card)
+{
+	struct mmc_csd *csd = &card->csd;
+	unsigned int e, m, csd_struct;
+	u32 *resp = card->raw_csd;
+
+	/*
+	 * We only understand CSD structure v1.0, v1.1 and v2.
+	 * v2 has extra information in bits 15, 11 and 10.
+	 */
+	csd_struct = UNSTUFF_BITS(resp, 126, 2);
+	if (csd_struct != 0 && csd_struct != 1 && csd_struct != 2) {
+		sd_printk(KERN_ERR, "unrecognised CSD structure"
+			  " version %d\n", csd_struct);
+		mmc_card_set_bad(card);
+		return;
+	}
+
+	csd->mmca_vsn = UNSTUFF_BITS(resp, 122, 4);
+
+	/* TAAC */
+	m = UNSTUFF_BITS(resp, 115, 4);
+	e = UNSTUFF_BITS(resp, 112, 3);
+	csd->tacc_ns = (tacc_exp[e] * tacc_mant[m] + 9) / 10;
+
+	/* NSAC */
+	csd->tacc_clks = UNSTUFF_BITS(resp, 104, 8) * 100;
+
+	/* TRAN_SPEED */
+	m = UNSTUFF_BITS(resp, 99, 4);
+	e = UNSTUFF_BITS(resp, 96, 3);
+	csd->max_dtr = tran_exp[e] * tran_mant[m];
+
+	/* CCC */
+	csd->cmdclass = UNSTUFF_BITS(resp, 84, 12);
+
+	/* READ_BL_LEN */
+	csd->read_blkbits = UNSTUFF_BITS(resp, 80, 4);
+
+	/* C_SIZE */
+	m = UNSTUFF_BITS(resp, 62, 12);
+
+	/* C_SIZE_MULT */
+	e = UNSTUFF_BITS(resp, 47, 3);
+
+	csd->capacity = (1 + m) << (e + 2);	/* in card blocks */
 }
 
 #if 0
-static int gcn_sd_read_csd(void) {
-	unsigned char c;
-	unsigned char data[16];
-	int tries;
-	c=gcn_sd_cmd_short_nofinish(9);
-	if (c!=0) {
-		gcn_sd_finish();
-		printk(KERN_INFO PFX "could not read csd(%d)\n",c);
-		return FAIL;
-	}
-	for (tries=0;(tries<100000) & (c!=0xfe);tries++)
-		exi_read(1,&c,1);
-
-	if (c!=0xfe) {
-		gcn_sd_finish();
-		printk(KERN_ERR PFX "error: no start token after csd read request\n");
-		return FAIL;		
-	}
-	exi_read(1,data,16);
-	gcn_sd_finish();
-	int i;
-	printk(KERN_INFO PFX "CSD data:");
-	for (i=0;i<16;i++) printk ("%x ",data[i]);
-	printk("\n");
-
-	return SUCCESS;
+static void sd_print_cid(struct mmc_cid *cid)
+{
+	sd_printk(KERN_INFO,
+		  "manfid = %d\n"
+		  "oemid = %d\n"
+		  "prod_name = %s\n"
+		  "hwrev = %d\n"
+		  "fwrev = %d\n"
+		  "serial = %08x\n"
+		  "year = %d\n"
+		  "month = %d\n",
+		  cid->manfid,
+		  cid->oemid,
+		  cid->prod_name,
+		  cid->hwrev, cid->fwrev, cid->serial, cid->year, cid->month);
 }
 #endif
 
-static int gcn_sd_block_read(unsigned long sector,void * data) {
-	unsigned char c;
-	long dummy;
-	int tries;
-	c=gcn_sd_cmd_nofinish(17,(sector) << 9);
-	if (c!=0)	{
-		gcn_sd_finish();
-		printk(KERN_ERR PFX "error: read command returned %d while reading sector %lu\n" ,c,sector);
-		return FAIL;
+/* */
+static inline unsigned int ms_to_cycles(unsigned int ms, unsigned int clock)
+{
+	return (ms * (clock / 1000));
+}
+
+/* */
+static unsigned int sd_set_clock(struct sd_host *host, unsigned int clock)
+{
+	if (clock >= 32000000) {
+		host->clock = 32000000;
+		host->exi_clock = EXI_CLK_32MHZ;
+	} else if (clock >= 16000000) {
+		host->clock = 16000000;
+		host->exi_clock = EXI_CLK_16MHZ;
+	} else if (clock >= 8000000) {
+		host->clock = 8000000;
+		host->exi_clock = EXI_CLK_8MHZ;
+	} else if (clock >= 4000000) {
+		host->clock = 4000000;
+		host->exi_clock = EXI_CLK_4MHZ;
+	} else if (clock >= 2000000) {
+		host->clock = 2000000;
+		host->exi_clock = EXI_CLK_2MHZ;
+	} else {
+		host->clock = 1000000;
+		host->exi_clock = EXI_CLK_1MHZ;
 	}
+	return host->clock;
+}
 
-	//Wait for start of data token 0xfe TODO put this in a function
-	for (tries=0;(tries<100000) & (c!=0xfe);tries++)
-		exi_read(1,&c,1);
-
-	if (c!=0xfe) {
-		gcn_sd_finish();
-		printk(KERN_ERR PFX "error: no start token after read request sector=%lu\n" ,sector);
-		return FAIL;
-	}
-
-	exi_read(1,data,512);
-	exi_read(1,&dummy,3); //response,CRC, dummy. todo: use it?
-	gcn_sd_finish();
-
-	return SUCCESS;
-	
+/* */
+static void sd_calc_timeouts(struct sd_host *host)
+{
+	/*
+	 * FIXME: calculate timeouts from card information
+	 * (use safe defaults for now)
+	 */
+	host->read_timeout = ms_to_cycles(100, host->clock);
+	host->write_timeout = ms_to_cycles(250, host->clock);
 }
 
 /*
- * Block driver functions
- *
- */ 
+ * SPI I/O support routines, including some handy SPI to EXI language
+ * translations.
+ */
 
-static void gcn_sd_request(request_queue_t *q) {
+/* */
+static inline void spi_cs_low(struct sd_host *host)
+{
+	exi_dev_select(host->exi_device);
+}
+
+/* */
+static inline void spi_cs_high(struct sd_host *host)
+{
+	exi_dev_deselect(host->exi_device);
+}
+
+/* */
+static inline void spi_write(struct sd_host *host, void *data, size_t len)
+{
+	exi_dev_write(host->exi_device, data, len);
+}
+
+/* */
+static inline void spi_read(struct sd_host *host, void *data, size_t len)
+{
+	exi_dev_read(host->exi_device, data, len);
+}
+
+/* cycles are expressed in 8 clock cycles */
+static void spi_burn_cycles(struct sd_host *host, int cycles)
+{
+	u8 d;
+
+	while (cycles-- > 0) {
+		d = 0xff;
+		spi_write(host, &d, sizeof(d));
+	}
+}
+
+/* cycles are expressed in 8 clock cycles */
+static int spi_wait_for_resp(struct sd_host *host,
+			     u8 resp, u8 resp_mask, unsigned long cycles)
+{
+	u8 data;
+
+	while (cycles-- > 0) {
+		spi_read(host, &data, sizeof(data));
+		if ((data & resp_mask) == resp) {
+			host->resp = data;
+			return data;
+		}
+	}
+	return -ENODATA;
+}
+
+/*
+ *
+ */
+static int sd_read_data(struct sd_host *host, void *data, size_t len, int token)
+{
+	int retval = 0;
+	int chunk, chunk_size = 31;
+
+	if (token) {
+		retval = spi_wait_for_resp(host, token, 0xff,
+					   host->read_timeout);
+		if (retval < 0)
+			goto out;
+	}
+
+	/*
+	 * Houston, we have a problem.
+	 *
+	 * The EXI hardware implementation seems to use a shift register which
+	 * outputs data from the MSB to the MOSI line and inputs data from
+	 * the MISO line into the LSB.
+	 * When a read operation is performed, data from the MISO line
+	 * is entered into the shift register LSB as expected. But also the
+	 * data already present in the shift register is sent out through the
+	 * MOSI line from the MSB.
+	 * This is in fact the "feature" that enabled tmbinc to dump the IPL.
+	 *
+	 * When interfacing with SD cards, this causes us a serious problem.
+	 * We are required to send all ones (1s) while reading data from
+	 * the SD card. Otherwise, the card can interpret the data sent as
+	 * commands (if they start with the bit pattern 01 for example).
+	 *
+	 * If we use the EXI immediate mode transfer, we can workaround the
+	 * situation by writing all 1s to the DATA register before reading
+	 * (this is indeed automatically done by the EXI layer).
+	 * But we simply can't do that when using EXI DMA transfers (these
+	 * kind of transfers do not allow bidirectional operation).
+	 *
+	 * Given the fact that recently read data will be sent back to the
+	 * card as host output, we can end up with funny and not so funny
+	 * situations.
+	 * For example, if the data you are reading contains the byte
+	 * sequence:
+	 * - 40 00 00 00 00 95
+	 *   it will cause a software reset of the card
+	 *
+	 * If we enable CRC mode we can minimize the problem, but the risk
+	 * is there.
+	 *
+	 */
+#if 1
+	/* we enforce immediate mode by using transfers of less than 32 bytes */
+	while (len > 0) {
+		chunk = (len >= chunk_size) ? chunk_size : len;
+		spi_read(host, data, chunk);
+		len -= chunk;
+		data += chunk;
+	}
+#else
+	spi_read(host, data, len);
+#endif
+	retval = 0;
+
+out:
+	return retval;
+}
+
+/*
+ * MMC/SD command transactions related routines.
+ *
+ */
+
+/* */
+static inline void sd_cmd(struct sd_command *cmd, u8 opcode, u32 arg)
+{
+	cmd->cmd = 0x40 | opcode;
+	cmd->arg = arg;
+	cmd->crc = 0x01;	/* FIXME, crc is not currently used */
+}
+
+/* */
+static inline void sd_cmd_go_idle_state(struct sd_command *cmd)
+{
+	cmd->cmd = 0x40;
+	cmd->arg = 0;
+	cmd->crc = 0x95;
+}
+
+/* */
+static inline void sd_debug_print_cmd(struct sd_command *cmd)
+{
+	DBG("cmd = %d, arg = %08x, crc = %02x\n",
+	    cmd->cmd & ~0x40, cmd->arg, cmd->crc);
+}
+
+/*
+ *
+ */
+static int sd_start_command(struct sd_host *host, struct sd_command *cmd)
+{
+	int retval = 0;
+
+	/* select the card by driving CS low */
+	spi_cs_low(host);
+
+	/* send the command through the MOSI line */
+	spi_write(host, cmd, sizeof(*cmd));
+
+	/*
+	 * Wait for the card response.
+	 * Card responses come in the MISO line and have the most significant
+	 * bit cleared.
+	 */
+	retval = spi_wait_for_resp(host, 0x00, 0x80, MMC_SPI_N_CR);
+
+	if (retval > 0 && !(retval & 0x01) && cmd->cmd != 0x40)
+		DBG("command = %d, response = 0x%02x\n", cmd->cmd & ~0x40,
+		    retval);
+
+	return retval;
+}
+
+/*
+ *
+ */
+static void sd_end_command(struct sd_host *host)
+{
+	/* wait 8 clock cycles as dictated by the specification */
+	spi_burn_cycles(host, SD_FINISH_CYCLES);
+
+	/* deselect the card by driving CS high */
+	spi_cs_high(host);
+}
+
+/*
+ *
+ */
+static int sd_run_no_data_command(struct sd_host *host, struct sd_command *cmd)
+{
+	int retval;
+
+	/* send command, wait for response, and burn extra cycles */
+	retval = sd_start_command(host, cmd);
+	sd_end_command(host);
+
+	return retval;
+}
+
+/*
+ *
+ */
+static int sd_generic_read(struct sd_host *host,
+			   u8 opcode, u32 arg,
+			   void *data, size_t len, int token)
+{
+	struct sd_command *cmd = &host->cmd;
+	u16 crc, calc_crc = 0xffff;
+	int retval;
+
+	/* build raw command */
+	sd_cmd(cmd, opcode, arg);
+
+	/* select card, send command and wait for response */
+	retval = sd_start_command(host, cmd);
+	if (retval < 0)
+		goto out;
+	if (retval != 0x00) {
+		retval = -EIO;
+		goto out;
+	}
+
+	/* wait for read token, then read data */
+	retval = sd_read_data(host, data, len, token);
+	if (retval < 0)
+		goto out;
+
+	/* read trailing crc */
+	spi_read(host, &crc, sizeof(crc));
+
+	retval = 0;
+
+	/* FIXME, rewrite this a bit */
+	{
+		calc_crc = 0;
+		u8 *d = data;
+		int l = len;
+
+		while (l-- > 0)
+			calc_crc = crc_xmodem_update(calc_crc, *d++);
+
+		if (calc_crc != crc)
+			retval = -EIO;
+	}
+
+out:
+	//spi_wait_for_resp(host, 0xff, 0xff, host->read_timeout);
+
+	/* burn extra cycles and deselect card */
+	sd_end_command(host);
+
+	if (retval < 0) {
+		DBG("read, offset=%d, len=%d\n", arg, len);
+		DBG("crc=%04x, calc_crc=%04x, %s\n", crc, calc_crc,
+		    (retval < 0) ? "failed" : "ok");
+	}
+
+	return retval;
+}
+
+/*
+ *
+ */
+static int sd_read_ocr(struct sd_host *host)
+{
+	struct sd_command *cmd = &host->cmd;
+	int retval;
+
+	memset(&host->ocr, 0, sizeof(host->ocr));
+
+	sd_cmd(cmd, MMC_READ_OCR, 0);
+
+	/* select card, send command and wait for response */
+	retval = sd_start_command(host, cmd);
+	if (retval < 0)
+		goto out;
+
+	/* the OCR contents come immediately after the card response */
+	spi_read(host, &host->ocr, sizeof(host->ocr));
+	retval = 0;
+
+      out:
+	/* burn extra cycles and deselect card */
+	sd_end_command(host);
+	return retval;
+}
+
+/*
+ *
+ */
+static inline int sd_read_csd(struct sd_host *host)
+{
+	memset(&host->card.raw_csd, 0, sizeof(host->card.raw_csd));
+	return sd_generic_read(host, MMC_SEND_CSD, 0,
+			       &host->card.raw_csd,
+			       sizeof(host->card.raw_csd),
+			       MMC_SPI_TOKEN_START_SINGLE_BLOCK_READ);
+}
+
+/*
+ *
+ */
+static inline int sd_read_cid(struct sd_host *host)
+{
+	memset(&host->card.raw_cid, 0, sizeof(host->card.raw_cid));
+	return sd_generic_read(host, MMC_SEND_CID, 0,
+			       &host->card.raw_cid,
+			       sizeof(host->card.raw_cid),
+			       MMC_SPI_TOKEN_START_SINGLE_BLOCK_READ);
+}
+
+/*
+ *
+ */
+static inline int sd_read_single_block(struct sd_host *host,
+				       unsigned long start,
+				       void *data, size_t len)
+{
+	int retval;
+	int attempts = 3;
+
+	while (attempts > 0) {
+		retval = sd_generic_read(host, MMC_READ_SINGLE_BLOCK, start,
+					 data, len,
+					 MMC_SPI_TOKEN_START_SINGLE_BLOCK_READ);
+		if (retval >= 0)
+			break;
+		attempts--;
+		DBG("start=%lu, data=%p, len=%d, retval = %d\n", start, data,
+		    len, retval);
+	}
+	return retval;
+}
+
+/*
+ *
+ */
+static int sd_reset_sequence(struct sd_host *host)
+{
+	struct sd_command *cmd = &host->cmd;
+	int i;
+	int retval = 0;
+
+	host->card.state = 0;
+
+	/*
+	 * Wait at least 80 dummy clock cycles with the card deselected
+	 * and with the MOSI line continuously high.
+	 */
+	{
+		/*
+		 * FIXME: this is hackish but we need it to idle cards ...
+		 * (we need to make the exi framework a bit more flexible)
+		 */
+		u8 d;
+		unsigned long flags;
+
+		spi_cs_low(host);
+		spin_lock_irqsave(&host->lock, flags);
+		exi_deselect_raw(exi_get_exi_channel(host->exi_device));
+		for (i = 0; i < SD_IDLE_CYCLES; i++) {
+			d = 0xff;
+			exi_transfer_raw(exi_get_exi_channel(host->exi_device),
+					 &d, sizeof(d), EXI_OP_WRITE);
+		}
+		spin_unlock_irqrestore(&host->lock, flags);
+		spi_cs_high(host);
+	}
+
+	/*
+	 * Send a CMD0, card must ack with "idle state" (0x01).
+	 * This puts the card into SPI mode and soft resets it.
+	 * CRC checking is disabled by default.
+	 */
+	for (i = 0; i < 255; i++) {
+		/* CMD0 */
+		sd_cmd_go_idle_state(cmd);
+		retval = sd_run_no_data_command(host, cmd);
+		if (retval < 0) {
+			retval = -ENODEV;
+			goto out;
+		}
+		if (retval == R1_SPI_IDLE_STATE)
+			break;
+	}
+	if (retval != R1_SPI_IDLE_STATE) {
+		retval = -ENODEV;
+		goto out;
+	}
+
+	/*
+	 * Send a ACMD41 to activate card initialization process.
+	 * SD card must ack with "ok" (0x00).
+	 * MMC card will report "invalid command" (0x04).
+	 */
+	for (i = 0; i < 0xffff; i++) {
+		/* ACMD41 = CMD55 + CMD41 */
+		sd_cmd(cmd, MMC_APP_CMD, 0);
+		retval = sd_run_no_data_command(host, cmd);
+		if (retval < 0) {
+			retval = -ENODEV;
+			goto out;
+		}
+
+		sd_cmd(cmd, SD_APP_OP_COND, 0);
+		retval = sd_run_no_data_command(host, cmd);
+		if (retval < 0) {
+			retval = -ENODEV;
+			goto out;
+		}
+		if (retval == 0x00) {
+			/* we found a SD card */
+			mmc_card_set_present(&host->card);
+			mmc_card_set_sd(&host->card);
+			break;
+		}
+		if ((retval & R1_SPI_ILLEGAL_COMMAND)) {
+			DBG("probably a MMC card was found\n");
+			break;
+		}
+	}
+
+	/*
+	 * MMC cards require CMD1 to activate card initialization process.
+	 * MMC card must ack with "ok" (0x00)
+	 */
+	if (!mmc_card_sd(&host->card)) {
+		for (i = 0; i < 0xffff; i++) {
+			sd_cmd(cmd, MMC_SEND_OP_COND, 0);
+			retval = sd_run_no_data_command(host, cmd);
+			if (retval < 0) {
+				retval = -ENODEV;
+				goto out;
+			}
+			if (retval == 0x00) {
+				/* we found a MMC card */
+				mmc_card_set_present(&host->card);
+				break;
+			}
+		}
+		if (retval != 0x00) {
+			DBG("MMC card, bad, retval=%02x\n", retval);
+			mmc_card_set_bad(&host->card);
+		}
+	}
+
+out:
+	return retval;
+}
+
+/*
+ *
+ */
+static int sd_welcome_card(struct sd_host *host)
+{
+	int retval;
+
+	/* soft reset the card */
+	retval = sd_reset_sequence(host);
+	if (retval < 0 || mmc_card_bad(&host->card))
+		goto out;
+
+	/* read Operating Conditions Register */
+	retval = sd_read_ocr(host);
+	if (retval < 0)
+		goto err_bad_card;
+
+	/* refuse to drive cards reporting voltage ranges out of scope */
+	if (!(host->ocr & host->ocr_avail)) {
+		sd_printk(KERN_WARNING, "reported OCR (%08x)"
+			  " indicates that it is not safe to use this"
+			  " card with a GameCube\n", host->ocr);
+		retval = -ENODEV;
+		goto err_bad_card;
+	}
+
+	/* read and decode the Card Specific Data */
+	retval = sd_read_csd(host);
+	if (retval < 0)
+		goto err_bad_card;
+	mmc_decode_csd(&host->card);
+
+	/* calculate some card access related timeouts */
+	sd_calc_timeouts(host);
+
+	/* read and decode the Card Identification Data */
+	retval = sd_read_cid(host);
+	if (retval < 0)
+		goto err_bad_card;
+	mmc_decode_cid(&host->card);
+
+	sd_printk(KERN_INFO, "slot%d: descr \"%s\", size %luk, serial %08x\n",
+		  to_channel(exi_get_exi_channel(host->exi_device)),
+		  host->card.cid.prod_name,
+		  (unsigned long)((host->card.csd.capacity *
+			  (1 << host->card.csd.read_blkbits)) / 1024),
+		  host->card.cid.serial);
+
+	retval = 0;
+	goto out;
+
+err_bad_card:
+	mmc_card_set_bad(&host->card);
+out:
+	return retval;
+}
+
+/*
+ * Block layer.
+ *
+ */
+
+/*
+ *
+ */
+static int sd_read_request(struct sd_host *host, struct request *req)
+{
+	int i;
+	unsigned long nr_blocks; /* in card blocks */
+	size_t block_len; /* in bytes */
+	unsigned long start;
+	void *buf = req->buffer;
+	int retval = 1;
+
+	start = req->sector << KERNEL_SECTOR_SHIFT;
+	nr_blocks = req->current_nr_sectors >>
+			 (host->card.csd.read_blkbits - KERNEL_SECTOR_SHIFT);
+	block_len = 1 << host->card.csd.read_blkbits;
+
+	for (i = 0; i < nr_blocks; i++) {
+		retval = sd_read_single_block(host, start, buf, block_len);
+		if (retval < 0)
+			break;
+
+		start += block_len;
+		buf += block_len;
+
+	}
+
+	if (retval < 0)
+		retval = 0; /* request not completed */
+	else
+		retval = 1; /* request done */
+
+	return retval;
+}
+
+/*
+ *
+ */
+static int sd_write_request(struct sd_host *host, struct request *req)
+{
+	sd_printk(KERN_ERR, "write support pending\n");
+	end_request(req, 0);
+	return 0;
+}
+
+/*
+ * Processes a block layer request.
+ */
+static void sd_do_request(request_queue_t * q)
+{
+	struct sd_host *host = q->queuedata;
 	struct request *req;
-	int sector,tries,success;
-	while ((req=elv_next_request(q)) != NULL) {
-		if (!blk_fs_request(req)) {
-			end_request(req,0);
+	unsigned long nr_sectors;	/* in kernel sectors */
+	int retval;
+
+	nr_sectors =
+	    host->card.csd.capacity << (host->card.csd.read_blkbits -
+					KERNEL_SECTOR_SHIFT);
+
+	while ((req = elv_next_request(q))) {
+		/* keep our reads within limits */
+		if (req->sector + req->current_nr_sectors > nr_sectors) {
+			sd_printk(KERN_ERR, "reading past end\n");
+			end_request(req, 0);
 			continue;
 		}
-		if (rq_data_dir(req)) {  //write
-			printk(KERN_ALERT "WRITE not implemented yet\n");
-			
-/*			gcn_sd_read_csd();
-			gcn_sd_init();
-			if (gcn_sd_init()==SUCCESS) {
-				printk(KERN_ALERT PFX "resetting succeeded\n");
-			} else {
-				printk(KERN_ALERT PFX "resetting failed\n");
-			}
-			end_request(req,1);*/
-	
-		} else {	
-			//read
-   		//printk(KERN_ALERT "READ start=%lu num=%u\n", (unsigned long)req->sector,req->current_nr_sectors);
-			success=1;
-			tries=0;
-			//process one sector at a time
-			for (sector=0;sector < req->current_nr_sectors;sector++) {
-				if (gcn_sd_block_read(req->sector+sector,req->buffer+(sector<<9))==SUCCESS) {
-					tries=0;
-				} else {
-					tries++;
-					sector--;
-					if (tries>10) {
-						success=0;
-						break;
-					}						
-				}
-			}
-			end_request(req,success); //TODO 0
+
+		/* changing media during flight is not a good idea... */
+		if ((host->flags & SD_MEDIA_CHANGED)) {
+			sd_printk(KERN_ERR, "media changed, aborting\n");
+			end_request(req, 0);
+			continue;
 		}
+
+		/* ignore requests that we can't handle */
+		if (!blk_fs_request(req))
+			continue;
+
+		/* proceed with i/o requests */
+		if (rq_data_dir(req) == WRITE) {
+			retval = sd_write_request(host, req);
+		} else {
+			retval = sd_read_request(host, req);
+		}
+		end_request(req, retval);
+		if (!retval)
+			sd_printk(KERN_ERR, "request failed\n");
 	}
 }
 
+/*
+ * Driver
+ *
+ */
 
-static int gcn_sd_open (struct inode *inode, struct file *file) {
-//	printk(KERN_INFO "gcn-sd device driver: open\n");
-	return SUCCESS;
-}
+static DECLARE_MUTEX(open_lock);
 
-static int gcn_sd_release(struct inode *inode, struct file *file) {
-//	printk(KERN_INFO "gcn-sd device driver: release\n");
-	return SUCCESS;
-}
-
-
-struct block_device_operations gcn_sd_bdops = {
-  //TODO: ioctl?
-	open: gcn_sd_open,
-	release: gcn_sd_release
-};
-
-static int __init init_gcn_sd(void)
+/*
+ * Opens the drive device.
+ */
+static int sd_open(struct inode *inode, struct file *filp)
 {
+	struct sd_host *host = inode->i_bdev->bd_disk->private_data;
+	int retval = 0;
 
-	if (gcn_sd_init()!=SUCCESS) {
-		printk(KERN_WARNING PFX "No SD-card found; driver not registered\n");
-		return 0; //TODO: what should we return?
-	}
-	printk(KERN_INFO PFX "SD-card found\n");
-//	gcn_sd_read_csd();
-	//Init device struct
-	gcn_sd_device.size=200000*512;
-	spin_lock_init(&gcn_sd_device.lock);
+	down(&open_lock);
 
-	//Registed device, get major number
- 	Major = register_blkdev(GCN_SD_MAJOR, DEVICE_NAME);
-
-	if (Major <= 0) {
-		printk(KERN_ALERT PFX "Registering the block device failed with %d\n", Major);
-		return Major;
+	/* honor exclusive open mode */
+	if (host->ref_count == -1 ||
+	    (host->ref_count && (filp->f_flags & O_EXCL))) {
+		retval = -EBUSY;
+		goto out;
 	}
 
-	printk(KERN_INFO PFX "got major %d\n",Major);
-
-	//Init gendisk
-	gcn_sd_device.gd=alloc_disk(16);
-	if (!gcn_sd_device.gd) {
-		printk(KERN_ALERT PFX "Could not allocate gendisk\n");
-		//TODO:unreg
-		return -EFAULT;
-
+	/* FIXME, read only mode for now */
+	if (1 && (filp->f_mode & FMODE_WRITE)) {
+		retval = -EROFS;
+		goto out;
 	}
 
-	gcn_sd_device.gd->major=Major;
-	gcn_sd_device.gd->first_minor=0;
-	gcn_sd_device.gd->fops=&gcn_sd_bdops;
-	gcn_sd_device.gd->private_data=&gcn_sd_device;
-	strcpy(gcn_sd_device.gd->disk_name,"gcnsd0");
-	set_capacity(gcn_sd_device.gd, 200000); //TODO
+	/* this takes care of revalidating the media if needed */
+	check_disk_change(inode->i_bdev);
 
-	//init queue
-	queue = blk_init_queue(gcn_sd_request, &gcn_sd_device.lock);
-	if (queue == NULL) {
-		printk(KERN_ALERT PFX "Could not init queue\n");
-		//TODO: unreg
-		return -EFAULT;
+	if (!host->card.csd.capacity) {
+		retval = -ENOMEDIUM;
+		goto out;
 	}
 
-	blk_queue_hardsect_size(queue, 512);
-	gcn_sd_device.gd->queue = queue;	
+	if ((filp->f_flags & O_EXCL))
+		host->ref_count = -1;
+	else
+		host->ref_count++;
 
-	//add the disk
-	add_disk(gcn_sd_device.gd);
+out:
+	up(&open_lock);
+	return retval;
+
+}
+
+/*
+ * Releases the drive device.
+ */
+static int sd_release(struct inode *inode, struct file *filp)
+{
+	struct sd_host *host = inode->i_bdev->bd_disk->private_data;
+
+	down(&open_lock);
+
+	if (host->ref_count > 0)
+		host->ref_count--;
+	else
+		host->ref_count = 0;
+
+	up(&open_lock);
 
 	return 0;
 }
-		    
-static void __exit cleanup_gcn_sd(void)
-{
-	printk(KERN_INFO PFX "unloading\n");
 
-	int ret = unregister_blkdev(Major, DRIVER_MODULE_NAME);
-	if (ret < 0)
-		printk(KERN_ALERT "Error in unregister_blkdev: %d\n", ret);
+/*
+ * Checks if media changed.
+ */
+static int sd_media_changed(struct gendisk *disk)
+{
+	struct sd_host *host = disk->private_data;
+	unsigned int last_serial;
+	int retval;
+
+	/* report a media change if someone forced it */
+	if (test_bit(__SD_MEDIA_CHANGED, &host->flags))
+		return 1;
+
+	/* otherwise check if the serial number of the card changed */
+	last_serial = host->card.cid.serial;
+	retval = sd_read_cid(host);
+	if (!retval && last_serial == host->card.cid.serial && last_serial) {
+		clear_bit(__SD_MEDIA_CHANGED, &host->flags);
+	} else {
+		sd_printk(KERN_INFO, "did you remove/insert a card? :)\n");
+		set_bit(__SD_MEDIA_CHANGED, &host->flags);
+	}
+
+	return (host->flags & SD_MEDIA_CHANGED) ? 1 : 0;
 }
 
+/*
+ * Checks if media is still valid.
+ */
+static int sd_revalidate_disk(struct gendisk *disk)
+{
+	struct sd_host *host = disk->private_data;
+	int retval = 0;
 
-MODULE_LICENSE("GPL");
-MODULE_AUTHOR(DRIVER_AUTHOR);
-MODULE_DESCRIPTION(DRIVER_DESC);
+	/* the block layer likes to call us multiple times... */
+	if (!sd_media_changed(host->disk))
+		goto out;
 
-module_init(init_gcn_sd);
-module_exit(cleanup_gcn_sd);
+	/* get the card into a known status */
+	retval = sd_welcome_card(host);
+	if (retval < 0 || mmc_card_bad(&host->card)) {
+		retval = -ENOMEDIUM;
+		goto out;
+	}
+
+	/* FIXME, restricted to read only for now ... */
+	set_disk_ro(host->disk, 1);
+
+	/* inform the block layer about various sizes */
+	blk_queue_hardsect_size(host->queue, 1 << host->card.csd.read_blkbits);
+	set_capacity(host->disk, host->card.csd.capacity);
+
+	clear_bit(__SD_MEDIA_CHANGED, &host->flags);
+
+out:
+	return retval;
+}
+
+/*
+ * Ioctl.
+ */
+static int sd_ioctl(struct inode *inode, struct file *filp,
+		    unsigned int cmd, unsigned long arg)
+{
+	struct block_device *bdev = inode->i_bdev;
+	struct hd_geometry geo;
+
+	switch (cmd) {
+	case BLKRAGET:
+	case BLKFRAGET:
+	case BLKROGET:
+	case BLKBSZGET:
+	case BLKSSZGET:
+	case BLKSECTGET:
+	case BLKGETSIZE:
+	case BLKGETSIZE64:
+	case BLKFLSBUF:
+		return ioctl_by_bdev(bdev, cmd, arg);
+	case HDIO_GETGEO:
+		/* fake the entries */
+		geo.cylinders = get_capacity(bdev->bd_disk) / (4 * 16);
+		geo.heads = 4;
+		geo.sectors = 16;
+		geo.start = get_start_sect(bdev);
+
+		if (copy_to_user((void __user *)arg, &geo, sizeof(geo)))
+			return -EFAULT;
+		return 0;
+	default:
+		return -EINVAL;
+	}
+	return -EINVAL;
+}
+
+static struct block_device_operations sd_fops = {
+	.owner = THIS_MODULE,
+	.open = sd_open,
+	.release = sd_release,
+	.revalidate_disk = sd_revalidate_disk,
+	.media_changed = sd_media_changed,
+	.ioctl = sd_ioctl,
+};
+
+/*
+ * Initializes the block layer interfaces.
+ */
+static int sd_init_blk_dev(struct sd_host *host)
+{
+	struct gendisk *disk;
+	struct request_queue *queue;
+	int channel;
+	int retval;
+
+	channel = to_channel(exi_get_exi_channel(host->exi_device));
+
+	spin_lock_init(&host->queue_lock);
+	host->ref_count = 0;
+
+	retval = -ENOMEM;
+
+	queue = blk_init_queue(sd_do_request, &host->queue_lock);
+	if (!queue) {
+		sd_printk(KERN_ERR, "error initializing queue\n");
+		goto err_blk_init_queue;
+	}
+
+	blk_queue_dma_alignment(queue, EXI_DMA_ALIGN);
+	blk_queue_max_phys_segments(queue, 1);
+	blk_queue_max_hw_segments(queue, 1);
+	queue->queuedata = host;
+	host->queue = queue;
+
+	disk = alloc_disk(1 << MMC_SHIFT);
+	if (!disk) {
+		sd_printk(KERN_ERR, "error allocating disk\n");
+		goto err_alloc_disk;
+	}
+	disk->major = SD_MAJOR;
+	disk->first_minor = channel << MMC_SHIFT;
+	disk->fops = &sd_fops;
+	sprintf(disk->disk_name, "%s%c", SD_NAME, 'a' + channel);
+	sprintf(disk->devfs_name, "%s/target%d", SD_NAME, channel);
+	disk->queue = host->queue;
+	disk->private_data = host;
+	host->disk = disk;
+
+	retval = 0;
+	goto out;
+
+err_alloc_disk:
+	blk_cleanup_queue(host->queue);
+err_blk_init_queue:
+out:
+	return retval;
+}
+
+/*
+ * Exits the block layer interfaces.
+ */
+static void sd_exit_blk_dev(struct sd_host *host)
+{
+	if (host->disk) {
+		del_gendisk(host->disk);
+		put_disk(host->disk);
+	}
+	if (host->queue)
+		blk_cleanup_queue(host->queue);
+}
+
+/*
+ *
+ */
+static int sd_init(struct sd_host *host)
+{
+	int retval;
+
+	spin_lock_init(&host->lock);
+
+	set_bit(__SD_MEDIA_CHANGED, &host->flags);
+
+	host->ocr_avail = MMC_VDD_32_33 | MMC_VDD_33_34;
+	sd_set_clock(host, SD_SPI_CLK);
+	sd_calc_timeouts(host);
+
+	retval = sd_init_blk_dev(host);
+	if (!retval) {
+		retval = sd_revalidate_disk(host->disk);
+		if (retval < 0 || !mmc_card_present(&host->card)) {
+			retval = -ENODEV;
+			goto err_blk_dev;
+		}
+		add_disk(host->disk);
+
+	}
+	return retval;
+
+err_blk_dev:
+	sd_exit_blk_dev(host);
+	return retval;
+
+}
+
+/*
+ *
+ */
+static void sd_exit(struct sd_host *host)
+{
+	sd_exit_blk_dev(host);
+}
+
+/*
+ *
+ */
+static int __devinit sd_probe(struct exi_device *exi_device)
+{
+	struct sd_host *host;
+	int retval;
+
+	/* don't try to drive a device which already has a real identifier */
+	if (exi_device->eid.id != EXI_ID_NONE)
+		return -ENODEV;
+
+	host = kmalloc(sizeof(*host), GFP_KERNEL);
+	if (!host)
+		return -ENOMEM;
+
+	memset(host, 0, sizeof(*host));
+
+	host->exi_device = exi_device_get(exi_device);
+	retval = sd_init(host);
+	if (!retval) {
+		exi_set_drvdata(exi_device, host);
+	} else {
+		exi_device_put(exi_device);
+		host->exi_device = NULL;
+		kfree(host);
+	}
+	return retval;
+}
+
+/*
+ *
+ */
+static void __devexit sd_remove(struct exi_device *exi_device)
+{
+	struct sd_host *host = exi_get_drvdata(exi_device);
+
+	exi_set_drvdata(exi_device, NULL);
+	if (host) {
+		sd_exit(host);
+		if (host->exi_device)
+			exi_device_put(host->exi_device);
+		host->exi_device = NULL;
+		kfree(host);
+	}
+}
+
+static struct exi_device_id sd_eid_table[] = {
+	[0] = {
+	       .channel = SD_SLOTA_CHANNEL,
+	       .device = SD_SLOTA_DEVICE,
+	       .id = EXI_ID_NONE,
+	       },
+	[1] = {
+	       .channel = SD_SLOTB_CHANNEL,
+	       .device = SD_SLOTB_DEVICE,
+	       .id = EXI_ID_NONE,
+	       },
+	{.id = 0}
+};
+
+static struct exi_driver sd_driver = {
+	.name = DRV_MODULE_NAME,
+	.eid_table = sd_eid_table,
+	.frequency = SD_SPI_CLK_IDX,
+	.probe = sd_probe,
+	.remove = sd_remove,
+};
+
+static int __init sd_init_module(void)
+{
+	int retval = 0;
+
+	sd_printk(KERN_INFO, "%s - version %s\n", DRV_DESCRIPTION,
+		  sd_driver_version);
+
+	if (register_blkdev(SD_MAJOR, DRV_MODULE_NAME)) {
+		sd_printk(KERN_ERR, "unable to register major %d\n", SD_MAJOR);
+		retval = -EIO;
+		goto out;
+	}
+
+	retval = exi_driver_register(&sd_driver);
+
+      out:
+	return retval;
+}
+
+static void __exit sd_exit_module(void)
+{
+	unregister_blkdev(SD_MAJOR, DRV_MODULE_NAME);
+	exi_driver_unregister(&sd_driver);
+}
+
+module_init(sd_init_module);
+module_exit(sd_exit_module);

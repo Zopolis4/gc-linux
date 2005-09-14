@@ -107,20 +107,22 @@ config GAMECUBE_MEMCARD
 
 config GAMECUBE_SD
 	tristate "Nintendo GameCube SD and MMC memory card (EXPERIMENTAL)"
-	depends on GAMECUBE && GAMECUBE_EXI && EXPERIMENTAL && BROKEN
+	depends on GAMECUBE && GAMECUBE_EXI && EXPERIMENTAL
 	help
-	  This enables support for SD and MMC cards
-	  WARNING: driver is in alpha stage. Only reading supported. Card
-	  is reported as around 100MB, its size is not read from the card.
-	  Cards are NOT hot-pluggable. Compilation as module is broken.
+	  This enables support for using SD and MMC cards through
+	  the Nintendo SD Card Adapter (DOL-019) or compatible hardware.
+	  
+	  Currently, only read support is enabled.
 	  
 	  You probably want to compile FAT support, and the required
-	  codepages, or mount wil complain. See Filesystems -> DOS/FAT/NT
+	  codepages, or mount will complain. See Filesystems -> DOS/FAT/NT
 	  filesystems and Filesystems -> Native Language Support
-	  
-	  For schematic to connect the SD or MMC card, and more notes and
-	  warnings, see drivers/block/gcn-sd.c
 
+	  Say Y if you want to include this driver in the kernel.
+	  
+	  To compile this driver as a module, choose M here: the
+	  module will be called gcn-sd.
+	  
 config ATARI_ACSI
 	tristate "Atari ACSI support"
 	depends on ATARI && BROKEN
