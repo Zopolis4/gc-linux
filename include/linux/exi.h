@@ -265,6 +265,16 @@ static inline void exi_dev_write(struct exi_device *dev, void *data, size_t len)
 	exi_dev_transfer(dev, data, len, EXI_OP_WRITE);
 }
 
+static inline int exi_dev_set_freq(struct exi_device *dev, unsigned int freq)
+{
+	BUG_ON(freq > EXI_MAX_FREQ);
+
+	dev->frequency = freq;
+
+	return freq;
+}
+
+
 
 
 /*
