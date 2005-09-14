@@ -29,8 +29,15 @@
 #define EXI_DEVICES_PER_CHANNEL	3  /* number of devices per EXI channel */
 #define EXI_MAX_EVENTS		3  /* types of events on the EXI bus */
 
+#define EXI_CLK_1MHZ		0
+#define EXI_CLK_2MHZ		1
+#define EXI_CLK_4MHZ		2
+#define EXI_CLK_8MHZ		3
+#define EXI_CLK_16MHZ		4
+#define EXI_CLK_32MHZ		5
+
 #define EXI_MAX_FREQ		7
-#define EXI_FREQ_SCAN		3
+#define EXI_FREQ_SCAN		EXI_CLK_8MHZ
 
 #define EXI_READ		0
 #define EXI_WRITE		1
@@ -53,12 +60,12 @@
 #define   EXI_CSR_TCINTMASK	(1<<2)
 #define   EXI_CSR_TCINT		(1<<3)
 #define   EXI_CSR_CLKMASK	(0x7<<4)
-#define     EXI_CSR_CLK_1MHZ	(0x0<<4)
-#define     EXI_CSR_CLK_2MHZ	(0x1<<4)
-#define     EXI_CSR_CLK_4MHZ	(0x2<<4)
-#define     EXI_CSR_CLK_8MHZ	(0x3<<4)
-#define     EXI_CSR_CLK_16MHZ	(0x4<<4)
-#define     EXI_CSR_CLK_32MHZ	(0x5<<4)
+#define     EXI_CSR_CLK_1MHZ	(EXI_CLK_1MHZ<<4)
+#define     EXI_CSR_CLK_2MHZ	(EXI_CLK_2MHZ<<4)
+#define     EXI_CSR_CLK_4MHZ	(EXI_CLK_4MHZ<<4)
+#define     EXI_CSR_CLK_8MHZ	(EXI_CLK_8MHZ<<4)
+#define     EXI_CSR_CLK_16MHZ	(EXI_CLK_16MHZ<<4)
+#define     EXI_CSR_CLK_32MHZ	(EXI_CLK_32MHZ<<4)
 #define   EXI_CSR_CSMASK	(0x7<<7)
 #define     EXI_CSR_CS_0	(0x1<<7)  /* Chip Select 001 */
 #define     EXI_CSR_CS_1	(0x2<<7)  /* Chip Select 010 */
@@ -143,12 +150,12 @@ static inline void __exi_transfer_raw_##_type(struct exi_channel *exi_channel,\
 	 * information currently stored there is leaked to the		\
 	 * MOSI line, confusing some hardware.				\
 	 */								\
-	if (mode & EXI_OP_WRITE)					\
+	if ((mode & EXI_OP_WRITE))					\
 		_on_write;						\
 	writel(_val, data_reg);						\
 									\
 	/* start transfer */						\
-	_val = EXI_CR_TSTART | EXI_CR_TLEN(sizeof(_type)) | (mode&7);	\
+	_val = EXI_CR_TSTART | EXI_CR_TLEN(sizeof(_type)) | (mode&0xf);	\
 	writel(_val, cr_reg);						\
 									\
 	/* wait for transfer completion */				\
@@ -161,7 +168,7 @@ static inline void __exi_transfer_raw_##_type(struct exi_channel *exi_channel,\
 	writel(readl(csr_reg) | EXI_CSR_TCINT, csr_reg);		\
 	spin_unlock_irqrestore(&exi_channel->io_lock, flags);		\
 									\
-	if (!(mode & EXI_OP_WRITE)) {					\
+	if ((mode&0xf) != EXI_OP_WRITE) { /* read or read-write */	\
 		_val = readl(data_reg);					\
 		_on_read;						\
 	}								\
