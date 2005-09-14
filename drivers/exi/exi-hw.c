@@ -290,7 +290,7 @@ static inline void exi_start_dma_transfer_raw(struct exi_channel *exi_channel,
 	spin_unlock_irqrestore(&exi_channel->io_lock, flags);
 
 	/* start the transfer */
-	writel(EXI_CR_TSTART | EXI_CR_DMA | (mode&7), io_base + EXI_CR);
+	writel(EXI_CR_TSTART | EXI_CR_DMA | (mode&0xf), io_base + EXI_CR);
 }
 
 
@@ -1138,6 +1138,7 @@ void exi_hw_exit(void)
 
 
 EXPORT_SYMBOL(to_exi_channel);
+EXPORT_SYMBOL(to_channel);
 
 EXPORT_SYMBOL(exi_select_raw);
 EXPORT_SYMBOL(exi_deselect_raw);
