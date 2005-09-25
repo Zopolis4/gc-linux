@@ -48,7 +48,8 @@ struct exi_device {
 	struct exi_device_id	eid;
 	int			frequency;
 
-	unsigned long		flags;
+	unsigned		flags;
+#define EXI_DEV_DYING		(1<<0)
 
 	struct device		dev;
 };
@@ -95,6 +96,22 @@ static inline void exi_set_drvdata(struct exi_device *exi_dev, void *data)
 	dev_set_drvdata(&exi_dev->dev, data);
 }
 
+static inline int exi_is_dying(struct exi_device *exi_device)
+{
+	return exi_device->flags & EXI_DEV_DYING;
+}
+
+static inline int exi_set_dying(struct exi_device *exi_device, int status)
+{
+	if (status)
+		exi_device->flags |= EXI_DEV_DYING;
+	else
+		exi_device->flags &= ~EXI_DEV_DYING;
+
+	return exi_is_dying(exi_device);
+}
+
+extern u32 exi_get_id(struct exi_device *exi_device);
 
 /*
  * EXpansion Interface channels.
@@ -140,10 +157,12 @@ struct exi_command {
 #define EXI_OP_NOP       -1
 
 	unsigned long		flags;
-#define EXI_NODMA (1<<0)
+#define EXI_CMD_NODMA (1<<0)
+#define EXI_CMD_IDI   (1<<1)
 
 	void			*data;
 	size_t			len;
+	size_t			bytes_left;
 
 	dma_addr_t		dma_addr;
 	size_t			dma_len;
@@ -193,20 +212,6 @@ static inline void exi_op_transfer(struct exi_command *cmd,
 	cmd->len = len;
 }
 
-static inline void exi_op_read(struct exi_command *cmd,
-			       struct exi_channel *exi_channel,
-			       void *data, size_t len)
-{
-	exi_op_transfer(cmd, exi_channel, data, len, EXI_OP_READ);
-}
-
-static inline void exi_op_write(struct exi_command *cmd,
-				struct exi_channel *exi_channel,
-				void *data, size_t len)
-{
-	exi_op_transfer(cmd, exi_channel, data, len, EXI_OP_WRITE);
-}
-
 
 /*
  * EXpansion Interface interfaces.
@@ -234,35 +239,35 @@ extern void exi_dma_transfer_raw(struct exi_channel *channel,
  * Standard.
  */
 
-extern u32 exi_get_id(struct exi_channel *exi_channel,
-		      unsigned int device, unsigned int freq);
-
 int exi_select(struct exi_device *exi_device);
 void exi_deselect(struct exi_channel *exi_channel);
 void exi_transfer(struct exi_channel *exi_channel,
-		  void *data, size_t len, int opcode);
+		  void *data, size_t len, int opcode, unsigned long flags);
 
-#define exi_dev_select(d) exi_select(d)
+static inline int exi_dev_select(struct exi_device *exi_device)
+{
+	return exi_select(exi_device);
+}
 
 static inline void exi_dev_deselect(struct exi_device *exi_device)
 {
-	return exi_deselect(exi_device->exi_channel);
+	exi_deselect(exi_device->exi_channel);
 }
 
 static inline void exi_dev_transfer(struct exi_device *exi_device,
-		      void *data, size_t len, int opcode)
+		      void *data, size_t len, int opcode, unsigned long flags)
 {
-	return exi_transfer(exi_device->exi_channel, data, len, opcode);
+	exi_transfer(exi_device->exi_channel, data, len, opcode, flags);
 }
 
 static inline void exi_dev_read(struct exi_device *dev, void *data, size_t len)
 {
-	exi_dev_transfer(dev, data, len, EXI_OP_READ);
+	exi_dev_transfer(dev, data, len, EXI_OP_READ, 0);
 }
 
 static inline void exi_dev_write(struct exi_device *dev, void *data, size_t len)
 {
-	exi_dev_transfer(dev, data, len, EXI_OP_WRITE);
+	exi_dev_transfer(dev, data, len, EXI_OP_WRITE, 0);
 }
 
 static inline int exi_dev_set_freq(struct exi_device *dev, unsigned int freq)
@@ -318,12 +323,12 @@ static inline void exi_lite_deselect(int channel)
 
 static inline void exi_lite_read(int channel, void *data, size_t len)
 {
-	exi_transfer(to_exi_channel(channel), data, len, EXI_OP_READ);
+	exi_transfer(to_exi_channel(channel), data, len, EXI_OP_READ, 0);
 }
 
 static inline void exi_lite_write(int channel, void *data, size_t len)
 {
-	exi_transfer(to_exi_channel(channel), data, len, EXI_OP_WRITE);
+	exi_transfer(to_exi_channel(channel), data, len, EXI_OP_WRITE, 0);
 }
 
 static inline int exi_lite_register_event(int channel, int event_id,

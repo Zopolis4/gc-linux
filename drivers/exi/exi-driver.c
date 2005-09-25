@@ -17,9 +17,9 @@
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/device.h>
-#include <linux/exi.h>
-
+#include <linux/kthread.h>
 #include <linux/delay.h>
+#include <linux/exi.h>
 
 #define DRV_MODULE_NAME	"exi-driver"
 #define DRV_DESCRIPTION	"Nintendo GameCube EXpansion Interface driver"
@@ -27,7 +27,7 @@
 			"Todd Jeffreys <todd@voidpointer.org>, " \
 			"Albert Herranz"
 
-static char exi_driver_version[] = "3.0";
+static char exi_driver_version[] = "3.1-isobel";
 
 
 extern struct device exi_bus_devices[EXI_MAX_CHANNELS];
@@ -72,7 +72,6 @@ static const char *exi_name_id(unsigned int id)
 	}
 	return "Unknown";
 }
-
 
 /*
  * Internal. Check if an exi device matches a given exi device id.
@@ -125,6 +124,12 @@ static int exi_bus_match(struct device *dev, struct device_driver *drv)
 	return 0;
 }
 
+/*
+ * Device release.
+ */
+static void exi_device_release(struct device *dev)
+{
+}
 
 /*
  * Internal. Initialize an exi_device structure.
@@ -137,16 +142,16 @@ static void exi_device_init(struct exi_device *exi_device,
 	exi_device->eid.id = EXI_ID_INVALID;
 	exi_device->eid.channel = channel;
 	exi_device->eid.device = device;
-	exi_device->frequency = -1;
+	exi_device->frequency = EXI_FREQ_SCAN;
 
 	exi_device->exi_channel = to_exi_channel(channel);
 
-	device_initialize(&exi_device->dev);
 	exi_device->dev.parent = &exi_bus_devices[channel];
 	exi_device->dev.bus = &exi_bus_type;
-	exi_device->dev.platform_data = to_exi_channel(channel);
-
 	sprintf(exi_device->dev.bus_id, "%01x:%01x", channel, device);
+	exi_device->dev.platform_data = to_exi_channel(channel);
+	exi_device->dev.release = exi_device_release;
+
 }
 
 /**
@@ -163,6 +168,7 @@ struct exi_device *exi_device_get(struct exi_device *exi_device)
                 get_device(&exi_device->dev);
         return exi_device;
 }
+
 
 /**
  *	exi_device_put  -  Releases a use of the exi device
@@ -184,6 +190,7 @@ void exi_device_put(struct exi_device *exi_device)
 struct exi_device *exi_get_exi_device(struct exi_channel *exi_channel,
 				      int device)
 {
+	// FIXME, maybe exi_device_get it too
 	return &exi_devices[to_channel(exi_channel)][device];
 }
 
@@ -225,6 +232,9 @@ static int exi_device_remove(struct device *dev)
 	if (exi_driver->remove)
 		exi_driver->remove(exi_device);
 
+	if (!exi_is_dying(exi_device))
+		exi_device->eid.id = EXI_ID_INVALID;
+
 	return 0;
 }
 
@@ -260,50 +270,56 @@ void exi_driver_unregister(struct exi_driver *driver)
 
 
 /*
+ * Internal. Re-scan a given device.
+ */
+static void exi_device_rescan(struct exi_device *exi_device)
+{
+	unsigned int id;
+
+	/* do nothing if the device is marked to die */
+	if (exi_is_dying(exi_device))
+		return;
+
+	/* now ID the device */
+	id = exi_get_id(exi_device);
+
+	if (exi_device->eid.id != EXI_ID_INVALID) {
+		/* device removed or changed */
+		exi_printk(KERN_INFO, "removed [%s] id=0x%08x %s\n",
+			   exi_device->dev.bus_id,
+			   exi_device->eid.id,
+			   exi_name_id(exi_device->eid.id));
+		device_unregister(&exi_device->dev);
+		exi_device->eid.id = EXI_ID_INVALID;
+	}
+
+	if (id != EXI_ID_INVALID) {
+		/* a new device has been found */
+		exi_printk(KERN_INFO, "added [%s] id=0x%08x %s\n",
+			   exi_device->dev.bus_id,
+			   id, exi_name_id(id));
+		exi_device->eid.id = id;
+		device_register(&exi_device->dev);
+	}
+
+	exi_update_ext_status(exi_get_exi_channel(exi_device));
+}
+
+/*
  * Internal. Re-scan a given exi channel, looking for added, changed and
  * removed exi devices.
- * XXX Currently, only _new_ devices are taken into account.
  */
 static void exi_channel_rescan(struct exi_channel *exi_channel)
 {
 	struct exi_device *exi_device;
-	unsigned int channel, device, id;
-
-	spin_lock(&exi_channel->lock);
+	unsigned int channel, device;
 
 	/* add the exi devices underneath the parents */
 	for (device = 0; device < EXI_DEVICES_PER_CHANNEL; ++device) {
 		channel = to_channel(exi_channel);
 		exi_device = &exi_devices[channel][device];
-
-		/* now ID the device */
-		id = exi_get_id(exi_channel, device, EXI_FREQ_SCAN);
-
-		/*
-		 * We only process currently _new_ devices here.
-		 */
-		if (id != EXI_ID_INVALID) {
-			exi_printk(KERN_INFO, "[%s] id=0x%08x %s\n",
-				   exi_device->dev.bus_id,
-				   id, exi_name_id(id));
-
-			if (exi_device->eid.id == EXI_ID_INVALID) {
-				/* a new device has been found */
-				exi_device->eid.id = id;
-				device_register(&exi_device->dev);
-			} else {
-				/* device changed */
-				/* remove, add */
-			}
-		} else {
-			if (exi_device->eid.id != EXI_ID_INVALID) {
-				/* device removed */ 
-				/* remove */
-			}
-		}
+		exi_device_rescan(exi_device);
 	}
-
-	spin_unlock(&exi_channel->lock);
 }
 
 /*
@@ -318,6 +334,40 @@ static void exi_bus_rescan(void)
 		exi_channel = to_exi_channel(channel);
 		exi_channel_rescan(exi_channel);
 	}
+}
+
+
+static struct task_struct *exi_bus_task;
+wait_queue_head_t exi_bus_waitq;
+
+/*
+ * Internal. Looks for new, changed or removed devices.
+ */
+static int exi_bus_thread(void *__unused)
+{
+	struct exi_channel *exi_channel;
+	struct exi_device *exi_device;
+	unsigned int channel;
+	int is_loaded, was_loaded;
+
+	while(!kthread_should_stop()) {
+		sleep_on_timeout(&exi_bus_waitq, HZ);
+
+		/* scan the memcard slot channels for device changes */
+		for (channel = 0; channel <= 1; ++channel) {
+			exi_channel = to_exi_channel(channel);
+
+			is_loaded = exi_get_ext_line(exi_channel);
+			was_loaded = (exi_channel->flags & EXI_EXT)?1:0;
+
+			if (is_loaded ^ was_loaded) {
+				exi_device = &exi_devices[channel][0];
+				exi_device_rescan(exi_device);
+			}
+		}
+	}
+
+	return 0;
 }
 
 
@@ -377,6 +427,13 @@ static int __init exi_layer_init(void)
 
 	/* now enumerate through the bus and add all detected devices */
 	exi_bus_rescan();
+
+	/* setup a thread to manage plugable devices */
+	init_waitqueue_head(&exi_bus_waitq);
+	exi_bus_task = kthread_run(exi_bus_thread, NULL, "kexid");
+	if (IS_ERR(exi_bus_task)) {
+		exi_printk(KERN_WARNING, "failed to start exi kernel thread\n");
+	}
 
 	return 0;
 

@@ -42,6 +42,8 @@
 #define EXI_READ		0
 #define EXI_WRITE		1
 
+#define EXI_IDI_MAX_SIZE	4
+
 
 #define EXI_IRQ			4
 
@@ -106,8 +108,9 @@ struct exi_channel {
 
 	int			channel;
 	unsigned long		flags;
-#define EXI_SELECTED (1<<0)
-#define EXI_DMABUSY  (1<<1)
+#define EXI_SELECTED	(1<<0)
+#define EXI_DMABUSY	(1<<1)
+#define EXI_EXT		(1<<8)
 
 	spinlock_t		io_lock;	/* serializes access to CSR */
 	void __iomem		*io_base;
@@ -116,7 +119,7 @@ struct exi_channel {
 	struct exi_device	*device_selected;
 	wait_queue_head_t	wait_queue;
 
-	struct exi_command	*dma_cmd;
+	struct exi_command	*queued_cmd;
 	struct exi_command	post_cmd;
 
 	unsigned long		csr;
@@ -124,6 +127,9 @@ struct exi_channel {
 
 	struct exi_event_handler events[EXI_MAX_EVENTS];
 };
+
+extern int exi_get_ext_line(struct exi_channel *exi_channel);
+extern void exi_update_ext_status(struct exi_channel *exi_channel);
 
 extern int exi_hw_init(char *);
 extern void exi_hw_exit(void);

@@ -76,6 +76,7 @@
 #  define DBG(fmt, args...)
 #endif
 
+extern wait_queue_head_t exi_bus_waitq;
 
 static void exi_tasklet(unsigned long param);
 
@@ -261,11 +262,87 @@ void exi_transfer_raw(struct exi_channel *exi_channel,
 }
 
 /*
+ * Internal. Start a transfer using "interrupt-driven immediate" mode.
+ */
+static void exi_start_idi_transfer_raw(struct exi_channel *exi_channel,
+				       void *data, size_t len, int mode)
+{
+	void __iomem *io_base = exi_channel->io_base;
+	u32 __iomem *csr_reg = io_base + EXI_CSR;
+	u32 val = ~0;
+	unsigned long flags;
+
+	BUG_ON(len < 1 || len > 4);
+
+	if ((mode & EXI_OP_WRITE)) {
+		switch(len) {
+			case 1:
+				val = *((u8*)data) << 24;
+				break;
+			case 2:
+				val = *((u16*)data) << 16;
+				break;
+			case 3:
+				val = *((u16*)data) << 16;
+				val |= *((u8*)data+2) << 8;
+				break;
+			case 4:
+				val = *((u32*)data);
+				break;
+			default:
+				break;
+		}
+	}
+
+	writel(val, io_base + EXI_DATA);
+
+	/* enable the Transfer Complete interrupt */
+	spin_lock_irqsave(&exi_channel->io_lock, flags);
+	writel(readl(csr_reg) | EXI_CSR_TCINTMASK, csr_reg);
+	spin_unlock_irqrestore(&exi_channel->io_lock, flags);
+
+	/* start the transfer */
+	writel(EXI_CR_TSTART | EXI_CR_TLEN(len) | (mode&0xf), io_base + EXI_CR);
+}
+
+/*
+ * Internal. Finish a transfer using "interrupt-driven immediate" mode.
+ */
+static void exi_end_idi_transfer_raw(struct exi_channel *exi_channel,
+				     void *data, size_t len, int mode)
+{
+	void __iomem *io_base = exi_channel->io_base;
+	u32 val = ~0;
+
+	BUG_ON(len < 1 || len > 4);
+
+	if ((mode&0xf) != EXI_OP_WRITE) {
+		val = readl(io_base + EXI_DATA);
+		switch(len) {
+			case 1:
+				*((u8*)data) = (u8)(val >> 24);
+				break;
+			case 2:
+				*((u16*)data) = (u16)(val >> 16);
+				break;
+			case 3:
+				*((u16*)data) = (u16)(val >> 16);
+				*((u8*)data+2) = (u8)(val >> 8);
+				break;
+			case 4:
+				*((u32*)data) = (u32)(val);
+				break;
+			default:
+				break;
+		}
+	}
+}
+
+/*
  * Internal. Start a transfer using DMA mode.
  */
-static inline void exi_start_dma_transfer_raw(struct exi_channel *exi_channel,
-					      dma_addr_t data, size_t len,
-					      int mode)
+static void exi_start_dma_transfer_raw(struct exi_channel *exi_channel,
+				       dma_addr_t data, size_t len, int mode)
 {
 	void __iomem *io_base = exi_channel->io_base;
 	u32 __iomem *csr_reg = io_base + EXI_CSR;
@@ -297,8 +374,7 @@ static inline void exi_start_dma_transfer_raw(struct exi_channel *exi_channel,
 /*
  * Internal. Busy-wait until a DMA mode transfer operation completes.
  */
-static inline
-void exi_wait_for_dma_transfer_raw(struct exi_channel *exi_channel)
+static void exi_wait_for_transfer_raw(struct exi_channel *exi_channel)
 {
 	u32 __iomem *cr_reg = exi_channel->io_base + EXI_CR;
 	u32 __iomem *csr_reg = exi_channel->io_base + EXI_CSR;
@@ -319,30 +395,6 @@ void exi_wait_for_dma_transfer_raw(struct exi_channel *exi_channel)
 	spin_unlock_irqrestore(&exi_channel->io_lock, flags);
 }
 
-
-/**
- *	exi_dma_transfer_raw  -  performs an exi transfer in DMA mode
- *	@exi_channel:	channel
- *	@data:		address of data being read/writen (32 byte aligned)
- *	@len:		length of data (32 byte aligned)
- *	@mode:		direction of transfer (EXI_OP_READ or EXI_OP_WRITE)
- *
- *	Read or write data on a given EXI channel, using DMA mode, and
- *	busy-wait until transfer is done.
- *
- */
-void exi_dma_transfer_raw(struct exi_channel *exi_channel,
-			  dma_addr_t data, size_t len, int mode)
-{
-	if (len <= 0)
-		return;
-
-	exi_start_dma_transfer_raw(exi_channel, data, len, mode);
-	exi_wait_for_dma_transfer_raw(exi_channel);
-}
-
-
-
 static void exi_command_done(struct exi_command *cmd);
 
 /*
@@ -360,33 +412,119 @@ static void exi_check_pending_work(void)
 }
 
 /*
- * Internal. Wait until a DMA transfer completes and launch callbacks.
+ * Internal. Finish a DMA transfer.
+ * Caller holds the channel lock.
  */
-static inline void exi_wait_for_dma_transfer(struct exi_channel *exi_channel)
+static void exi_end_dma_transfer(struct exi_channel *exi_channel)
 {
 	struct exi_command *cmd;
-	unsigned long flags;
 
-	spin_lock_irqsave(&exi_channel->lock, flags);
-
-	exi_wait_for_dma_transfer_raw(exi_channel);
-
-	exi_channel->flags &= ~EXI_DMABUSY;
-	cmd = exi_channel->dma_cmd;
+	cmd = exi_channel->queued_cmd;
 	if (cmd) {
+		BUG_ON(!(exi_channel->flags & EXI_DMABUSY));
+
+		exi_channel->flags &= ~EXI_DMABUSY;
 		dma_unmap_single(&exi_channel->device_selected->dev,
 				 cmd->dma_addr, cmd->dma_len,
 				 (cmd->opcode == EXI_OP_READ)?
 				 DMA_FROM_DEVICE:DMA_TO_DEVICE);
-		exi_channel->dma_cmd = NULL;
+
+		exi_channel->queued_cmd = NULL;
+	}
+}
+
+/*
+ * Internal. Finish an "interrupt-driven immediate" transfer.
+ * Caller holds the channel lock.
+ *
+ * If more data is pending transfer, schedules a new transfer.
+ * Returns zero if no more transfers are required, non-zero otherwise.
+ *
+ */
+static int exi_end_idi_transfer(struct exi_channel *exi_channel)
+{
+	struct exi_command *cmd;
+	int len, offset;
+	unsigned int balance = 16 /* / sizeof(u32) */;
+
+	cmd = exi_channel->queued_cmd;
+	if (cmd) {
+		BUG_ON((exi_channel->flags & EXI_DMABUSY));
+
+		len = (cmd->bytes_left > 4)?4:cmd->bytes_left;
+		offset = cmd->len - cmd->bytes_left;
+		exi_end_idi_transfer_raw(exi_channel,
+					 cmd->data + offset, len,
+					 cmd->opcode);
+		cmd->bytes_left -= len;
+
+		if (balance && cmd->bytes_left > 0) {
+			offset += len;
+			len = (cmd->bytes_left > balance)?
+					balance:cmd->bytes_left;
+			exi_transfer_raw(exi_channel,
+					 cmd->data + offset, len, cmd->opcode);
+			cmd->bytes_left -= len;
+		}
+
+		if (cmd->bytes_left > 0) {
+			offset = cmd->len - cmd->bytes_left;
+			len = (cmd->bytes_left > 4)?4:cmd->bytes_left;
+
+			exi_start_idi_transfer_raw(exi_channel,
+						   cmd->data + offset, len,
+						   cmd->opcode);
+		} else {
+			exi_channel->queued_cmd = NULL;
+		}
+	}
+
+	return (exi_channel->queued_cmd)?1:0;
+}
+
+/*
+ * Internal. Wait until a single transfer completes, and launch callbacks
+ * when the whole transfer is completed.
+ */
+static int exi_wait_for_transfer_one(struct exi_channel *exi_channel)
+{
+	struct exi_command *cmd;
+	unsigned long flags;
+	int pending = 0;
+
+	spin_lock_irqsave(&exi_channel->lock, flags);
+
+	exi_wait_for_transfer_raw(exi_channel);
+
+	cmd = exi_channel->queued_cmd;
+	if (cmd) {
+		if ((exi_channel->flags & EXI_DMABUSY)) {
+			/* dma transfers need just one transfer */
+			exi_end_dma_transfer(exi_channel);
+		} else {
+			pending = exi_end_idi_transfer(exi_channel);
+		}
+
 		spin_unlock_irqrestore(&exi_channel->lock, flags);
-		exi_command_done(cmd);
-		return;
+
+		if (!pending)
+			exi_command_done(cmd);
+		goto out;
 	}
 
 	spin_unlock_irqrestore(&exi_channel->lock, flags);
+out:
+	return pending;
 }
 
+/*
+ * Internal. Wait until a full transfer completes and launch callbacks.
+ */
+static void exi_wait_for_transfer(struct exi_channel *exi_channel)
+{
+	while(exi_wait_for_transfer_one(exi_channel))
+		cpu_relax();
+}
 
 /*
  * Internal. Call any done hooks.
@@ -511,11 +649,24 @@ static int exi_cmd_transfer(struct exi_command *cmd)
 	opcode = cmd->opcode;
 	data = cmd->data;
 
+	/* interrupt driven immediate transfer... */
+	if ((cmd->flags & EXI_CMD_IDI)) {
+		exi_channel->queued_cmd = cmd;
+		exi_channel->flags &= ~EXI_DMABUSY;
+
+		cmd->bytes_left = cmd->len;
+		len = (cmd->bytes_left > 4)?4:cmd->bytes_left;
+		exi_start_idi_transfer_raw(exi_channel, data, len, opcode);
+
+		retval = 1; /* wait */
+		goto done;
+	}
+
 	/*
 	 * We can't do DMA transfers unless we have at least 32 bytes.
 	 * And we won't do DMA transfers if user requests that.
 	 */
-	if (len < EXI_DMA_ALIGN+1 || (cmd->flags & EXI_NODMA)) {
+	if (len < EXI_DMA_ALIGN+1 || (cmd->flags & EXI_CMD_NODMA)) {
 		exi_transfer_raw(exi_channel, data, len, opcode);
 		goto done;
 	}
@@ -594,7 +745,7 @@ static int exi_cmd_transfer(struct exi_command *cmd)
 		cmd->done = exi_cmd_post_transfer;
 	}
 
-	exi_channel->dma_cmd = cmd;
+	exi_channel->queued_cmd = cmd;
 	exi_channel->flags |= EXI_DMABUSY;
 
 	cmd->dma_len = len;
@@ -631,11 +782,11 @@ static int exi_run_command(struct exi_command *cmd)
 	spin_lock_irqsave(&exi_channel->lock, flags);
 
 	/* ensure atomic operations are serialized */
-	while (exi_channel->dma_cmd) {
+	while (exi_channel->queued_cmd) {
 		DBG("cmd %d while dma in flight on channel %d\n",
 		    cmd->opcode, exi_channel->channel);
 		spin_unlock_irqrestore(&exi_channel->lock, flags);
-		exi_wait_for_dma_transfer(exi_channel);
+		exi_wait_for_transfer(exi_channel);
 		spin_lock_irqsave(&exi_channel->lock, flags);
 	}
 
@@ -703,7 +854,7 @@ static int exi_run_command_and_wait(struct exi_command *cmd)
 	retval = exi_run_command(cmd);
 	if (retval > 0) {
 		if (in_atomic() || irqs_disabled()) {
-			exi_wait_for_dma_transfer(cmd->exi_channel);
+			exi_wait_for_transfer(cmd->exi_channel);
 		} else {
 			wait_for_completion(&complete);
 		}
@@ -752,54 +903,14 @@ void exi_deselect(struct exi_channel *exi_channel)
  *	Read or write data on a given EXI channel.
  */
 void exi_transfer(struct exi_channel *exi_channel, void *data, size_t len,
-		   int opcode)
+		   int opcode, unsigned long flags)
 {
 	struct exi_command cmd;
 
 	exi_op_transfer(&cmd, exi_channel, data, len, opcode);
+	cmd.flags |= flags;
 	exi_run_command_and_wait(&cmd);
 }
-
-
-/**
- *	exi_get_id  -  Returns the EXI ID of a device
- *	@exi_channel:	channel
- *	@device:	device number on channel
- *	@freq:		clock frequency index
- *
- *	Returns the EXI ID of an EXI device on a given channel.
- *	Caller holds the channel lock.
- */
-u32 exi_get_id(struct exi_channel *exi_channel, unsigned int device,
-	       unsigned int freq)
-{
-	u32 __iomem *csr_reg = exi_channel->io_base + EXI_CSR;
-	u32 id = EXI_ID_INVALID;
-	u16 cmd = 0;
-
-	exi_select_raw(exi_channel, device, freq);
-	__exi_transfer_raw_u16(exi_channel, &cmd, EXI_OP_WRITE);
-	__exi_transfer_raw_u32(exi_channel, &id, EXI_OP_READ);
-	exi_deselect_raw(exi_channel);
-
-	/*
-	 * We return a EXI_ID_NONE if there is some unidentified device
-	 * inserted in memcard slot A or memcard slot B.
-	 * This, for example, allows the SD/MMC driver to see cards.
-	 */
-	if (id == EXI_ID_INVALID) {
-		if ((__to_channel(exi_channel) == 0 ||
-		     __to_channel(exi_channel) == 1)
-		    && device == 0) {
-			if (readl(csr_reg) & EXI_CSR_EXT) {
-				id = EXI_ID_NONE;
-			}
-		} 
-	}
-
-	return id;
-}
-
 
 /*
  * Internal. Count number of busy exi channels given a channel mask.
@@ -887,8 +998,8 @@ static void exi_tasklet(unsigned long param)
 
 	DBG("channel=%d, csr=%08lx\n", exi_channel->channel, exi_channel->csr);
 
-	if (exi_channel->dma_cmd) {
-		DBG("tasklet while dma in flight on channel %d, csr = %08lx\n",
+	if (exi_channel->queued_cmd) {
+		DBG("tasklet while xfer in flight on channel %d, csr = %08lx\n",
 		    exi_channel->channel, exi_channel->csr);
 	}
 
@@ -942,7 +1053,10 @@ static irqreturn_t exi_irq_handler(int irq, void *dev_id, struct pt_regs *regs)
 		spin_unlock_irqrestore(&exi_channel->io_lock, flags);
 
 		if ((status & EXI_CSR_TCINT)) {
-			exi_wait_for_dma_transfer(exi_channel);
+			exi_wait_for_transfer_one(exi_channel);
+		}
+		if ((status & EXI_CSR_EXTIN)) {
+			wake_up(&exi_bus_waitq);
 		}
 
 		if (exi_channel->csr && !exi_is_selected(exi_channel)) {
@@ -1080,7 +1194,7 @@ int exi_event_unregister(struct exi_channel *exi_channel, unsigned int event_id)
 static void exi_quiesce_channel(struct exi_channel *exi_channel, u32 csr_mask)
 {
 	/* wait for dma transfers to complete */
-	exi_wait_for_dma_transfer_raw(exi_channel);
+	exi_wait_for_transfer_raw(exi_channel);
 
 	/* ack and mask all interrupts */
 	writel(EXI_CSR_TCINT  | EXI_CSR_EXIINT | EXI_CSR_EXTIN | csr_mask,
@@ -1096,6 +1210,67 @@ static void exi_quiesce_all_channels(u32 csr_mask)
 
 	exi_channel_for_each(exi_channel) {
 		exi_quiesce_channel(exi_channel, csr_mask);
+	}
+}
+
+/**
+ *	exi_get_id  -  Returns the EXI ID of a device
+ *	@exi_channel:	channel
+ *	@device:	device number on channel
+ *	@freq:		clock frequency index
+ *
+ *	Returns the EXI ID of an EXI device on a given channel.
+ *	Might sleep.
+ */
+u32 exi_get_id(struct exi_device *exi_device)
+{
+	struct exi_channel *exi_channel = exi_device->exi_channel;
+	u32 __iomem *csr_reg = exi_channel->io_base + EXI_CSR;
+	u32 id = EXI_ID_INVALID;
+	u16 cmd = 0;
+
+	/* ask for the EXI id */
+	exi_dev_select(exi_device);
+	exi_dev_write(exi_device, &cmd, sizeof(cmd));
+	exi_dev_read(exi_device, &id, sizeof(id));
+	exi_dev_deselect(exi_device);
+
+	/*
+	 * We return a EXI_ID_NONE if there is some unidentified device
+	 * inserted in memcard slot A or memcard slot B.
+	 * This, for example, allows the SD/MMC driver to see cards.
+	 */
+	if (id == EXI_ID_INVALID) {
+		if ((__to_channel(exi_channel) == 0 ||
+		     __to_channel(exi_channel) == 1)
+		    && exi_device->eid.device == 0) {
+			if (readl(csr_reg) & EXI_CSR_EXT) {
+				id = EXI_ID_NONE;
+			}
+		} 
+	}
+
+	return id;
+}
+
+/*
+ * Tells if there is a device inserted in one of the memory card slots.
+ */
+int exi_get_ext_line(struct exi_channel *exi_channel)
+{
+	u32 __iomem *csr_reg = exi_channel->io_base + EXI_CSR;
+	return (readl(csr_reg) & EXI_CSR_EXT)?1:0;
+}
+
+/*
+ * Saves the current insertion status of a given channel.
+ */
+void exi_update_ext_status(struct exi_channel *exi_channel)
+{
+	if (exi_get_ext_line(exi_channel)) {
+		exi_channel->flags |= EXI_EXT;
+	} else {
+		exi_channel->flags &= ~EXI_EXT;
 	}
 }
 
@@ -1115,7 +1290,7 @@ int exi_hw_init(char *module_name)
 		exi_channel_init(exi_channel, channel);
 	}
 
-	/* calm down the hardware and allow external insertions */
+	/* calm down the hardware and allow extractions */
 	exi_quiesce_all_channels(EXI_CSR_EXTINMASK);
 
 	/* register the exi interrupt handler */
@@ -1143,7 +1318,6 @@ EXPORT_SYMBOL(to_channel);
 EXPORT_SYMBOL(exi_select_raw);
 EXPORT_SYMBOL(exi_deselect_raw);
 EXPORT_SYMBOL(exi_transfer_raw);
-EXPORT_SYMBOL(exi_dma_transfer_raw);
 
 EXPORT_SYMBOL(exi_select);
 EXPORT_SYMBOL(exi_deselect);
