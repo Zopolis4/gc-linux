@@ -55,6 +55,7 @@
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/delay.h>
+#include <linux/kthread.h>
 #include <linux/major.h>
 #include <linux/blkdev.h>
 #include <linux/hdreg.h>
@@ -80,7 +81,7 @@ MODULE_AUTHOR(DRV_AUTHOR);
 MODULE_DESCRIPTION(DRV_DESCRIPTION);
 MODULE_LICENSE("GPL");
 
-static char sd_driver_version[] = "0.1-isobel";
+static char sd_driver_version[] = "0.3-isobel";
 
 #define sd_printk(level, format, arg...) \
 	printk(level DRV_MODULE_NAME ": " format , ## arg)
@@ -139,6 +140,12 @@ static char sd_driver_version[] = "0.1-isobel";
 
 /* R3 is (R1, OCR) 5 bytes in SPI mode */
 
+/* data response */
+#define DR_SPI_MASK				0x1f
+#define DR_SPI_DATA_ACCEPTED			0x05
+#define DR_SPI_DATA_REJECTED_CRC_ERROR		0x0b
+#define DR_SPI_DATA_REJECTED_WRITE_ERROR	0x0d
+
 /* this is still a missing command in the current MMC framework ... */
 #define MMC_READ_OCR		58
 
@@ -179,7 +186,7 @@ static const unsigned int tacc_mant[] = {
 };
 
 enum {
-	__SD_MEDIA_CHANGED = 0
+	__SD_MEDIA_CHANGED = 0,
 };
 
 /*
@@ -228,10 +235,16 @@ struct sd_host {
 	struct request_queue *queue;
 	spinlock_t queue_lock;
 
-	int ref_count;
+	int refcnt;
+
+	struct task_struct	*io_thread;
+	wait_queue_head_t	io_waitq;
+	struct request		*req;
 
 	struct exi_device *exi_device;
 };
+
+static void sd_kill(struct sd_host *host);
 
 /*
  * MMC/SD data structures manipulation.
@@ -480,7 +493,36 @@ static inline void spi_write(struct sd_host *host, void *data, size_t len)
 /* */
 static inline void spi_read(struct sd_host *host, void *data, size_t len)
 {
-	exi_dev_read(host->exi_device, data, len);
+	/*
+	 * Houston, we have a problem.
+	 *
+	 * The EXI hardware implementation seems to use a shift register which
+	 * outputs data from the MSB to the MOSI line and inputs data from
+	 * the MISO line into the LSB.
+	 * When a read operation is performed, data from the MISO line
+	 * is entered into the shift register LSB as expected. But also the
+	 * data already present in the shift register is sent out through the
+	 * MOSI line from the MSB.
+	 * This is in fact the "feature" that enabled tmbinc to dump the IPL.
+	 *
+	 * When interfacing with SD cards, this causes us a serious problem.
+	 * We are required to send all ones (1s) while reading data from
+	 * the SD card. Otherwise, the card can interpret the data sent as
+	 * commands (if they start with the bit pattern 01 for example).
+	 *
+	 * If we use the EXI immediate mode transfer, we can workaround the
+	 * situation by writing all 1s to the DATA register before reading
+	 * (this is indeed automatically done by the EXI layer).
+	 * But we simply can't do that when using EXI DMA transfers (these
+	 * kind of transfers do not allow bidirectional operation).
+	 *
+	 * Given that no EXI DMA read transfers seem reliable, we fallback
+	 * to the "interrupt-driven" immediate mode of the EXI layer.
+	 * This will help reducing CPU monopolization on large reads.
+	 *
+	 */
+	exi_transfer(exi_get_exi_channel(host->exi_device), data, len,
+		     EXI_OP_READ, EXI_CMD_IDI);
 }
 
 /* cycles are expressed in 8 clock cycles */
@@ -516,7 +558,6 @@ static int spi_wait_for_resp(struct sd_host *host,
 static int sd_read_data(struct sd_host *host, void *data, size_t len, int token)
 {
 	int retval = 0;
-	int chunk, chunk_size = 31;
 
 	if (token) {
 		retval = spi_wait_for_resp(host, token, 0xff,
@@ -524,53 +565,57 @@ static int sd_read_data(struct sd_host *host, void *data, size_t len, int token)
 		if (retval < 0)
 			goto out;
 	}
-
-	/*
-	 * Houston, we have a problem.
-	 *
-	 * The EXI hardware implementation seems to use a shift register which
-	 * outputs data from the MSB to the MOSI line and inputs data from
-	 * the MISO line into the LSB.
-	 * When a read operation is performed, data from the MISO line
-	 * is entered into the shift register LSB as expected. But also the
-	 * data already present in the shift register is sent out through the
-	 * MOSI line from the MSB.
-	 * This is in fact the "feature" that enabled tmbinc to dump the IPL.
-	 *
-	 * When interfacing with SD cards, this causes us a serious problem.
-	 * We are required to send all ones (1s) while reading data from
-	 * the SD card. Otherwise, the card can interpret the data sent as
-	 * commands (if they start with the bit pattern 01 for example).
-	 *
-	 * If we use the EXI immediate mode transfer, we can workaround the
-	 * situation by writing all 1s to the DATA register before reading
-	 * (this is indeed automatically done by the EXI layer).
-	 * But we simply can't do that when using EXI DMA transfers (these
-	 * kind of transfers do not allow bidirectional operation).
-	 *
-	 * Given the fact that recently read data will be sent back to the
-	 * card as host output, we can end up with funny and not so funny
-	 * situations.
-	 * For example, if the data you are reading contains the byte
-	 * sequence:
-	 * - 40 00 00 00 00 95
-	 *   it will cause a software reset of the card
-	 *
-	 * If we enable CRC mode we can minimize the problem, but the risk
-	 * is there.
-	 *
-	 */
-#if 1
-	/* we enforce immediate mode by using transfers of less than 32 bytes */
-	while (len > 0) {
-		chunk = (len >= chunk_size) ? chunk_size : len;
-		spi_read(host, data, chunk);
-		len -= chunk;
-		data += chunk;
-	}
-#else
 	spi_read(host, data, len);
-#endif
+	retval = 0;
+
+out:
+	return retval;
+}
+
+/*
+ *
+ */
+static int sd_write_data(struct sd_host *host, void *data, size_t len, int token)
+{
+	u16 crc;
+	u8 t;
+	int retval = 0;
+
+	/* FIXME, rewrite this a bit */
+	{
+		crc = 0;
+		u8 *d = data;
+		int l = len;
+
+		while (l-- > 0)
+			crc = crc_xmodem_update(crc, *d++);
+	}
+
+	/* send the write block token */
+	t = token;
+	spi_write(host, &t, sizeof(t));
+
+	/* send the data */
+	spi_write(host, data, len);
+
+	/* send the crc */
+	spi_write(host, &crc, sizeof(crc));
+
+	/* get the card data response */
+	retval = spi_wait_for_resp(host, 0x01, 0x11, host->write_timeout);
+	if (retval < 0)
+		goto out;
+	if ((retval & DR_SPI_MASK) != DR_SPI_DATA_ACCEPTED) {
+		DBG("data response=%02x\n", retval);
+		retval = -EIO;
+		goto out;
+	}
+
+	/* wait for the busy signal to clear */
+	retval = spi_wait_for_resp(host, 0xff, 0xff, host->write_timeout);
+	if (retval < 0)
+		goto out;
+
 	retval = 0;
 
 out:
@@ -705,8 +750,6 @@ static int sd_generic_read(struct sd_host *host,
 	}
 
 out:
-	//spi_wait_for_resp(host, 0xff, 0xff, host->read_timeout);
-
 	/* burn extra cycles and deselect card */
 	sd_end_command(host);
 
@@ -714,6 +757,46 @@ out:
 		DBG("read, offset=%d, len=%d\n", arg, len);
 		DBG("crc=%04x, calc_crc=%04x, %s\n", crc, calc_crc,
 		    (retval < 0) ? "failed" : "ok");
+	}
+
+	return retval;
+}
+
+/*
+ *
+ */
+static int sd_generic_write(struct sd_host *host,
+			    u8 opcode, u32 arg,
+			    void *data, size_t len, int token)
+{
+	struct sd_command *cmd = &host->cmd;
+	int retval;
+
+	/* build raw command */
+	sd_cmd(cmd, opcode, arg);
+
+	/* select card, send command and wait for response */
+	retval = sd_start_command(host, cmd);
+	if (retval < 0)
+		goto out;
+	if (retval != 0x00) {
+		retval = -EIO;
+		goto out;
+	}
+
+	/* send data token, data and crc, get data response */
+	retval = sd_write_data(host, data, len, token);
+	if (retval < 0)
+		goto out;
+
+	retval = 0;
+
+out:
+	/* burn extra cycles and deselect card */
+	sd_end_command(host);
+
+	if (retval < 0) {
+		DBG("write, offset=%d, len=%d\n", arg, len);
 	}
 
 	return retval;
@@ -740,7 +823,7 @@ static int sd_read_ocr(struct sd_host *host)
 	spi_read(host, &host->ocr, sizeof(host->ocr));
 	retval = 0;
 
-      out:
+out:
 	/* burn extra cycles and deselect card */
 	sd_end_command(host);
 	return retval;
@@ -790,6 +873,25 @@ static inline int sd_read_single_block(struct sd_host *host,
 		DBG("start=%lu, data=%p, len=%d, retval = %d\n", start, data,
 		    len, retval);
 	}
+	return retval;
+}
+
+/*
+ *
+ */
+static inline int sd_write_single_block(struct sd_host *host,
+				        unsigned long start,
+				        void *data, size_t len)
+{
+	int retval;
+
+	retval = sd_generic_write(host, MMC_WRITE_BLOCK, start,
+				  data, len,
+				  MMC_SPI_TOKEN_START_SINGLE_BLOCK_WRITE);
+	if (retval < 0)
+		DBG("start=%lu, data=%p, len=%d, retval = %d\n", start, data,
+		    len, retval);
+
 	return retval;
 }
 
@@ -876,7 +978,7 @@ static int sd_reset_sequence(struct sd_host *host)
 			break;
 		}
 		if ((retval & R1_SPI_ILLEGAL_COMMAND)) {
-			DBG("probably a MMC card was found\n");
+			/* this looks like a MMC card */
 			break;
 		}
 	}
@@ -981,7 +1083,7 @@ static int sd_read_request(struct sd_host *host, struct request *req)
 	size_t block_len; /* in bytes */
 	unsigned long start;
 	void *buf = req->buffer;
-	int retval = 1;
+	int retval;
 
 	start = req->sector << KERNEL_SECTOR_SHIFT;
 	nr_blocks = req->current_nr_sectors >>
@@ -998,10 +1100,8 @@ static int sd_read_request(struct sd_host *host, struct request *req)
 
 	}
 
-	if (retval < 0)
-		retval = 0; /* request not completed */
-	else
-		retval = 1; /* request done */
+	/* number of kernel sectors transferred */
+	retval = i << (host->card.csd.read_blkbits - KERNEL_SECTOR_SHIFT);
 
 	return retval;
 }
@@ -1011,9 +1111,87 @@ static int sd_read_request(struct sd_host *host, struct request *req)
  */
 static int sd_write_request(struct sd_host *host, struct request *req)
 {
-	sd_printk(KERN_ERR, "write support pending\n");
-	end_request(req, 0);
-	return 0;
+	int i;
+	unsigned long nr_blocks; /* in card blocks */
+	size_t block_len; /* in bytes */
+	unsigned long start;
+	void *buf = req->buffer;
+	int retval;
+
+	/* FIXME, should use 2^WRITE_BL_LEN blocks */
+
+	/* kernel sectors and card write blocks are both 512 bytes long */
+	start = req->sector << KERNEL_SECTOR_SHIFT;
+	nr_blocks = req->current_nr_sectors;
+	block_len = 1 << KERNEL_SECTOR_SHIFT;
+
+	for (i = 0; i < nr_blocks; i++) {
+		retval = sd_write_single_block(host, start, buf, block_len);
+		if (retval < 0)
+			break;
+
+		start += block_len;
+		buf += block_len;
+
+	}
+
+	/* number of kernel sectors transferred */
+	retval = i;
+
+	return retval;
+}
+
+/*
+ * Input/Output thread. Sends and receives packets.
+ */
+static int sd_io_thread(void *param)
+{
+        struct sd_host *host = param;
+	struct request *req;
+	int uptodate, nr_sectors;
+	unsigned long flags;
+	int retval;
+
+        set_user_nice(current, -20);
+        current->flags |= PF_NOFREEZE;
+        set_current_state(TASK_RUNNING);
+
+        while(!kthread_should_stop()) {
+                for(;;) {
+			spin_lock_irqsave(&host->lock, flags);
+			if (!host->req) {
+				spin_unlock_irqrestore(&host->lock, flags);
+				break;
+			}
+			req = host->req;
+			host->req = NULL;
+			spin_unlock_irqrestore(&host->lock, flags);
+
+			spin_lock(&host->queue_lock);
+			blk_start_queue(host->queue);
+			spin_unlock(&host->queue_lock);
+
+			/* proceed with i/o requests */
+			if (rq_data_dir(req) == WRITE) {
+				retval = sd_write_request(host, req);
+			} else {
+				retval = sd_read_request(host, req);
+			}
+
+			if (retval <= 0) {
+				uptodate = 0;
+				nr_sectors = 0;
+			} else {
+				uptodate = (retval > 0)?1:0;
+				nr_sectors = retval;
+			}
+
+			if (!end_that_request_first(req, uptodate, nr_sectors))
+				end_that_request_last(req);
+                }
+                wait_event(host->io_waitq, host->req || kthread_should_stop());
+        }
+        return 0;
 }
 
 /*
@@ -1024,22 +1202,20 @@ static void sd_do_request(request_queue_t * q)
 	struct sd_host *host = q->queuedata;
 	struct request *req;
 	unsigned long nr_sectors;	/* in kernel sectors */
-	int retval;
+	unsigned long flags;
 
 	nr_sectors =
 	    host->card.csd.capacity << (host->card.csd.read_blkbits -
 					KERNEL_SECTOR_SHIFT);
 
 	while ((req = elv_next_request(q))) {
-		/* keep our reads within limits */
-		if (req->sector + req->current_nr_sectors > nr_sectors) {
-			sd_printk(KERN_ERR, "reading past end\n");
+		/* pulling the card out while mounted is bold... */
+		if (exi_is_dying(host->exi_device)) {
+			sd_printk(KERN_ERR, "card in use removed, aborting\n");
 			end_request(req, 0);
 			continue;
 		}
-
-		/* changing media during flight is not a good idea... */
-		if ((host->flags & SD_MEDIA_CHANGED)) {
+		if (test_bit(__SD_MEDIA_CHANGED, &host->flags)) {
 			sd_printk(KERN_ERR, "media changed, aborting\n");
 			end_request(req, 0);
 			continue;
@@ -1049,15 +1225,28 @@ static void sd_do_request(request_queue_t * q)
 		if (!blk_fs_request(req))
 			continue;
 
-		/* proceed with i/o requests */
-		if (rq_data_dir(req) == WRITE) {
-			retval = sd_write_request(host, req);
-		} else {
-			retval = sd_read_request(host, req);
+		/* keep our reads within limits */
+		if (req->sector + req->current_nr_sectors > nr_sectors) {
+			sd_printk(KERN_ERR, "reading past end\n");
+			end_request(req, 0);
+			continue;
 		}
-		end_request(req, retval);
-		if (!retval)
-			sd_printk(KERN_ERR, "request failed\n");
+
+		/* schedule the request if there transfer slot is free */
+		spin_lock_irqsave(&host->lock, flags);
+		if (host->req) {
+			blk_stop_queue(q);
+			spin_unlock_irqrestore(&host->lock, flags);
+			break;
+		}
+		blkdev_dequeue_request(req);
+		host->req = req;
+		blk_stop_queue(q);
+		spin_unlock_irqrestore(&host->lock, flags);
+
+		/* wake up the i/o thread */
+		wake_up(&host->io_waitq);
+		break;
 	}
 }
 
@@ -1079,15 +1268,9 @@ static int sd_open(struct inode *inode, struct file *filp)
 	down(&open_lock);
 
 	/* honor exclusive open mode */
-	if (host->ref_count == -1 ||
-	    (host->ref_count && (filp->f_flags & O_EXCL))) {
+	if (host->refcnt == -1 ||
+	    (host->refcnt && (filp->f_flags & O_EXCL))) {
 		retval = -EBUSY;
-		goto out;
-	}
-
-	/* FIXME, read only mode for now */
-	if (1 && (filp->f_mode & FMODE_WRITE)) {
-		retval = -EROFS;
 		goto out;
 	}
 
@@ -1100,9 +1283,9 @@ static int sd_open(struct inode *inode, struct file *filp)
 	}
 
 	if ((filp->f_flags & O_EXCL))
-		host->ref_count = -1;
+		host->refcnt = -1;
 	else
-		host->ref_count++;
+		host->refcnt++;
 
 out:
 	up(&open_lock);
@@ -1119,10 +1302,15 @@ static int sd_release(struct inode *inode, struct file *filp)
 
 	down(&open_lock);
 
-	if (host->ref_count > 0)
-		host->ref_count--;
-	else
-		host->ref_count = 0;
+	if (host->refcnt > 0)
+		host->refcnt--;
+	else {
+		host->refcnt = 0;
+	}
+
+	/* kill the device if we are dying and no more openers exist */
+	if (!host->refcnt && exi_is_dying(host->exi_device))
+		sd_kill(host);
 
 	up(&open_lock);
 
@@ -1142,13 +1330,12 @@ static int sd_media_changed(struct gendisk *disk)
 	if (test_bit(__SD_MEDIA_CHANGED, &host->flags))
 		return 1;
 
-	/* otherwise check if the serial number of the card changed */
+	/* check if the serial number of the card changed */
 	last_serial = host->card.cid.serial;
 	retval = sd_read_cid(host);
 	if (!retval && last_serial == host->card.cid.serial && last_serial) {
 		clear_bit(__SD_MEDIA_CHANGED, &host->flags);
 	} else {
-		sd_printk(KERN_INFO, "did you remove/insert a card? :)\n");
 		set_bit(__SD_MEDIA_CHANGED, &host->flags);
 	}
 
@@ -1173,9 +1360,6 @@ static int sd_revalidate_disk(struct gendisk *disk)
 		retval = -ENOMEDIUM;
 		goto out;
 	}
-
-	/* FIXME, restricted to read only for now ... */
-	set_disk_ro(host->disk, 1);
 
 	/* inform the block layer about various sizes */
 	blk_queue_hardsect_size(host->queue, 1 << host->card.csd.read_blkbits);
@@ -1243,12 +1427,10 @@ static int sd_init_blk_dev(struct sd_host *host)
 	int retval;
 
 	channel = to_channel(exi_get_exi_channel(host->exi_device));
-
-	spin_lock_init(&host->queue_lock);
-	host->ref_count = 0;
+	host->refcnt = 0;
 
 	retval = -ENOMEM;
-
+	spin_lock_init(&host->queue_lock);
 	queue = blk_init_queue(sd_do_request, &host->queue_lock);
 	if (!queue) {
 		sd_printk(KERN_ERR, "error initializing queue\n");
@@ -1258,6 +1440,7 @@ static int sd_init_blk_dev(struct sd_host *host)
 	blk_queue_dma_alignment(queue, EXI_DMA_ALIGN);
 	blk_queue_max_phys_segments(queue, 1);
 	blk_queue_max_hw_segments(queue, 1);
+	blk_queue_max_sectors(queue, 8);
 	queue->queuedata = host;
 	host->queue = queue;
 
@@ -1271,15 +1454,26 @@ static int sd_init_blk_dev(struct sd_host *host)
 	disk->fops = &sd_fops;
 	sprintf(disk->disk_name, "%s%c", SD_NAME, 'a' + channel);
 	sprintf(disk->devfs_name, "%s/target%d", SD_NAME, channel);
-	disk->queue = host->queue;
 	disk->private_data = host;
+	disk->queue = host->queue;
 	host->disk = disk;
+
+	init_waitqueue_head(&host->io_waitq);
+	host->io_thread = kthread_run(sd_io_thread, host,
+				      "ksdiod/%c", 'a' + channel);
+	if (IS_ERR(host->io_thread)) {
+		sd_printk(KERN_ERR, "error creating io thread\n");
+		goto err_io_thread;
+	}
 
 	retval = 0;
 	goto out;
 
+err_io_thread:
+	del_gendisk(host->disk);
+	put_disk(host->disk);
 err_alloc_disk:
-	blk_cleanup_queue(host->queue);
+	blk_put_queue(host->queue);
 err_blk_init_queue:
 out:
 	return retval;
@@ -1293,9 +1487,17 @@ static void sd_exit_blk_dev(struct sd_host *host)
 	if (host->disk) {
 		del_gendisk(host->disk);
 		put_disk(host->disk);
+		host->disk = NULL;
 	}
-	if (host->queue)
-		blk_cleanup_queue(host->queue);
+	if (host->queue) {
+		blk_put_queue(host->queue);
+		host->queue = NULL;
+	}
+
+	if (!IS_ERR(host->io_thread)) {
+		kthread_stop(host->io_thread);
+		wake_up(&host->io_waitq);
+	}
 }
 
 /*
@@ -1321,7 +1523,6 @@ static int sd_init(struct sd_host *host)
 			goto err_blk_dev;
 		}
 		add_disk(host->disk);
-
 	}
 	return retval;
 
@@ -1342,7 +1543,25 @@ static void sd_exit(struct sd_host *host)
 /*
  *
  */
-static int __devinit sd_probe(struct exi_device *exi_device)
+static void sd_kill(struct sd_host *host)
+{
+	struct exi_device *exi_device = host->exi_device;
+
+	if (host) {
+		sd_exit(host);
+		if (host->exi_device)
+			exi_device_put(host->exi_device);
+		host->exi_device = NULL;
+		kfree(host);
+	}
+	exi_set_dying(exi_device, 0);
+	exi_set_drvdata(exi_device, NULL);
+}
+
+/*
+ *
+ */
+static int sd_probe(struct exi_device *exi_device)
 {
 	struct sd_host *host;
 	int retval;
@@ -1372,17 +1591,15 @@ static int __devinit sd_probe(struct exi_device *exi_device)
 /*
  *
  */
-static void __devexit sd_remove(struct exi_device *exi_device)
+static void sd_remove(struct exi_device *exi_device)
 {
 	struct sd_host *host = exi_get_drvdata(exi_device);
 
-	exi_set_drvdata(exi_device, NULL);
-	if (host) {
-		sd_exit(host);
-		if (host->exi_device)
-			exi_device_put(host->exi_device);
-		host->exi_device = NULL;
-		kfree(host);
+	if (host->refcnt > 0) {
+		sd_printk(KERN_ERR, "hey! attempt to remove device in use!\n");
+		exi_set_dying(exi_device, 1);
+	} else {
+		sd_kill(host);
 	}
 }
 
