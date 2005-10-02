@@ -536,7 +536,9 @@ int gcnfb_restorefb(struct fb_info *info)
 {
 	int i;
 
+/*
 	printk(KERN_INFO "Setting mode %s\n", gcnfb_current_video_mode->name);
+*/
 	gcnfb_set_framebuffer(info->fix.smem_start);
 
 	/* initialize video registers */
@@ -626,7 +628,6 @@ int __init gcnfb_setup(char *options)
 	printk("gcnfb: options = %s\n", options);
 
 	while ((this_opt = strsep(&options, ",")) != NULL) {
-		printk("this_opt = %s\n", this_opt);
 		if (!*this_opt)
 			continue;
 
@@ -637,8 +638,6 @@ int __init gcnfb_setup(char *options)
 		else if (!strcmp(this_opt, "ywrap"))
 			ypan = 2;
 		else if (!strncmp(this_opt, "tv=", 3)) {
-			printk("detected \"tv=\"\n");
-			printk("cmd line: %s\n", this_opt);
 			if (!strncmp(this_opt + 3, "PAL", 3))
 				gcnfb_current_video_mode = 
 					gcnfb_video_modes + GCNFB_VM_PAL50;
