@@ -301,8 +301,8 @@ int gcngx_mmap(struct fb_info *info,struct file *file,
 		/* our special case, map the memory info */
 		vma->vm_flags |= VM_IO;
 		vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
-		if (io_remap_page_range(vma,vma->vm_start,
-					VIDEO_MMAP_BASE,
+		if (io_remap_pfn_range(vma,vma->vm_start,
+					VIDEO_MMAP_BASE >> PAGE_SHIFT,
 					len,
 					vma->vm_page_prot))
 		{
