@@ -301,9 +301,9 @@ static void gcn_si_timer(unsigned long portno)
 		else
 			input_report_abs(&port[portno].idev, ABS_HAT0X, 0);
 
-		if (raw[0] & PAD_UP)
+		if (raw[0] & PAD_DOWN)
 			input_report_abs(&port[portno].idev, ABS_HAT0Y, 1);
-		else if (raw[0] & PAD_DOWN)
+		else if (raw[0] & PAD_UP)
 			input_report_abs(&port[portno].idev, ABS_HAT0Y, -1);
 		else
 			input_report_abs(&port[portno].idev, ABS_HAT0Y, 0);
