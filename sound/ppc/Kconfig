@@ -34,11 +34,14 @@ config SND_POWERMAC_AUTO_DRC
 	  option.
 
 config SND_GAMECUBE
-	tristate "Nintendo GameCube audio"
-	depends on SND
+	tristate "Nintendo GameCube (Flipper)"
+	depends on SND && GAMECUBE
 #	select SND_GENERIC_DRIVER
 	help
-	  Say 'Y' or 'M' to include support for the Nintendo GameCube
-	  audio system.
+	  Say Y here to add audio support for the "Flipper" Graphics
+	  and Sound processor as found in the GameCube from Nintendo.
+
+	  To compile this driver as a module, choose M here: the module
+	  will be called snd-gcn.
 
 endmenu
