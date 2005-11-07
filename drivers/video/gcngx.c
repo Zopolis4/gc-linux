@@ -344,6 +344,11 @@ int gcngx_mmap(struct fb_info *info,struct file *file,
 	/* call the frame buffer mmap method */
 	if (file->f_op->mmap)
 	{
+		/*
+		 * FIXME
+		 * This seems to be broken.
+		 * fb_mmap might sleep and we're getting a lock here.
+		 */
 		spin_lock(&lock);
 		/* reset our mmap since the fb driver will call it */
 		gcnfb_ops.fb_mmap = NULL;
