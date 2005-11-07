@@ -35,18 +35,17 @@
 #include <linux/spinlock.h>
 #include <linux/kthread.h>
 #include <linux/wait.h>
+#include <linux/exi.h>
 #include <asm/system.h>
 #include <asm/io.h>
 
-#define CONFIG_EXI_LITE2_COMPAT
-#include <linux/exi.h>
 
 #define DRV_MODULE_NAME	"gcn-bba"
 #define DRV_DESCRIPTION	"Nintendo GameCube Broadband Adapter driver"
 #define DRV_AUTHOR	"Albert Herranz, " \
 			"Todd Jeffreys"
 
-char bba_driver_version[] = "1.3-isobel";
+char bba_driver_version[] = "1.4-isobel";
 
 
 #define bba_printk(level, format, arg...) \
@@ -73,11 +72,10 @@ char bba_driver_version[] = "1.3-isobel";
 #define BBA_CMD_IR_MASKALL  0x00
 #define BBA_CMD_IR_MASKNONE 0xf8
 
-#define bba_select()	exi_lite_select(BBA_EXI_CHANNEL, BBA_EXI_DEVICE, \
-					BBA_EXI_FREQ)
-#define bba_deselect()	exi_lite_deselect(BBA_EXI_CHANNEL)
-#define bba_write(d,l)	exi_lite_write(BBA_EXI_CHANNEL,d,l)
-#define bba_read(d,l)	exi_lite_read(BBA_EXI_CHANNEL,d,l)
+static inline void bba_select(void);
+static inline void bba_deselect(void);
+static inline void bba_write(void *data, size_t len);
+static inline void bba_read(void *data, size_t len);
 
 static void bba_ins(int reg, void *val, int len);
 static void bba_outs(int reg, void *val, int len);
@@ -349,6 +347,10 @@ static void bba_outs(int reg, void *val, int len)
 #define X(a,b)  a,b
 #endif
 
+enum {
+	__BBA_RBFIM_OFF = 0,
+};
+
 struct bba_descr {
 	u32 X(X(next_packet_ptr:12, packet_len:12), status:8);
 } __attribute((packed));
@@ -356,6 +358,8 @@ struct bba_descr {
 
 struct bba_private {
 	spinlock_t		lock;
+	unsigned long		flags;
+#define BBA_RBFIM_OFF		(1<<__BBA_RBFIM_OFF)
 
 	u32			msg_enable;
 	u8			revid;
@@ -370,6 +374,8 @@ struct bba_private {
 
 	struct net_device	*dev;
 	struct net_device_stats	stats;
+
+	struct exi_device	*exi_device;
 };
 
 static int bba_event_handler(struct exi_channel *exi_channel,
@@ -382,14 +388,14 @@ static int bba_reset(struct net_device *dev);
 static int bba_open(struct net_device *dev)
 {
 	struct bba_private *priv = (struct bba_private *)dev->priv;
-	unsigned long flags;
 	int retval;
 
-	/* according to patents, INTs are triggered on EXI channel 2 */
-	retval = exi_lite_register_event(BBA_EXI_IRQ_CHANNEL , EXI_EVENT_IRQ,
-					 bba_event_handler, dev,
-					 (1 << BBA_EXI_IRQ_CHANNEL) |
-					 (1 << BBA_EXI_CHANNEL));
+	/* INTs are triggered on EXI channel 2 */
+	retval = exi_event_register(to_exi_channel(BBA_EXI_IRQ_CHANNEL),
+				    EXI_EVENT_IRQ,
+				    priv->exi_device,
+				    bba_event_handler, dev,
+				    (1 << BBA_EXI_CHANNEL));
 	if (retval < 0) {
 		bba_printk(KERN_ERR, "unable to register EXI event %d\n",
 			   EXI_EVENT_IRQ);
@@ -397,9 +403,9 @@ static int bba_open(struct net_device *dev)
 	}
 
 	/* reset the hardware to a known state */
-	spin_lock_irqsave(&priv->lock, flags);
+	exi_dev_take(priv->exi_device);
 	retval = bba_reset(dev);
-	spin_unlock_irqrestore(&priv->lock, flags);
+	exi_dev_give(priv->exi_device);
 
 	/* inform the network layer that we are ready */
 	netif_start_queue(dev);
@@ -413,14 +419,12 @@ out:
 static int bba_close(struct net_device *dev)
 {
 	struct bba_private *priv = (struct bba_private *)dev->priv;
-	unsigned long flags;
-
-	netif_carrier_off(dev);
 
 	/* do not allow more packets to be queued */
+	netif_carrier_off(dev);
 	netif_stop_queue(dev);
 
-	spin_lock_irqsave(&priv->lock, flags);
+	exi_dev_take(priv->exi_device);
 
 	/* stop receiver */
 	bba_out8(BBA_NCRA, bba_in8(BBA_NCRA) & ~BBA_NCRA_SR);
@@ -428,10 +432,11 @@ static int bba_close(struct net_device *dev)
 	/* mask all interrupts */
 	bba_out8(BBA_IMR, 0x00);
 
-	spin_unlock_irqrestore(&priv->lock, flags);
+	exi_dev_give(priv->exi_device);
 
 	/* unregister exi event */
-	exi_lite_unregister_event(BBA_EXI_IRQ_CHANNEL, EXI_EVENT_IRQ);
+	exi_event_unregister(to_exi_channel(BBA_EXI_IRQ_CHANNEL),
+			     EXI_EVENT_IRQ);
 
 	return 0;
 }
@@ -448,6 +453,7 @@ static struct net_device_stats *bba_get_stats(struct net_device *dev)
 
 /*
  * Starts transmission for a packet.
+ * We can't do real hardware i/o here.
  */
 static int bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
 {
@@ -459,6 +465,7 @@ static int bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	if (skb->len > BBA_TX_MAX_PACKET_SIZE) {
 		dev_kfree_skb(skb);
 		priv->stats.tx_dropped++;
+		/* silently drop the package */
 		goto out;
 	}
 
@@ -470,8 +477,8 @@ static int bba_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	 */
 	if (!priv->tx_skb) {
 		priv->tx_skb = skb;
-		wake_up(&priv->io_waitq);
 		dev->trans_start = jiffies;
+		wake_up(&priv->io_waitq);
 	} else {
 		retval = NETDEV_TX_BUSY;
 	}
@@ -492,33 +499,35 @@ out:
 static int bba_tx_err(u8 status, struct net_device *dev)
 {
 	struct bba_private *priv = (struct bba_private *)dev->priv;
-	int errors = 0;
+	int last_tx_errors = priv->stats.tx_errors;
 
 	if (status & BBA_TX_STATUS_TERR) {
-		errors++;
-		priv->stats.tx_errors++;
 		if (status & BBA_TX_STATUS_CCMASK) {
 			priv->stats.collisions +=
 			    (status & BBA_TX_STATUS_CCMASK);
+			priv->stats.tx_errors++;
 		}
 		if (status & BBA_TX_STATUS_CRSLOST) {
 			priv->stats.tx_carrier_errors++;
+			priv->stats.tx_errors++;
 		}
 		if (status & BBA_TX_STATUS_UF) {
 			priv->stats.tx_fifo_errors++;
+			priv->stats.tx_errors++;
 		}
 		if (status & BBA_TX_STATUS_OWC) {
 			priv->stats.tx_window_errors++;
+			priv->stats.tx_errors++;
 		}
 	}
 
-	if (errors) {
+	if (last_tx_errors != priv->stats.tx_errors) {
 		if (netif_msg_tx_err(priv)) {
 			bba_printk(KERN_DEBUG, "tx errors, status %8.8x.\n",
 				   status);
 		}
 	}
-	return errors;
+	return priv->stats.tx_errors;
 }
 
 /*
@@ -534,9 +543,7 @@ static int bba_tx(struct net_device *dev)
 	static u8 pad[ETH_ZLEN] __attribute__ ((aligned (EXI_DMA_ALIGN+1)));
 	int pad_len;
 
-	BUG_ON(priv->tx_skb == NULL);
-
-	spin_lock_irqsave(&priv->lock, flags);
+	exi_dev_take(priv->exi_device);
 
 	/* if the TXFIFO is in use, we'll try it later when free */
         if (bba_in8(BBA_NCRA) & (BBA_NCRA_ST0 | BBA_NCRA_ST1)) {
@@ -544,28 +551,26 @@ static int bba_tx(struct net_device *dev)
 		goto out;
         }
 
+	spin_lock_irqsave(&priv->lock, flags);
  	skb = priv->tx_skb;
+	priv->tx_skb = NULL;
+	spin_unlock_irqrestore(&priv->lock, flags);
 
 	/* tell the card about the length of this packet */
 	bba_out12(BBA_TXFIFOCNT, skb->len);
 
 	/*
 	 * Store the packet in the TXFIFO, including padding if needed.
-	 * Packet transmission tries to make use of DMA transfers, and enables
-	 * interrupts as soon as the channel is selected (reserved).
+	 * Packet transmission tries to make use of DMA transfers.
 	 */
 
 	bba_select();
-	spin_unlock_irqrestore(&priv->lock, flags);
-
 	bba_outs_nosel(BBA_WRTXFIFOD, skb->data, skb->len);
 	if (skb->len < ETH_ZLEN) {
 		pad_len = ETH_ZLEN - skb->len;
 		memset(pad, 0, pad_len);
 		bba_outs_nosel_continued(pad, pad_len);
 	}
-
-	spin_lock_irqsave(&priv->lock, flags);
 	bba_deselect();
 
 	/* tell the card to send the packet right now */
@@ -577,57 +582,61 @@ static int bba_tx(struct net_device *dev)
 
 	/* free this packet and remove it from our transmission "queue" */
 	dev_kfree_skb(skb);
-	priv->tx_skb = NULL;
 
 out:
-	spin_unlock_irqrestore(&priv->lock, flags);
+	exi_dev_give(priv->exi_device);
 
 	return retval;
 }
 
 /*
  * Updates reception error statistics.
- * Caller holds the device lock.
+ * Caller has already taken the exi channel.
  */
 static int bba_rx_err(u8 status, struct net_device *dev)
 {
 	struct bba_private *priv = (struct bba_private *)dev->priv;
-	int errors = 0;
+	int last_rx_errors = priv->stats.rx_errors;
 
-	if (status & BBA_RX_STATUS_RERR) {
-		errors++;
+	if (status == 0xff) {
+		priv->stats.rx_over_errors++;
 		priv->stats.rx_errors++;
-		if (status & BBA_RX_STATUS_BF) 
-			priv->stats.rx_over_errors++;
-		if (status & BBA_RX_STATUS_CRC)
-			priv->stats.rx_crc_errors++;
-		if (status & BBA_RX_STATUS_FO)
-			priv->stats.rx_fifo_errors++;
-		if (status & BBA_RX_STATUS_RW)
-			priv->stats.rx_length_errors++;
-		if (status & BBA_RX_STATUS_FAE)
+	} else {
+		if (status & BBA_RX_STATUS_RERR) {
+			if (status & BBA_RX_STATUS_CRC) {
+				priv->stats.rx_crc_errors++;
+				priv->stats.rx_errors++;
+			}
+			if (status & BBA_RX_STATUS_FO) {
+				priv->stats.rx_fifo_errors++;
+				priv->stats.rx_errors++;
+			}
+			if (status & BBA_RX_STATUS_RW) {
+				priv->stats.rx_length_errors++;
+				priv->stats.rx_errors++;
+			}
+			if (status & BBA_RX_STATUS_BF) {
+				priv->stats.rx_over_errors++;
+				priv->stats.rx_errors++;
+			}
+			if (status & BBA_RX_STATUS_RF) {
+				priv->stats.rx_length_errors++;
+				priv->stats.rx_errors++;
+			}
+		}
+		if (status & BBA_RX_STATUS_FAE) {
 			priv->stats.rx_frame_errors++;
+			priv->stats.rx_errors++;
+		}
 	}
-	if (status & BBA_RX_STATUS_RF)
-		priv->stats.rx_length_errors++;
 
-	if (errors) {
+	if (last_rx_errors != priv->stats.rx_errors) {
 		if (netif_msg_rx_err(priv)) {
 			bba_printk(KERN_DEBUG, "rx errors, status %8.8x.\n",
 				   status);
 		}
-
-		/* stop the receiver */
-		bba_out8(BBA_NCRA, bba_in8(BBA_NCRA) & ~BBA_NCRA_SR);
-
-		/* initialize page pointers */
-		bba_out12(BBA_RWP, BBA_INIT_RWP);
-		bba_out12(BBA_RRP, BBA_INIT_RRP);
-
-		/* start receiver again */
-		bba_out8(BBA_NCRA, bba_in8(BBA_NCRA) | BBA_NCRA_SR);
 	}
-	return errors;
+	return priv->stats.rx_errors;
 }
 
 /*
@@ -638,13 +647,12 @@ static int bba_rx(struct net_device *dev, int budget)
 	struct bba_private *priv = (struct bba_private *)dev->priv;
 	struct sk_buff *skb;
 	struct bba_descr descr;
-	int status, size;
+	int lrps, size;
 	unsigned long pos, top;
 	unsigned short rrp, rwp;
-	unsigned long flags;
 	int received = 0;
 
-	spin_lock_irqsave(&priv->lock, flags);
+	exi_dev_take(priv->exi_device);
 
 	/* get current receiver pointers */
 	rwp = bba_in12(BBA_RWP);
@@ -655,12 +663,19 @@ static int bba_rx(struct net_device *dev, int budget)
 		le32_to_cpus((u32 *) & descr);
 
 		size = descr.packet_len - 4;	/* ignore CRC */
-		status = descr.status;
+		lrps = descr.status;
 
 		/* abort processing in case of errors */
-		if (size > BBA_RX_MAX_PACKET_SIZE + 4
-		    || (status & (BBA_RX_STATUS_RERR | BBA_RX_STATUS_FAE))) {
-			bba_rx_err(status, dev);
+		if (size > BBA_RX_MAX_PACKET_SIZE + 4) {
+			DBG("packet too big %d", size);
+			continue;
+		}
+
+		if ((lrps & (BBA_RX_STATUS_RERR | BBA_RX_STATUS_FAE))) {
+			DBG("error %x on received packet\n", lrps);
+			bba_rx_err(lrps, dev);
+			rwp = bba_in12(BBA_RWP);
+			rrp = bba_in12(BBA_RRP);
 			continue;
 		}
 
@@ -679,29 +694,15 @@ static int bba_rx(struct net_device *dev, int budget)
 
 		if ((pos + size) < top) {
 			/* full packet in one chunk */
-			bba_select();
-			spin_unlock_irqrestore(&priv->lock, flags);
-			bba_ins_nosel(pos, skb->data, size);
-			spin_lock_irqsave(&priv->lock, flags);
-			bba_deselect();
+			bba_ins(pos, skb->data, size);
 		} else {
 			/* packet wrapped */
 			int chunk_size = top - pos;
 
-			bba_select();
-			spin_unlock_irqrestore(&priv->lock, flags);
-			bba_ins_nosel(pos, skb->data, chunk_size);
-			spin_lock_irqsave(&priv->lock, flags);
-			bba_deselect();
-
+			bba_ins(pos, skb->data, chunk_size);
 			rrp = BBA_INIT_RRP;
-
-			bba_select();
-			spin_unlock_irqrestore(&priv->lock, flags);
-			bba_ins_nosel(rrp << 8, skb->data + chunk_size,
+			bba_ins(rrp << 8, skb->data + chunk_size,
 				size - chunk_size);
-			spin_lock_irqsave(&priv->lock, flags);
-			bba_deselect();
 		}
 
 		skb->protocol = eth_type_trans(skb, dev);
@@ -714,18 +715,22 @@ static int bba_rx(struct net_device *dev, int budget)
 		received++;
 
 		/* move read pointer to next packet */
-		bba_out12(BBA_RRP, descr.next_packet_ptr);
+		bba_out12(BBA_RRP, rrp = descr.next_packet_ptr);
 
-		/* get read/write pointers and continue */
+		/* get write pointer and continue */
 		rwp = bba_in12(BBA_RWP);
-		rrp = bba_in12(BBA_RRP);
 	}
 
 	/* there are no more packets pending if we didn't exhaust our budget */
 	if (received < budget)
 		priv->rx_work = 0;
 
-	spin_unlock_irqrestore(&priv->lock, flags);
+	/* re-enable RBFI if it was disabled before */
+	if (test_and_clear_bit(__BBA_RBFIM_OFF, &priv->flags)) {
+		bba_out8(BBA_IMR, bba_in8(BBA_IMR) | BBA_IMR_RBFIM);
+	}
+
+	exi_dev_give(priv->exi_device);
 
 	return received;
 }
@@ -741,16 +746,18 @@ static int bba_io_thread(void *param)
 	current->flags |= PF_NOFREEZE;
 	set_current_state(TASK_RUNNING);
 
+	/*
+	 * XXX We currently do not freeze this thread.
+	 * The bba is often used to access the root filesystem.
+	 */
+
 	while(!kthread_should_stop()) {
-		//try_to_freeze(PF_FREEZE);
 		wait_event(priv->io_waitq, priv->rx_work || priv->tx_skb);
 		while (priv->rx_work || priv->tx_skb) {
-			if (priv->rx_work) {
+			if (priv->rx_work)
 				bba_rx(priv->dev, 0x0f);
-			}
-			if (priv->tx_skb) {
+			if (priv->tx_skb)
 				bba_tx(priv->dev);
-			}
 		}
 	}
 	return 0;
@@ -758,15 +765,13 @@ static int bba_io_thread(void *param)
 
 /*
  * Handles interrupt work from the network device.
+ * Caller has already taken the exi channel.
  */
 static void inline bba_interrupt(struct net_device *dev)
 {
 	struct bba_private *priv = (struct bba_private *)dev->priv;
-	unsigned long flags;
-	u8 ir, imr, status;
+	u8 ir, imr, status, lrps, ltps;
 	int loops = 0;
-
-	spin_lock_irqsave(&priv->lock, flags);
 
 	ir = bba_in8(BBA_IR);
 	imr = bba_in8(BBA_IMR);
@@ -782,25 +787,38 @@ static void inline bba_interrupt(struct net_device *dev)
 	while (status) {
 		bba_out8(BBA_IR, status);
 
-		if (status & (BBA_IR_RBFI | BBA_IR_RI)) {
+		/* avoid multiple receive buffer full interrupts */
+		if (status & BBA_IR_RBFI) {
+			bba_out8(BBA_IMR, bba_in8(BBA_IMR) & ~BBA_IMR_RBFIM);
+			set_bit(__BBA_RBFIM_OFF, &priv->flags);
+		}
+
+		if ((status & (BBA_IR_RI | BBA_IR_RBFI))) {
 			priv->rx_work = 1;
 			wake_up(&priv->io_waitq);
 		}
-		if (status & BBA_IR_REI) {
-			bba_rx_err(bba_in8(BBA_LRPS), dev);
-		}
-		if (status & (BBA_IR_TEI | BBA_IR_TI)) {
-			bba_tx_err(bba_in8(BBA_LTPS), dev);
+		if ((status & (BBA_IR_TI|BBA_IR_FIFOEI))) {
 			/* allow more packets to be sent */
 			netif_wake_queue(dev);
 		}
+
+		if ((status & (BBA_IR_RBFI|BBA_IR_REI))) {
+			lrps = bba_in8(BBA_LRPS);
+			bba_rx_err(lrps, dev);
+		}
+		if (status & BBA_IR_TEI) {
+			ltps = bba_in8(BBA_LTPS);
+			bba_tx_err(ltps, dev);
+		}
+
 		if (status & BBA_IR_FIFOEI) {
-			/* allow more packets to be sent */
-			netif_wake_queue(dev);
+			DBG("FIFOEI\n");
 		}
 		if (status & BBA_IR_BUSEI) {
+			DBG("BUSEI\n");
 		}
 		if (status & BBA_IR_FRAGI) {
+			DBG("FRAGI\n");
 		}
 
 		ir = bba_in8(BBA_IR);
@@ -810,7 +828,7 @@ static void inline bba_interrupt(struct net_device *dev)
 		loops++;
 	}
 
-	if (loops > 100)
+	if (loops > 3)
 		DBG("a lot of interrupt work (%d loops)\n", loops);
 
 	/* wake up xmit queue in case transmitter is idle */
@@ -819,12 +837,12 @@ static void inline bba_interrupt(struct net_device *dev)
 	}
 
 out:
-	spin_unlock_irqrestore(&priv->lock, flags);
+	return;
 }
 
 /*
  * Resets the hardware to a known state.
- * Caller holds the device lock.
+ * Caller has already taken the exi channel.
  */
 static int bba_reset(struct net_device *dev)
 {
@@ -865,7 +883,7 @@ static int bba_reset(struct net_device *dev)
 	udelay(1000);
 
 	/* accept broadcast, assert int for every two packets received */
-	bba_out8(BBA_NCRB, BBA_NCRB_AB | BBA_NCRB_2_PACKETS_PER_INT);
+	bba_out8(BBA_NCRB, BBA_NCRB_AB | BBA_NCRB_1_PACKET_PER_INT);
 
 	/* setup receive interrupt time out, in 40ns units */
 	bba_out8(BBA_RXINTT, 0x00);
@@ -902,7 +920,7 @@ static int bba_reset(struct net_device *dev)
 	bba_out8(BBA_IR, 0xFF);
 
 	/* enable all interrupts */
-	bba_out8(BBA_IMR, 0xFF & ~BBA_IMR_FIFOEIM);
+	bba_out8(BBA_IMR, 0xFF & ~(BBA_IMR_FIFOEIM /*| BBA_IMR_REIM*/ ));
 
 	/* unknown, short command registers 0x02 */
 	/* XXX enable interrupts on the EXI glue logic */
@@ -941,13 +959,16 @@ unsigned long bba_calc_response(unsigned long val, struct bba_private *priv)
 
 /*
  * Handles IRQ events from the exi layer.
+ *
+ * We are called from softirq context, and with the exi channel kindly taken
+ * for us. We can also safely do exi transfers of less than 32 bytes, which
+ * are guaranteed to not sleep by the exi layer.
  */
 static int bba_event_handler(struct exi_channel *exi_channel,
 			     unsigned int event, void *dev0)
 {
 	struct net_device *dev = (struct net_device *)dev0;
 	struct bba_private *priv = (struct bba_private *)dev->priv;
-	unsigned long flags;
 	register u8 status, mask;
 
 	/* get interrupt status from EXI glue */
@@ -971,9 +992,7 @@ static int bba_event_handler(struct exi_channel *exi_channel,
 	if (status & mask) {
 		DBG("bba: killing interrupt!\n");
 		/* reset the adapter so that we can continue working */
-		spin_lock_irqsave(&priv->lock, flags);
 		bba_reset(dev);
-		spin_unlock_irqrestore(&priv->lock, flags);
 		goto out;
 	}
 
@@ -1025,6 +1044,31 @@ out:
 
 static struct net_device *bba_dev = NULL;
 
+static inline void bba_select(void)
+{
+	struct bba_private *priv = (struct bba_private *)bba_dev->priv;
+	exi_dev_select(priv->exi_device);
+
+}
+
+static inline void bba_deselect(void)
+{
+	struct bba_private *priv = (struct bba_private *)bba_dev->priv;
+	exi_dev_deselect(priv->exi_device);
+}
+
+static inline void bba_read(void *data, size_t len)
+{
+	struct bba_private *priv = (struct bba_private *)bba_dev->priv;
+	return exi_dev_read(priv->exi_device, data, len);
+}
+
+static inline void bba_write(void *data, size_t len)
+{
+	struct bba_private *priv = (struct bba_private *)bba_dev->priv;
+	return exi_dev_write(priv->exi_device, data, len);
+}
+
 /*
  * Initializes a BroadBand Adapter device.
  */
@@ -1050,12 +1094,12 @@ static int __devinit bba_init_device(struct exi_device *exi_device)
 	dev->stop = bba_close;
 	dev->hard_start_xmit = bba_start_xmit;
 	dev->get_stats = bba_get_stats;
-	/* XXX dev->tx_timeout = bba_tx_timeout; */
 
 	SET_MODULE_OWNER(dev);
 
 	priv = netdev_priv(dev);
 	priv->dev = dev;
+	priv->exi_device = exi_device;
 
 	spin_lock_init(&priv->lock);
 
@@ -1074,12 +1118,9 @@ static int __devinit bba_init_device(struct exi_device *exi_device)
 	ether_setup(dev);
 	dev->flags &= ~IFF_MULTICAST;
 
-	bba_reset(dev);
-
 	err = register_netdev(dev);
 	if (err) {
-		bba_printk(KERN_ERR, "Cannot register net device, "
-		       "aborting.\n");
+		bba_printk(KERN_ERR, "Cannot register net device, aborting.\n");
 		goto err_out_free_dev;
 	}
 
@@ -1088,6 +1129,7 @@ static int __devinit bba_init_device(struct exi_device *exi_device)
 	bba_dev = dev;
 
 	exi_set_drvdata(exi_device,dev);
+
 	return 0;
 
 err_out_free_dev:
