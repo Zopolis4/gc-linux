@@ -23,7 +23,7 @@
 #define DRV_DESCRIPTION   "Nintendo GameCube RTC/SRAM driver"
 #define DRV_AUTHOR        "Albert Herranz"
 
-static char rtc_driver_version[] = "1.0";
+static char rtc_driver_version[] = "1.4";
 
 #define rtc_printk(level, format, arg...) \
 	printk(level DRV_MODULE_NAME ": " format , ## arg)
@@ -70,8 +70,10 @@ static void sram_load(struct exi_device *dev)
 	struct gcn_sram *sram = &priv->sram;
 	u32 req;
 
-	/* select the SRAM device */
-	if (exi_dev_select(dev) == 0) {
+	if (exi_dev_try_take(dev) == 0) {
+		/* select the SRAM device */
+		exi_dev_select(dev);
+
 		/* send the appropriate command */
 		req = 0x20000100;
 		exi_dev_write(dev, &req, sizeof(req));
@@ -81,6 +83,8 @@ static void sram_load(struct exi_device *dev)
 
 		/* deselect the SRAM device */
 		exi_dev_deselect(dev);
+
+		exi_dev_give(dev);
 	}
 
 	return;
@@ -94,8 +98,10 @@ static unsigned long rtc_get_time(struct exi_device *dev)
 {
 	unsigned long a = 0;
 
-	/* select the RTC device */
-	if (exi_dev_select(dev) == 0) {
+	if (exi_dev_try_take(dev) == 0) {
+		/* select the SRAM device */
+		exi_dev_select(dev);
+
 		/* send the appropriate command */
 		a = 0x20000000;
 		exi_dev_write(dev, &a, sizeof(a));
@@ -105,6 +111,8 @@ static unsigned long rtc_get_time(struct exi_device *dev)
 
 		/* deselect the RTC device */
 		exi_dev_deselect(dev);
+
+		exi_dev_give(dev);
 	}
 
 	return a;
@@ -126,9 +134,11 @@ static int rtc_set_time(struct exi_device *dev, unsigned long aval)
 	 * interrupt code is prepared to deal with such case.
 	 */
 
-	/* select the RTC device */
-	retval = exi_dev_select(dev);
+	retval = exi_dev_try_take(dev);
 	if (!retval) {
+		/* select the RTC device */
+		exi_dev_select(dev);
+
 		/* send the appropriate command */
 		req = 0xa0000000;
 		exi_dev_write(dev, &req, sizeof(req));
@@ -138,6 +148,8 @@ static int rtc_set_time(struct exi_device *dev, unsigned long aval)
 
 		/* deselect the RTC device */
 		exi_dev_deselect(dev);
+
+		exi_dev_give(dev);
 	}
 	return retval;
 }
