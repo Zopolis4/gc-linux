@@ -135,6 +135,7 @@ typedef int (*exi_event_handler_t)(struct exi_channel *exi_channel,
 
 extern int exi_event_register(struct exi_channel *exi_channel,
 			      unsigned int event_id,
+			      struct exi_device *exi_device,
 			      exi_event_handler_t handler, void *data,
 			      unsigned int channel_mask);
 extern int exi_event_unregister(struct exi_channel *exi_channel,
@@ -152,13 +153,17 @@ struct exi_command {
 #define EXI_OP_WRITE     (0x01<<2) /* same as in EXIxCR */
 #define EXI_OP_READWRITE (0x02<<2) /* same as in EXIxCR */
 
-#define EXI_OP_SELECT    0x0100
-#define EXI_OP_DESELECT  0x0200
+#define EXI_OP_TAKE	 0x0100
+#define EXI_OP_GIVE	 0x0200
+#define EXI_OP_SELECT    0x0400
+#define EXI_OP_DESELECT  0x0800
+
 #define EXI_OP_NOP       -1
 
 	unsigned long		flags;
-#define EXI_CMD_NODMA (1<<0)
-#define EXI_CMD_IDI   (1<<1)
+#define EXI_CMD_NOWAIT (1<<0)
+#define EXI_CMD_NODMA  (1<<1)
+#define EXI_CMD_IDI    (1<<2)
 
 	void			*data;
 	size_t			len;
@@ -171,13 +176,17 @@ struct exi_command {
 	void			(*done)(struct exi_command *cmd);
 
 	struct exi_channel	*exi_channel;
+	struct exi_device	*exi_device;
 };
+
+#include "../drivers/exi/exi-hw.h"
 
 static inline void exi_op_basic(struct exi_command *cmd,
 				struct exi_channel *exi_channel)
 {
 	memset(cmd, 0, sizeof(*cmd));
 	cmd->exi_channel = exi_channel;
+	cmd->exi_device = exi_channel_owner(exi_channel);
 }
 
 static inline void exi_op_nop(struct exi_command *cmd,
@@ -187,12 +196,27 @@ static inline void exi_op_nop(struct exi_command *cmd,
 	cmd->opcode = EXI_OP_NOP;
 }
 
+static inline void exi_op_take(struct exi_command *cmd,
+			       struct exi_device *exi_device)
+{
+	exi_op_basic(cmd, exi_device->exi_channel);
+	cmd->opcode = EXI_OP_TAKE;
+	cmd->exi_device = exi_device;
+}
+
+static inline void exi_op_give(struct exi_command *cmd,
+			       struct exi_channel *exi_channel)
+{
+	exi_op_basic(cmd, exi_channel);
+	cmd->opcode = EXI_OP_GIVE;
+}
+
 static inline void exi_op_select(struct exi_command *cmd,
 				 struct exi_device *exi_device)
 {
 	exi_op_basic(cmd, exi_device->exi_channel);
 	cmd->opcode = EXI_OP_SELECT;
-	cmd->data = exi_device;
+	cmd->exi_device = exi_device;
 }
 
 static inline void exi_op_deselect(struct exi_command *cmd,
@@ -217,7 +241,6 @@ static inline void exi_op_transfer(struct exi_command *cmd,
  * EXpansion Interface interfaces.
  *
  */
-#include "../drivers/exi/exi-hw.h"
 
 /* 
  * Raw.
@@ -239,14 +262,31 @@ extern void exi_dma_transfer_raw(struct exi_channel *channel,
  * Standard.
  */
 
-int exi_select(struct exi_device *exi_device);
+int exi_take(struct exi_device *exi_device, int wait);
+int exi_give(struct exi_device *exi_device);
+void exi_select(struct exi_device *exi_device);
 void exi_deselect(struct exi_channel *exi_channel);
 void exi_transfer(struct exi_channel *exi_channel,
 		  void *data, size_t len, int opcode, unsigned long flags);
 
-static inline int exi_dev_select(struct exi_device *exi_device)
+static inline int exi_dev_take(struct exi_device *exi_device)
 {
-	return exi_select(exi_device);
+	return exi_take(exi_device, 1);
+}
+
+static inline int exi_dev_try_take(struct exi_device *exi_device)
+{
+	return exi_take(exi_device, 0);
+}
+
+static inline int exi_dev_give(struct exi_device *exi_device)
+{
+	return exi_give(exi_device);
+}
+
+static inline void exi_dev_select(struct exi_device *exi_device)
+{
+	exi_select(exi_device);
 }
 
 static inline void exi_dev_deselect(struct exi_device *exi_device)
@@ -278,77 +318,6 @@ static inline int exi_dev_set_freq(struct exi_device *dev, unsigned int freq)
 
 	return freq;
 }
-
-
-
-
-/*
- * Compatibility layer with old EXI_LITE.
- */
-
-#ifdef CONFIG_EXI_LITE2_COMPAT
-
-#ifndef EXI_LITE
-#define EXI_LITE 2
-
-extern unsigned long exi_running;
-
-static inline int exi_lite_init(void)
-{
-	int retval = 0;
-
-	if (!test_and_set_bit(1, &exi_running)) {
-		retval = exi_hw_init("exi-lite");
-	}
-	return retval;
-}
-
-static inline void exi_lite_exit(void)
-{
-	exi_hw_exit();
-}
-
-static inline int exi_lite_select(int channel, int device, int freq)
-{
-	struct exi_channel *exi_channel = to_exi_channel(channel);
-	struct exi_device *exi_device = exi_get_exi_device(exi_channel, device);
-	return exi_select(exi_device);
-}
-
-static inline void exi_lite_deselect(int channel)
-{
-	struct exi_channel *exi_channel = to_exi_channel(channel);
-	exi_deselect(exi_channel);
-}
-
-static inline void exi_lite_read(int channel, void *data, size_t len)
-{
-	exi_transfer(to_exi_channel(channel), data, len, EXI_OP_READ, 0);
-}
-
-static inline void exi_lite_write(int channel, void *data, size_t len)
-{
-	exi_transfer(to_exi_channel(channel), data, len, EXI_OP_WRITE, 0);
-}
-
-static inline int exi_lite_register_event(int channel, int event_id,
-					  exi_event_handler_t handler,
-					  void *dev, unsigned int channel_mask)
-{
-	return exi_event_register(to_exi_channel(channel),
-				  (unsigned int)event_id,
-				  handler, dev, channel_mask);
-}
-
-static inline int exi_lite_unregister_event(int channel, int event_id)
-{
-	return exi_event_unregister(to_exi_channel(channel),
-				    (unsigned int)event_id);
-}
-
-#endif /* EXI_LITE */
-
-#endif /* CONFIG_EXI_LITE2_COMPAT */
 
 #endif /* __EXI_H */
 

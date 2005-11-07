@@ -20,12 +20,13 @@
  *
  * 	op			atomic?
  * 	------------------	-------
+ * 	take			yes
+ * 	give			yes
  * 	select			yes
  * 	deselect		yes
  * 	transfer		yes/no (1)
  *
  * These primitives are encapsulated in several APIs.
- * Some APIs are backwards-compatible with the old gcn-exi-lite framework.
  * See include/linux/exi.h for additional information.
  *
  * 1. Kernel Contexts
@@ -41,8 +42,8 @@
  * channel mask are all deselected. This allows one to run EXI commands in
  * softirq context from the EXI event handlers.
  *
- * "select" operations in user context will sleep if necessary until the
- * channel gets deselected. 
+ * "take" operations in user context will sleep if necessary until the
+ * channel is "given". 
  *
  *
  * 2. Transfers
@@ -92,7 +93,6 @@ static struct exi_channel exi_channels[EXI_MAX_CHANNELS] = {
 		.lock = SPIN_LOCK_UNLOCKED,
 		.io_lock = SPIN_LOCK_UNLOCKED,
 		.io_base = EXI_IO_BASE(0),
-		.select_lock = SPIN_LOCK_UNLOCKED,
 		.wait_queue = __WAIT_QUEUE_HEAD_INITIALIZER(
 				exi_channels[0].wait_queue),
 	},
@@ -101,7 +101,6 @@ static struct exi_channel exi_channels[EXI_MAX_CHANNELS] = {
 		.lock = SPIN_LOCK_UNLOCKED,
 		.io_lock = SPIN_LOCK_UNLOCKED,
 		.io_base = EXI_IO_BASE(1),
-		.select_lock = SPIN_LOCK_UNLOCKED,
 		.wait_queue = __WAIT_QUEUE_HEAD_INITIALIZER(
 				exi_channels[1].wait_queue),
 	},
@@ -110,7 +109,6 @@ static struct exi_channel exi_channels[EXI_MAX_CHANNELS] = {
 		.lock = SPIN_LOCK_UNLOCKED,
 		.io_lock = SPIN_LOCK_UNLOCKED,
 		.io_base = EXI_IO_BASE(2),
-		.select_lock = SPIN_LOCK_UNLOCKED,
 		.wait_queue = __WAIT_QUEUE_HEAD_INITIALIZER(
 				exi_channels[2].wait_queue),
 	},
@@ -152,24 +150,22 @@ unsigned int to_channel(struct exi_channel *exi_channel)
 	return __to_channel(exi_channel);
 }
 
-/*
- * Internal. Initialize an exi_channel structure.
+/**
+ *	exi_channel_owner  -  returns the owner of the given channel
+ *	@exi_channel:	channel
+ *
+ *	Return the device owning a given exi_channel structure.
  */
-void exi_channel_init(struct exi_channel *exi_channel, unsigned int channel)
+struct exi_device *exi_channel_owner(struct exi_channel *exi_channel)
 {
-	memset(exi_channel, 0, sizeof(*exi_channel));
-
-	exi_channel->channel = channel;
-	spin_lock_init(&exi_channel->lock);
-	spin_lock_init(&exi_channel->select_lock);
-	spin_lock_init(&exi_channel->io_lock);
-	exi_channel->io_base = EXI_IO_BASE(channel);
-	init_waitqueue_head(&exi_channel->wait_queue);
-
-	tasklet_init(&exi_channel->tasklet,
-		     exi_tasklet, (unsigned long)exi_channel);
+	return exi_channel->owner;
 }
 
+
+/*
+ *
+ *
+ */
 
 /**
  *	exi_select_raw  -  selects a device on an exi channel
@@ -354,6 +350,7 @@ static void exi_start_dma_transfer_raw(struct exi_channel *exi_channel,
 	/*
 	 * We clear the DATA register here to avoid confusing some
 	 * special hardware, like SD cards.
+	 * Indeed, we need all 1s here.
 	 */
 	writel(~0, io_base + EXI_DATA);
 
@@ -395,7 +392,34 @@ static void exi_wait_for_transfer_raw(struct exi_channel *exi_channel)
 	spin_unlock_irqrestore(&exi_channel->io_lock, flags);
 }
 
+
+/*
+ *
+ *
+ */
+
 static void exi_command_done(struct exi_command *cmd);
+
+/*
+ * Internal. Initialize an exi_channel structure.
+ */
+void exi_channel_init(struct exi_channel *exi_channel, unsigned int channel)
+{
+	memset(exi_channel, 0, sizeof(*exi_channel));
+	exi_channel->events[EXI_EVENT_IRQ].id = EXI_EVENT_IRQ;
+	exi_channel->events[EXI_EVENT_INSERT].id = EXI_EVENT_INSERT;
+	exi_channel->events[EXI_EVENT_TC].id = EXI_EVENT_TC;
+
+	spin_lock_init(&exi_channel->lock);
+	spin_lock_init(&exi_channel->io_lock);
+	init_waitqueue_head(&exi_channel->wait_queue);
+
+	exi_channel->channel = channel;
+	exi_channel->io_base = EXI_IO_BASE(channel);
+
+	tasklet_init(&exi_channel->tasklet,
+		     exi_tasklet, (unsigned long)exi_channel);
+}
 
 /*
  * Internal. Check if an exi channel has delayed work to do.
@@ -424,7 +448,7 @@ static void exi_end_dma_transfer(struct exi_channel *exi_channel)
 		BUG_ON(!(exi_channel->flags & EXI_DMABUSY));
 
 		exi_channel->flags &= ~EXI_DMABUSY;
-		dma_unmap_single(&exi_channel->device_selected->dev,
+		dma_unmap_single(&exi_channel->owner->dev,
 				 cmd->dma_addr, cmd->dma_len,
 				 (cmd->opcode == EXI_OP_READ)?
 				 DMA_FROM_DEVICE:DMA_TO_DEVICE);
@@ -517,6 +541,7 @@ out:
 	return pending;
 }
 
+#if 0
 /*
  * Internal. Wait until a full transfer completes and launch callbacks.
  */
@@ -525,6 +550,7 @@ static void exi_wait_for_transfer(struct exi_channel *exi_channel)
 	while(exi_wait_for_transfer_one(exi_channel))
 		cpu_relax();
 }
+#endif
 
 /*
  * Internal. Call any done hooks.
@@ -538,62 +564,40 @@ static void exi_command_done(struct exi_command *cmd)
 }
 
 /*
- * Internal. Perform a select.
- * Caller holds the channel lock.
+ * Internal. Take a channel.
  */
-static inline int exi_cmd_select(struct exi_command *cmd)
+static int exi_take_channel(struct exi_channel *exi_channel,
+			    struct exi_device *exi_device, int wait)
 {
-	struct exi_channel *exi_channel = cmd->exi_channel;
-	struct exi_device *exi_device;
-	int retval = 0;
+	unsigned long flags;
+	int result = 0;
 
-	BUG_ON(cmd->data == NULL);
-	if (unlikely(exi_is_selected(exi_channel))) {
-		/*
-		 * This may happen when called directly from interrupt context,
-		 * without using the EXI event handler system.
-		 * In such cases, the caller _should_ be able to deal with that.
-		 */
-		retval = -EBUSY;
-		goto out;
+	BUG_ON(!exi_device);
+
+	spin_lock_irqsave(&exi_channel->lock, flags);
+	while(exi_channel->owner) {
+		spin_unlock_irqrestore(&exi_channel->lock, flags);
+		if (!wait)
+			return -EBUSY;
+		wait_event(exi_channel->wait_queue,
+			   !exi_channel->owner);
+		spin_lock_irqsave(&exi_channel->lock, flags);
 	}
+	exi_channel->owner = exi_device;
+	spin_unlock_irqrestore(&exi_channel->lock, flags);
 
-	spin_lock(&exi_channel->select_lock);
-
-	/* cmd->data contains the device to select */
-	exi_device = cmd->data;
-
-	exi_channel->device_selected = exi_device;
-	exi_channel->flags |= EXI_SELECTED;
-
-	DBG("channel=%d, device=%d, freq=%d\n",
-	    exi_channel->channel, exi_device->eid.device,
-	    exi_device->frequency);
-
-	exi_select_raw(exi_channel, exi_device->eid.device,
-		       exi_device->frequency);
-out:
-	return retval;
+	return result;
 }
 
 /*
- * Internal. Perform a deselect.
- * Caller holds the channel lock.
+ * Internal. Give a channel.
  */
-static inline void exi_cmd_deselect(struct exi_command *cmd)
+static int exi_give_channel(struct exi_channel *exi_channel)
 {
-	struct exi_channel *exi_channel = cmd->exi_channel;
-
-	WARN_ON(!exi_is_selected(exi_channel));
-
-	DBG("channel=%d\n", exi_channel->channel);
-
-	exi_deselect_raw(exi_channel);
-
-	exi_channel->flags &= ~EXI_SELECTED;
-	exi_channel->device_selected = NULL;
-
-	spin_unlock(&exi_channel->select_lock);
+	WARN_ON(exi_channel->owner == NULL);
+	exi_channel->owner = NULL;
+	wake_up(&exi_channel->wait_queue);
+	return 0;
 }
 
 /*
@@ -636,9 +640,9 @@ static int exi_cmd_transfer(struct exi_command *cmd)
 	void *pre_data, *data, *post_data;
 	unsigned int pre_len, len, post_len;
 	int opcode;
-	int retval = 0;
+	int result = 0;
 
-	BUG_ON(!exi_is_selected(exi_channel));
+	BUG_ON(!exi_channel->owner);
 
 	len = cmd->len;
 	if (!len)
@@ -658,7 +662,7 @@ static int exi_cmd_transfer(struct exi_command *cmd)
 		len = (cmd->bytes_left > 4)?4:cmd->bytes_left;
 		exi_start_idi_transfer_raw(exi_channel, data, len, opcode);
 
-		retval = 1; /* wait */
+		result = 1; /* wait */
 		goto done;
 	}
 
@@ -749,24 +753,24 @@ static int exi_cmd_transfer(struct exi_command *cmd)
 	exi_channel->flags |= EXI_DMABUSY;
 
 	cmd->dma_len = len;
-	cmd->dma_addr = dma_map_single(&exi_channel->device_selected->dev,
+	cmd->dma_addr = dma_map_single(&exi_channel->owner->dev,
 				       data, len,
 				       (cmd->opcode == EXI_OP_READ)?
 				       DMA_FROM_DEVICE:DMA_TO_DEVICE);
 
 	exi_start_dma_transfer_raw(exi_channel, cmd->dma_addr, len, opcode);
 
-	retval = 1; /* wait */
+	result = 1; /* wait */
 
 done:
-	return retval;
+	return result;
 }
 
 /**
  *	exi_run_command  -  executes a single exi command
  *	@cmd:	the command to execute
  *
- *	Context: user, softirq, hardirq
+ *	Context: user
  *
  *	Run just one command.
  *
@@ -774,61 +778,51 @@ done:
 static int exi_run_command(struct exi_command *cmd)
 {
 	struct exi_channel *exi_channel = cmd->exi_channel;
+	struct exi_device *exi_device = cmd->exi_device;
 	unsigned long flags;
-	int retval = 0;
+	int wait = !(cmd->flags & EXI_CMD_NOWAIT);
+	int result = 0;
 
-	BUG_ON(exi_channel == NULL);
-
-	spin_lock_irqsave(&exi_channel->lock, flags);
-
-	/* ensure atomic operations are serialized */
-	while (exi_channel->queued_cmd) {
-		DBG("cmd %d while dma in flight on channel %d\n",
-		    cmd->opcode, exi_channel->channel);
-		spin_unlock_irqrestore(&exi_channel->lock, flags);
-		exi_wait_for_transfer(exi_channel);
-		spin_lock_irqsave(&exi_channel->lock, flags);
-	}
+	if (cmd->opcode != EXI_OP_TAKE)
+		WARN_ON(exi_channel->owner != exi_device);
 
 	switch(cmd->opcode) {
 	case EXI_OP_NOP:
 		break;
+	case EXI_OP_TAKE:
+		result = exi_take_channel(exi_channel, exi_device, wait);
+		break;
+	case EXI_OP_GIVE:
+		result = exi_give_channel(exi_channel);
+		if (!exi_channel->owner)
+			exi_check_pending_work();
+		break;
 	case EXI_OP_SELECT:
-		while (exi_is_selected(exi_channel) && !in_atomic()) {
-			spin_unlock_irqrestore(&exi_channel->lock, flags);
-			DBG("select sleeping...\n");
-			wait_event(exi_channel->wait_queue,
-				   !exi_is_selected(exi_channel));
-			spin_lock_irqsave(&exi_channel->lock, flags);
-		}
-		retval = exi_cmd_select(cmd);
+		exi_select_raw(exi_channel, exi_device->eid.device,
+			       exi_device->frequency);
 		break;
 	case EXI_OP_DESELECT:
-		exi_cmd_deselect(cmd);
-		wake_up(&exi_channel->wait_queue);
+		exi_deselect_raw(exi_channel);
 		break;
 	case EXI_OP_READ:
 	case EXI_OP_WRITE:
-		retval = exi_cmd_transfer(cmd);
+		spin_lock_irqsave(&exi_channel->lock, flags);
+		result = exi_cmd_transfer(cmd);
+		spin_unlock_irqrestore(&exi_channel->lock, flags);
 		break;
 	default:
-		retval = -ENOSYS;
+		result = -ENOSYS;
 		break;
 	}
 
-	spin_unlock_irqrestore(&exi_channel->lock, flags);
-
 	/*
-	 * We check for delayed work every time the channel becomes idle.
+	 * We check for delayed work every time the channel becomes
+	 * idle.
 	 */
-	if (cmd->opcode == EXI_OP_DESELECT)
-		exi_check_pending_work();
-
-	/* command completed */
-	if (retval == 0)
+	if (!result)
 		exi_command_done(cmd);
 
-	return retval;
+	return result;
 }
 
 
@@ -847,22 +841,48 @@ static void exi_wait_done(struct exi_command *cmd)
 static int exi_run_command_and_wait(struct exi_command *cmd)
 {
 	DECLARE_COMPLETION(complete);
-	int retval;
+	int result;
 
 	cmd->done_data = &complete;
 	cmd->done = exi_wait_done;
-	retval = exi_run_command(cmd);
-	if (retval > 0) {
-		if (in_atomic() || irqs_disabled()) {
-			exi_wait_for_transfer(cmd->exi_channel);
-		} else {
-			wait_for_completion(&complete);
-		}
-		retval = 0;
+	result = exi_run_command(cmd);
+	if (result > 0) {
+		wait_for_completion(&complete);
+		result = 0;
 	}
-	return retval;
+	return result;
 }
 
+/**
+ *	exi_take  -  reserves an exi channel for exclusive use by a device
+ *	@exi_device:	exi device making the reservation
+ *	@wait:		wait for the operation to complete
+ *
+ *	Reserves the channel of a given EXI device.
+ */
+int exi_take(struct exi_device *exi_device, int wait)
+{
+	struct exi_command cmd;
+
+	exi_op_take(&cmd, exi_device);
+	if (!wait)
+		cmd.flags |= EXI_CMD_NOWAIT;
+	return exi_run_command(&cmd);
+}
+
+/**
+ *	exi_give  -  releases an exi channel
+ *	@exi_device:	exi device making the release
+ *
+ *	Releases the channel of a given EXI device.
+ */
+int exi_give(struct exi_device *exi_device)
+{
+	struct exi_command cmd;
+
+	exi_op_give(&cmd, exi_device->exi_channel);
+	return exi_run_command(&cmd);
+}
 
 /**
  *	exi_select  -  selects a exi device
@@ -870,12 +890,12 @@ static int exi_run_command_and_wait(struct exi_command *cmd)
  *
  *	Selects a given EXI device.
  */
-int exi_select(struct exi_device *exi_device)
+void exi_select(struct exi_device *exi_device)
 {
 	struct exi_command cmd;
 
 	exi_op_select(&cmd, exi_device);
-	return exi_run_command(&cmd);
+	exi_run_command(&cmd);
 }
 
 /**
@@ -912,58 +932,89 @@ void exi_transfer(struct exi_channel *exi_channel, void *data, size_t len,
 	exi_run_command_and_wait(&cmd);
 }
 
+
 /*
- * Internal. Count number of busy exi channels given a channel mask.
- * Caller holds the channel lock.
+ * Internal. Release several previously reserved channels, according to a
+ * channel mask.
  */
-static inline int exi_count_busy_channels(unsigned int channel_mask)
+static void __give_some_channels(unsigned int channel_mask)
 {
 	struct exi_channel *exi_channel;
-	unsigned int channel = 0;
-	int count = 0;
+	unsigned int channel;
 
-	while(channel_mask && channel < EXI_MAX_CHANNELS) {
+	for(channel=0; channel_mask && channel < EXI_MAX_CHANNELS; channel++) {
 		if ((channel_mask & (1<<channel))) {
 			channel_mask &= ~(1<<channel);
 			exi_channel = __to_exi_channel(channel);
-			if (exi_is_selected(exi_channel))
-				count++;
+			exi_channel->owner = NULL;
 		}
-		channel++;
+	}
+}
+
+/*
+ * Internal. Try to reserve atomically several channels, according to a
+ * channel mask.
+ */
+static inline int __try_take_some_channels(unsigned int channel_mask,
+					   struct exi_device *exi_device)
+{
+	struct exi_channel *exi_channel;
+	unsigned int channel, taken_channel_mask = 0;
+	unsigned long flags;
+	int result = 0;
+
+	for(channel=0; channel_mask && channel < EXI_MAX_CHANNELS; channel++) {
+		if ((channel_mask & (1<<channel))) {
+			channel_mask &= ~(1<<channel);
+			exi_channel = __to_exi_channel(channel);
+			spin_lock_irqsave(&exi_channel->lock, flags);
+			if (exi_channel->owner) {
+				spin_unlock_irqrestore(&exi_channel->lock,
+						       flags);
+				result = -EBUSY;
+				break;
+			}
+			exi_channel->owner = exi_device;
+			taken_channel_mask |= (1<<channel);
+			spin_unlock_irqrestore(&exi_channel->lock, flags);
+		}
 	}
 
-	return count;
+	if (result)
+		__give_some_channels(taken_channel_mask);
+
+	return result;
 }
 
 /*
  * Internal. Determine if we can trigger an exi event.
- * Caller holds the channel lock.
  */
-static inline int exi_can_trigger_event(struct exi_channel *exi_channel,
-					unsigned int event_id)
+static inline int exi_can_trigger_event(struct exi_event *event)
 {
-	struct exi_event_handler *event;
+	return !__try_take_some_channels(event->channel_mask, event->owner);
+}
 
-	event = &exi_channel->events[event_id];
-	return !exi_count_busy_channels(event->channel_mask);
+/*
+ * Internal. Finish an exi event invocation.
+ */
+static inline void exi_finish_event(struct exi_event *event)
+{
+	__give_some_channels(event->channel_mask);
 }
 
 /*
  * Internal. Trigger an exi event.
  */
 static inline int exi_trigger_event(struct exi_channel *exi_channel,
-				    unsigned int event_id)
+				    struct exi_event *event)
 {
-	struct exi_event_handler *event;
 	exi_event_handler_t handler;
-	int retval = 0;
+	int result = 0;
 
-	event = &exi_channel->events[event_id];
 	handler = event->handler;
-	if (handler) {
-		retval = handler(exi_channel, event_id, event->data);
-	}
-	return retval;
+	if (handler)
+		result = handler(exi_channel, event->id, event->data);
+	return result;
 }
 
 /*
@@ -972,18 +1023,21 @@ static inline int exi_trigger_event(struct exi_channel *exi_channel,
 static void exi_cond_trigger_event(struct exi_channel *exi_channel,
 				   unsigned int event_id, int csr_mask)
 {
+	struct exi_event *event;
 	unsigned long flags;
 
-	spin_lock_irqsave(&exi_channel->lock, flags);
-	if (exi_can_trigger_event(exi_channel, event_id)) {
+	event = &exi_channel->events[event_id];
+	if (exi_can_trigger_event(event)) {
+		spin_lock_irqsave(&exi_channel->lock, flags);
 		if ((exi_channel->csr & csr_mask)) {
 			exi_channel->csr &= ~csr_mask;
 			spin_unlock_irqrestore(&exi_channel->lock, flags);
-			exi_trigger_event(exi_channel, event_id);
+			exi_trigger_event(exi_channel, event);
+			exi_finish_event(event);
 			goto out;
 		}
+		spin_unlock_irqrestore(&exi_channel->lock, flags);
 	}
-	spin_unlock_irqrestore(&exi_channel->lock, flags);
 
 out:
 	return;
@@ -1008,7 +1062,7 @@ static void exi_tasklet(unsigned long param)
 	 * provided on event registration is in use.
 	 */
 
-	exi_cond_trigger_event(exi_channel, EXI_EVENT_TC, EXI_CSR_TCINT);
+	//exi_cond_trigger_event(exi_channel, EXI_EVENT_TC, EXI_CSR_TCINT);
 	exi_cond_trigger_event(exi_channel, EXI_EVENT_IRQ, EXI_CSR_EXIINT);
 	exi_cond_trigger_event(exi_channel, EXI_EVENT_INSERT, EXI_CSR_EXTIN);
 }
@@ -1059,7 +1113,7 @@ static irqreturn_t exi_irq_handler(int irq, void *dev_id, struct pt_regs *regs)
 			wake_up(&exi_bus_waitq);
 		}
 
-		if (exi_channel->csr && !exi_is_selected(exi_channel)) {
+		if (exi_channel->csr && !exi_is_taken(exi_channel)) {
 			tasklet_schedule(&exi_channel->tasklet);
 		}
 	}
@@ -1136,11 +1190,12 @@ static int exi_disable_event(struct exi_channel *exi_channel,
  *	on the given channel.
  */
 int exi_event_register(struct exi_channel *exi_channel, unsigned int event_id,
+		       struct exi_device *exi_device,
 		       exi_event_handler_t handler, void *data,
 		       unsigned int channel_mask)
 {
-	struct exi_event_handler *event;
-	int retval = 0;
+	struct exi_event *event;
+	int result = 0;
 
 	BUG_ON(event_id > EXI_MAX_EVENTS);
 
@@ -1148,9 +1203,10 @@ int exi_event_register(struct exi_channel *exi_channel, unsigned int event_id,
 
 	spin_lock(&exi_channel->lock);
 	if (event->handler) {
-		retval = -EBUSY;
+		result = -EBUSY;
 		goto out;
 	}
+	event->owner = exi_device;
 	event->handler = handler;
 	event->data = data;
 	event->channel_mask = channel_mask;
@@ -1158,7 +1214,7 @@ int exi_event_register(struct exi_channel *exi_channel, unsigned int event_id,
 
 out:
 	spin_unlock(&exi_channel->lock);
-	return retval;
+	return result;
 }
 
 
@@ -1171,8 +1227,8 @@ out:
  */
 int exi_event_unregister(struct exi_channel *exi_channel, unsigned int event_id)
 {
-	struct exi_event_handler *event;
-	int retval = 0;
+	struct exi_event *event;
+	int result = 0;
 
 	BUG_ON(event_id > EXI_MAX_EVENTS);
 
@@ -1180,12 +1236,13 @@ int exi_event_unregister(struct exi_channel *exi_channel, unsigned int event_id)
 
 	spin_lock(&exi_channel->lock);
 	exi_disable_event(exi_channel, event_id);
+	event->owner = NULL;
 	event->handler = NULL;
 	event->data = NULL;
 	event->channel_mask = 0;
 	spin_unlock(&exi_channel->lock);
 
-	return retval;
+	return result;
 }
 
 /*
@@ -1230,10 +1287,12 @@ u32 exi_get_id(struct exi_device *exi_device)
 	u16 cmd = 0;
 
 	/* ask for the EXI id */
+	exi_dev_take(exi_device);
 	exi_dev_select(exi_device);
 	exi_dev_write(exi_device, &cmd, sizeof(cmd));
 	exi_dev_read(exi_device, &id, sizeof(id));
 	exi_dev_deselect(exi_device);
+	exi_dev_give(exi_device);
 
 	/*
 	 * We return a EXI_ID_NONE if there is some unidentified device
@@ -1281,7 +1340,7 @@ int exi_hw_init(char *module_name)
 {
 	struct exi_channel *exi_channel;
 	int channel;
-	int retval;
+	int result;
 
 	for(channel = 0; channel < EXI_MAX_CHANNELS; channel++) {
 		exi_channel = __to_exi_channel(channel);
@@ -1294,12 +1353,12 @@ int exi_hw_init(char *module_name)
 	exi_quiesce_all_channels(EXI_CSR_EXTINMASK);
 
 	/* register the exi interrupt handler */
-        retval = request_irq(EXI_IRQ, exi_irq_handler, 0, module_name, NULL);
-        if (retval) {
+        result = request_irq(EXI_IRQ, exi_irq_handler, 0, module_name, NULL);
+        if (result) {
 		exi_printk(KERN_ERR, "unable to register irq%d\n", EXI_IRQ);
         }
 
-	return retval;
+	return result;
 }
 
 /*
@@ -1319,6 +1378,8 @@ EXPORT_SYMBOL(exi_select_raw);
 EXPORT_SYMBOL(exi_deselect_raw);
 EXPORT_SYMBOL(exi_transfer_raw);
 
+EXPORT_SYMBOL(exi_take);
+EXPORT_SYMBOL(exi_give);
 EXPORT_SYMBOL(exi_select);
 EXPORT_SYMBOL(exi_deselect);
 EXPORT_SYMBOL(exi_transfer);

@@ -90,11 +90,17 @@
 
 #define EXI_DATA		0x10
 
+enum {
+	__EXI_DMABUSY = 0,
+	__EXI_EXT,
+};
 
 /*
  * For registering event handlers with the exi layer.
  */
-struct exi_event_handler {
+struct exi_event {
+	int			id;		/* event id */
+	struct exi_device	*owner;		/* device owning of the event */
 	exi_event_handler_t	handler;
 	void			*data;
 	unsigned int		channel_mask;	/* channels used by handler */
@@ -108,15 +114,13 @@ struct exi_channel {
 
 	int			channel;
 	unsigned long		flags;
-#define EXI_SELECTED	(1<<0)
-#define EXI_DMABUSY	(1<<1)
-#define EXI_EXT		(1<<8)
+#define EXI_DMABUSY	(1<<__EXI_DMABUSY)
+#define EXI_EXT		(1<<__EXI_EXT)
 
 	spinlock_t		io_lock;	/* serializes access to CSR */
 	void __iomem		*io_base;
 
-	spinlock_t		select_lock;	/* held while using channel */
-	struct exi_device	*device_selected;
+	struct exi_device	*owner;
 	wait_queue_head_t	wait_queue;
 
 	struct exi_command	*queued_cmd;
@@ -125,16 +129,17 @@ struct exi_channel {
 	unsigned long		csr;
 	struct tasklet_struct	tasklet;
 
-	struct exi_event_handler events[EXI_MAX_EVENTS];
+	struct exi_event	events[EXI_MAX_EVENTS];
 };
 
+extern struct exi_device *exi_channel_owner(struct exi_channel *exi_channel);
 extern int exi_get_ext_line(struct exi_channel *exi_channel);
 extern void exi_update_ext_status(struct exi_channel *exi_channel);
 
 extern int exi_hw_init(char *);
 extern void exi_hw_exit(void);
 
-#define exi_is_selected(x) ((x)->flags & EXI_SELECTED)
+#define exi_is_taken(x) ((x)->owner)
 
 /*
  * Internal.

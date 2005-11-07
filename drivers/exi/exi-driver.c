@@ -151,7 +151,6 @@ static void exi_device_init(struct exi_device *exi_device,
 	sprintf(exi_device->dev.bus_id, "%01x:%01x", channel, device);
 	exi_device->dev.platform_data = to_exi_channel(channel);
 	exi_device->dev.release = exi_device_release;
-
 }
 
 /**
