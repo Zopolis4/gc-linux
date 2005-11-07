@@ -81,7 +81,7 @@ MODULE_AUTHOR(DRV_AUTHOR);
 MODULE_DESCRIPTION(DRV_DESCRIPTION);
 MODULE_LICENSE("GPL");
 
-static char sd_driver_version[] = "0.3-isobel";
+static char sd_driver_version[] = "0.4-isobel";
 
 #define sd_printk(level, format, arg...) \
 	printk(level DRV_MODULE_NAME ": " format , ## arg)
@@ -475,6 +475,7 @@ static void sd_calc_timeouts(struct sd_host *host)
 /* */
 static inline void spi_cs_low(struct sd_host *host)
 {
+	exi_dev_take(host->exi_device);
 	exi_dev_select(host->exi_device);
 }
 
@@ -482,6 +483,7 @@ static inline void spi_cs_low(struct sd_host *host)
 static inline void spi_cs_high(struct sd_host *host)
 {
 	exi_dev_deselect(host->exi_device);
+	exi_dev_give(host->exi_device);
 }
 
 /* */
@@ -506,6 +508,7 @@ static inline void spi_read(struct sd_host *host, void *data, size_t len)
 	 * This is in fact the "feature" that enabled tmbinc to dump the IPL.
 	 *
 	 * When interfacing with SD cards, this causes us a serious problem.
+	 *
 	 * We are required to send all ones (1s) while reading data from
 	 * the SD card. Otherwise, the card can interpret the data sent as
 	 * commands (if they start with the bit pattern 01 for example).
@@ -523,6 +526,8 @@ static inline void spi_read(struct sd_host *host, void *data, size_t len)
 	 */
 	exi_transfer(exi_get_exi_channel(host->exi_device), data, len,
 		     EXI_OP_READ, EXI_CMD_IDI);
+	//exi_transfer(exi_get_exi_channel(host->exi_device), data, len,
+	//	     EXI_OP_READ, EXI_CMD_NODMA);
 }
 
 /* cycles are expressed in 8 clock cycles */
@@ -901,6 +906,7 @@ static inline int sd_write_single_block(struct sd_host *host,
 static int sd_reset_sequence(struct sd_host *host)
 {
 	struct sd_command *cmd = &host->cmd;
+	u8 d;
 	int i;
 	int retval = 0;
 
@@ -910,25 +916,13 @@ static int sd_reset_sequence(struct sd_host *host)
 	 * Wait at least 80 dummy clock cycles with the card deselected
 	 * and with the MOSI line continuously high.
 	 */
-	{
-		/*
-		 * FIXME: this is hackish but we need it to idle cards ...
-		 * (we need to make the exi framework a bit more flexible)
-		 */
-		u8 d;
-		unsigned long flags;
-
-		spi_cs_low(host);
-		spin_lock_irqsave(&host->lock, flags);
-		exi_deselect_raw(exi_get_exi_channel(host->exi_device));
-		for (i = 0; i < SD_IDLE_CYCLES; i++) {
-			d = 0xff;
-			exi_transfer_raw(exi_get_exi_channel(host->exi_device),
-					 &d, sizeof(d), EXI_OP_WRITE);
-		}
-		spin_unlock_irqrestore(&host->lock, flags);
-		spi_cs_high(host);
+	exi_dev_take(host->exi_device);
+	exi_dev_deselect(host->exi_device);
+	for (i = 0; i < SD_IDLE_CYCLES; i++) {
+		d = 0xff;
+		exi_dev_write(host->exi_device, &d, sizeof(d));
 	}
+	exi_dev_give(host->exi_device);
 
 	/*
 	 * Send a CMD0, card must ack with "idle state" (0x01).
@@ -1152,7 +1146,13 @@ static int sd_io_thread(void *param)
 	unsigned long flags;
 	int retval;
 
-        set_user_nice(current, -20);
+	/*
+	 * We are going to perfom badly due to the read problem explained
+	 * above. At least, be nice with other processes trying to use the
+	 * cpu.
+	 */
+        set_user_nice(current, 0);
+
         current->flags |= PF_NOFREEZE;
         set_current_state(TASK_RUNNING);
 
@@ -1166,10 +1166,6 @@ static int sd_io_thread(void *param)
 			req = host->req;
 			host->req = NULL;
 			spin_unlock_irqrestore(&host->lock, flags);
-
-			spin_lock(&host->queue_lock);
-			blk_start_queue(host->queue);
-			spin_unlock(&host->queue_lock);
 
 			/* proceed with i/o requests */
 			if (rq_data_dir(req) == WRITE) {
@@ -1188,6 +1184,13 @@ static int sd_io_thread(void *param)
 
 			if (!end_that_request_first(req, uptodate, nr_sectors))
 				end_that_request_last(req);
+
+			/* avoid cpu monopolization, we are damn greedy */
+			yield();
+
+			spin_lock(&host->queue_lock);
+			blk_start_queue(host->queue);
+			spin_unlock(&host->queue_lock);
                 }
                 wait_event(host->io_waitq, host->req || kthread_should_stop());
         }
@@ -1381,6 +1384,7 @@ static int sd_ioctl(struct inode *inode, struct file *filp,
 	struct hd_geometry geo;
 
 	switch (cmd) {
+#if 0
 	case BLKRAGET:
 	case BLKFRAGET:
 	case BLKROGET:
@@ -1391,6 +1395,7 @@ static int sd_ioctl(struct inode *inode, struct file *filp,
 	case BLKGETSIZE64:
 	case BLKFLSBUF:
 		return ioctl_by_bdev(bdev, cmd, arg);
+#endif
 	case HDIO_GETGEO:
 		/* fake the entries */
 		geo.cylinders = get_capacity(bdev->bd_disk) / (4 * 16);
@@ -1402,7 +1407,7 @@ static int sd_ioctl(struct inode *inode, struct file *filp,
 			return -EFAULT;
 		return 0;
 	default:
-		return -EINVAL;
+		return -ENOTTY;
 	}
 	return -EINVAL;
 }
@@ -1529,7 +1534,6 @@ static int sd_init(struct sd_host *host)
 err_blk_dev:
 	sd_exit_blk_dev(host);
 	return retval;
-
 }
 
 /*
