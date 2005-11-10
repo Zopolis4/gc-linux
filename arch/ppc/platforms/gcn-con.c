@@ -20,9 +20,6 @@
 
 #include "gamecube.h"
 
-extern struct font_desc font_vga_8x16;
-
-
 #define FONT_XSIZE  8
 #define FONT_YSIZE  16
 #define FONT_XFACTOR 1
@@ -37,7 +34,7 @@ struct console_data_s {
 	unsigned char *framebuffer;
 	int xres, yres, stride;
 
-	unsigned char *font;
+	const unsigned char *font;
 
 	int cursor_x, cursor_y;
 	int foreground, background;
