@@ -1651,6 +1651,13 @@ static int di_open(struct inode *inode, struct file *filp)
 		goto out;
 	}
 
+	/* this will take care of validating the media */
+	check_disk_change(inode->i_bdev);
+	if (!ddev->nr_sectors) {
+		retval = -ENOMEDIUM;
+		goto out;
+	}
+
         spin_lock_irqsave(&ddev->queue_lock, flags);
 
 	/* honor exclusive open mode */
@@ -1671,13 +1678,6 @@ static int di_open(struct inode *inode, struct file *filp)
 		spin_unlock_irqrestore(&ddev->queue_lock, flags);
 		wait_for_completion(&complete);
         	spin_lock_irqsave(&ddev->queue_lock, flags);
-	}
-
-	/* this will take care of validating the media */
-	check_disk_change(inode->i_bdev);
-	if (!ddev->nr_sectors) {
-		retval = -ENOMEDIUM;
-		goto out_unlock;
 	}
 
 	if ((filp->f_flags & O_EXCL))
