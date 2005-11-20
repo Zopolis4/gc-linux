@@ -16,8 +16,8 @@
 
 #include <linux/init.h>
 #include <linux/time.h>
-
 #include <linux/exi.h>
+#include <asm/machdep.h>
 
 #define DRV_MODULE_NAME   "gcn-rtc"
 #define DRV_DESCRIPTION   "Nintendo GameCube RTC/SRAM driver"
@@ -70,22 +70,22 @@ static void sram_load(struct exi_device *dev)
 	struct gcn_sram *sram = &priv->sram;
 	u32 req;
 
-	if (exi_dev_try_take(dev) == 0) {
-		/* select the SRAM device */
-		exi_dev_select(dev);
+	exi_dev_take(dev);
 
-		/* send the appropriate command */
-		req = 0x20000100;
-		exi_dev_write(dev, &req, sizeof(req));
+	/* select the SRAM device */
+	exi_dev_select(dev);
 
-		/* read the SRAM data */
-		exi_dev_read(dev, sram, sizeof(*sram));
+	/* send the appropriate command */
+	req = 0x20000100;
+	exi_dev_write(dev, &req, sizeof(req));
 
-		/* deselect the SRAM device */
-		exi_dev_deselect(dev);
+	/* read the SRAM data */
+	exi_dev_read(dev, sram, sizeof(*sram));
 
-		exi_dev_give(dev);
-	}
+	/* deselect the SRAM device */
+	exi_dev_deselect(dev);
+
+	exi_dev_give(dev);
 
 	return;
 }
@@ -98,22 +98,22 @@ static unsigned long rtc_get_time(struct exi_device *dev)
 {
 	unsigned long a = 0;
 
-	if (exi_dev_try_take(dev) == 0) {
-		/* select the SRAM device */
-		exi_dev_select(dev);
+	exi_dev_take(dev);
 
-		/* send the appropriate command */
-		a = 0x20000000;
-		exi_dev_write(dev, &a, sizeof(a));
+	/* select the SRAM device */
+	exi_dev_select(dev);
 
-		/* read the time and date value */
-		exi_dev_read(dev, &a, sizeof(a));
+	/* send the appropriate command */
+	a = 0x20000000;
+	exi_dev_write(dev, &a, sizeof(a));
 
-		/* deselect the RTC device */
-		exi_dev_deselect(dev);
+	/* read the time and date value */
+	exi_dev_read(dev, &a, sizeof(a));
 
-		exi_dev_give(dev);
-	}
+	/* deselect the RTC device */
+	exi_dev_deselect(dev);
+
+	exi_dev_give(dev);
 
 	return a;
 }
