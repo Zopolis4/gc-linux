@@ -1657,7 +1657,7 @@ static int di_open(struct inode *inode, struct file *filp)
 	 * If we have a pending command, that's a previously scheduled
 	 * motor off. Wait for it to terminate before going on.
 	 */
-       	spin_lock_irqsave(&ddev->lock, flags);
+	spin_lock_irqsave(&ddev->lock, flags);
 	if (ddev->cmd && ddev->ref_count == 0) {
 		cmd = ddev->cmd;
 		cmd->done_data = &complete;
