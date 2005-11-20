@@ -23,6 +23,7 @@
 #include <linux/delay.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
+#include <linux/platform_device.h>
 #include <linux/blkdev.h>
 #include <linux/fcntl.h>
 #include <linux/hdreg.h>
@@ -1479,7 +1480,8 @@ static int di_read_toc(struct di_device *ddev)
 	di_op_readdiskid(&cmd, ddev, &disk_id);
 	di_run_command_and_wait(&cmd);
 	if (di_command_ok(&cmd)) {
-		if (disk_id.id[0] && !di_accept_gods) {
+		if (disk_id.id[0] && strcmp(disk_id.id, "GBLPGL") &&
+		    !di_accept_gods) {
 			di_print_disk_id(&disk_id);
 			di_printk(KERN_ERR, "sorry, gamecube media"
 				  " support is disabled\n");
@@ -1651,6 +1653,21 @@ static int di_open(struct inode *inode, struct file *filp)
 		goto out;
 	}
 
+	/*
+	 * If we have a pending command, that's a previously scheduled
+	 * motor off. Wait for it to terminate before going on.
+	 */
+       	spin_lock_irqsave(&ddev->lock, flags);
+	if (ddev->cmd && ddev->ref_count == 0) {
+		cmd = ddev->cmd;
+		cmd->done_data = &complete;
+		cmd->done = di_wait_done;
+		spin_unlock_irqrestore(&ddev->lock, flags);
+		wait_for_completion(&complete);
+	} else {
+		spin_unlock_irqrestore(&ddev->lock, flags);
+	}
+
 	/* this will take care of validating the media */
 	check_disk_change(inode->i_bdev);
 	if (!ddev->nr_sectors) {
@@ -1665,19 +1682,6 @@ static int di_open(struct inode *inode, struct file *filp)
 	    (ddev->ref_count && (filp->f_flags & O_EXCL))) {
 		retval = -EBUSY;
 		goto out_unlock;
-	}
-
-	/*
-	 * If we have a pending command, that's a previously scheduled
-	 * motor off. Wait for it to terminate before going on.
-	 */
-	if (ddev->cmd && ddev->ref_count == 0) {
-		cmd = ddev->cmd;
-		cmd->done_data = &complete;
-		cmd->done = di_wait_done;
-		spin_unlock_irqrestore(&ddev->queue_lock, flags);
-		wait_for_completion(&complete);
-        	spin_lock_irqsave(&ddev->queue_lock, flags);
 	}
 
 	if ((filp->f_flags & O_EXCL))
