@@ -17,7 +17,6 @@
 
 #include <linux/module.h>
 #include <linux/major.h>
-#include <linux/platform_device.h>
 #include <linux/blkdev.h>
 #include <linux/fcntl.h>	/* O_ACCMODE */
 #include <linux/hdreg.h>	/* HDIO_GETGEO */

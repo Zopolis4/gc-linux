@@ -23,7 +23,6 @@
 #include <linux/delay.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
-#include <linux/platform_device.h>
 #include <linux/blkdev.h>
 #include <linux/fcntl.h>
 #include <linux/hdreg.h>
