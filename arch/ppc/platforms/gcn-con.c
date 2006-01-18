@@ -17,6 +17,7 @@
 #include <linux/console.h>
 #include <linux/font.h>
 #include <linux/cache.h>
+#include <asm/cacheflush.h>
 
 #include "gamecube.h"
 

@@ -7,6 +7,7 @@
 
 obj-$(CONFIG_PCI)		+= pci/
 obj-$(CONFIG_PARISC)		+= parisc/
+obj-$(CONFIG_RAPIDIO)		+= rapidio/
 obj-y				+= video/
 obj-$(CONFIG_ACPI)		+= acpi/
 # PnP must come after ACPI since it will eventually need to check if acpi
@@ -48,6 +49,7 @@ obj-$(CONFIG_ATA_OVER_ETH)	+= block/aoe/
 obj-$(CONFIG_PARIDE) 		+= block/paride/
 obj-$(CONFIG_TC)		+= tc/
 obj-$(CONFIG_USB)		+= usb/
+obj-$(CONFIG_PCI)		+= usb/
 obj-$(CONFIG_USB_GADGET)	+= usb/gadget/
 obj-$(CONFIG_GAMEPORT)		+= input/gameport/
 obj-$(CONFIG_INPUT)		+= input/
@@ -62,10 +64,11 @@ obj-$(CONFIG_ISDN)		+= isdn/
 obj-$(CONFIG_MCA)		+= mca/
 obj-$(CONFIG_EISA)		+= eisa/
 obj-$(CONFIG_CPU_FREQ)		+= cpufreq/
+obj-$(CONFIG_GAMECUBE_SI)	+= input/si/
+obj-$(CONFIG_GAMECUBE_EXI)	+= exi/
 obj-$(CONFIG_MMC)		+= mmc/
 obj-$(CONFIG_INFINIBAND)	+= infiniband/
 obj-$(CONFIG_SGI_IOC4)		+= sn/
 obj-y				+= firmware/
 obj-$(CONFIG_CRYPTO)		+= crypto/
-obj-$(CONFIG_GAMECUBE_SI)	+= input/si/
-obj-$(CONFIG_GAMECUBE_EXI)	+= exi/
+obj-$(CONFIG_SUPERH)		+= sh/

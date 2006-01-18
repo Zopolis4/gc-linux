@@ -568,7 +568,9 @@ struct fb_ops gcnfb_ops = {
 	.fb_fillrect = cfb_fillrect,
 	.fb_copyarea = cfb_copyarea,
 	.fb_imageblit = cfb_imageblit,
+#ifdef CONFIG_FB_SOFT_CURSOR
 	.fb_cursor = soft_cursor,
+#endif
 };
 
 /**

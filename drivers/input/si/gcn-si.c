@@ -4,6 +4,7 @@
  * Nintendo GameCube Serial Interface driver
  * Copyright (C) 2004 The GameCube Linux Team
  * Copyright (C) 2004 Steven Looman
+ * Copyright (C) 2005 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -50,12 +51,13 @@ MODULE_LICENSE("GPL");
 #define si_printk(level, format, arg...) \
         printk(level PFX format , ## arg)
 
-
 /*
  * This keymap is for a datel adapter + normal US keyboard.
  */
 #include "gcn-keymap.h"
 
+
+#define SI_MAX_PORTS	4
 
 #define REFRESH_TIME HZ/100
 
@@ -100,17 +102,12 @@ typedef struct {
 
 typedef enum {CTL_PAD,CTL_KEYBOARD,CTL_UNKNOWN} control_type;
 
-struct {
+struct si_device {
 	control_type id;
 	int si_id;
 	unsigned int raw[2];
 
-#if 0
-	unsigned char errStat:1;
-	unsigned char errLatch:1;
-#endif
-
-	struct input_dev idev;
+	struct input_dev *idev;
 	struct timer_list timer;
 	
 	union {
@@ -118,8 +115,9 @@ struct {
 	};
 	
 	char name[32];
-	/* char phys[32]; */
-} port[4];
+};
+
+struct si_device port[SI_MAX_PORTS];
 
 
 #ifdef HACK_FORCE_KEYBOARD_PORT
@@ -263,6 +261,7 @@ static void gcn_si_set_rumbling(int portno, int rumble)
  */
 static void gcn_si_timer(unsigned long portno)
 {
+	struct si_device *sdev = &port[portno];
 	unsigned long raw[2];
 	unsigned char key[3];
 	unsigned char oldkey;
@@ -271,53 +270,53 @@ static void gcn_si_timer(unsigned long portno)
 	raw[0] = readl(SICINBUFH(portno));
 	raw[1] = readl(SICINBUFL(portno));
 
-	switch (port[portno].id) {
+	switch (sdev->id) {
 	case CTL_PAD:
 		/* buttons */
-		input_report_key(&port[portno].idev, BTN_A, raw[0] & PAD_A);
-		input_report_key(&port[portno].idev, BTN_B, raw[0] & PAD_B);
-		input_report_key(&port[portno].idev, BTN_X, raw[0] & PAD_X);
-		input_report_key(&port[portno].idev, BTN_Y, raw[0] & PAD_Y);
-		input_report_key(&port[portno].idev, BTN_Z, raw[0] & PAD_Z);
-		input_report_key(&port[portno].idev, BTN_TL,
+		input_report_key(sdev->idev, BTN_A, raw[0] & PAD_A);
+		input_report_key(sdev->idev, BTN_B, raw[0] & PAD_B);
+		input_report_key(sdev->idev, BTN_X, raw[0] & PAD_X);
+		input_report_key(sdev->idev, BTN_Y, raw[0] & PAD_Y);
+		input_report_key(sdev->idev, BTN_Z, raw[0] & PAD_Z);
+		input_report_key(sdev->idev, BTN_TL,
 				 raw[0] & PAD_LT);
-		input_report_key(&port[portno].idev, BTN_TR,
+		input_report_key(sdev->idev, BTN_TR,
 				 raw[0] & PAD_RT);
-		input_report_key(&port[portno].idev, BTN_START,
+		input_report_key(sdev->idev, BTN_START,
 				 raw[0] & PAD_START);
 
 		/* axis */
 		/* a stick */
-		input_report_abs(&port[portno].idev, ABS_X,
+		input_report_abs(sdev->idev, ABS_X,
 				 raw[0] >> 8 & 0xFF);
-		input_report_abs(&port[portno].idev, ABS_Y,
+		input_report_abs(sdev->idev, ABS_Y,
 				 0xFF - (raw[0] >> 0 & 0xFF));
 
 		/* b pad */
 		if (raw[0] & PAD_RIGHT)
-			input_report_abs(&port[portno].idev, ABS_HAT0X, 1);
+			input_report_abs(sdev->idev, ABS_HAT0X, 1);
 		else if (raw[0] & PAD_LEFT)
-			input_report_abs(&port[portno].idev, ABS_HAT0X, -1);
+			input_report_abs(sdev->idev, ABS_HAT0X, -1);
 		else
-			input_report_abs(&port[portno].idev, ABS_HAT0X, 0);
+			input_report_abs(sdev->idev, ABS_HAT0X, 0);
 
 		if (raw[0] & PAD_DOWN)
-			input_report_abs(&port[portno].idev, ABS_HAT0Y, 1);
+			input_report_abs(sdev->idev, ABS_HAT0Y, 1);
 		else if (raw[0] & PAD_UP)
-			input_report_abs(&port[portno].idev, ABS_HAT0Y, -1);
+			input_report_abs(sdev->idev, ABS_HAT0Y, -1);
 		else
-			input_report_abs(&port[portno].idev, ABS_HAT0Y, 0);
+			input_report_abs(sdev->idev, ABS_HAT0Y, 0);
 
 		/* c stick */
-		input_report_abs(&port[portno].idev, ABS_RX,
+		input_report_abs(sdev->idev, ABS_RX,
 				 raw[1] >> 24 & 0xFF);
-		input_report_abs(&port[portno].idev, ABS_RY,
+		input_report_abs(sdev->idev, ABS_RY,
 				 raw[1] >> 16 & 0xFF);
 
 		/* triggers */
-		input_report_abs(&port[portno].idev, ABS_BRAKE,
+		input_report_abs(sdev->idev, ABS_BRAKE,
 				 raw[1] >> 8 & 0xFF);
-		input_report_abs(&port[portno].idev, ABS_GAS,
+		input_report_abs(sdev->idev, ABS_GAS,
 				 raw[1] >> 0 & 0xFF);
 
 		break;
@@ -330,19 +329,19 @@ static void gcn_si_timer(unsigned long portno)
 
 		/* check if anything was released */
 		for (i = 0; i < 3; ++i) {
-			oldkey = port[portno].keyboard.old[i];
+			oldkey = sdev->keyboard.old[i];
 			if (oldkey != key[0] &&
 			    oldkey != key[1] && oldkey != key[2])
-				input_report_key(&port[portno].idev,
+				input_report_key(sdev->idev,
 						 gamecube_keymap[oldkey], 0);
 		}
 
 		/* report keys */
 		for (i = 0; i < 3; ++i) {
 			if (key[i])
-				input_report_key(&port[portno].idev,
+				input_report_key(sdev->idev,
 						 gamecube_keymap[key[i]], 1);
-			port[portno].keyboard.old[i] = key[i];
+			sdev->keyboard.old[i] = key[i];
 		}
 		break;
 
@@ -350,9 +349,9 @@ static void gcn_si_timer(unsigned long portno)
 		break;
 	}
 
-	input_sync(&port[portno].idev);
+	input_sync(sdev->idev);
 
-	mod_timer(&port[portno].timer, jiffies + REFRESH_TIME);
+	mod_timer(&sdev->timer, jiffies + REFRESH_TIME);
 }
 
 /**
@@ -361,12 +360,13 @@ static void gcn_si_timer(unsigned long portno)
 static int gcn_si_open(struct input_dev *idev)
 {
 	int portno = (int)idev->private;
+	struct si_device *sdev = &port[portno];
 
-	init_timer(&port[portno].timer);
-	port[portno].timer.function = gcn_si_timer;
-	port[portno].timer.data = (int)idev->private;
-	port[portno].timer.expires = jiffies + REFRESH_TIME;
-	add_timer(&port[portno].timer);
+	init_timer(&sdev->timer);
+	sdev->timer.function = gcn_si_timer;
+	sdev->timer.data = (int)idev->private;
+	sdev->timer.expires = jiffies + REFRESH_TIME;
+	add_timer(&sdev->timer);
 
 	return 0;
 }
@@ -377,8 +377,9 @@ static int gcn_si_open(struct input_dev *idev)
 static void gcn_si_close(struct input_dev *idev)
 {
 	int portno = (int)idev->private;
+	struct si_device *sdev = &port[portno];
 
-	del_timer(&port[portno].timer);
+	del_timer(&sdev->timer);
 }
 
 /**
@@ -401,10 +402,178 @@ static int gcn_si_event(struct input_dev *dev, unsigned int type,
 /**
  *
  */
-static int __init gcn_si_init(void)
+static void si_setup_pad(struct input_dev *input_dev)
+{
+	set_bit(EV_KEY, input_dev->evbit);
+	set_bit(EV_ABS, input_dev->evbit);
+	set_bit(EV_FF, input_dev->evbit);
+
+	set_bit(BTN_A, input_dev->keybit);
+	set_bit(BTN_B, input_dev->keybit);
+	set_bit(BTN_X, input_dev->keybit);
+	set_bit(BTN_Y, input_dev->keybit);
+	set_bit(BTN_Z, input_dev->keybit);
+	set_bit(BTN_TL, input_dev->keybit);
+	set_bit(BTN_TR, input_dev->keybit);
+	set_bit(BTN_START, input_dev->keybit);
+
+	/* a stick */
+	set_bit(ABS_X, input_dev->absbit);
+	input_dev->absmin[ABS_X] = 0;
+	input_dev->absmax[ABS_X] = 255;
+	input_dev->absfuzz[ABS_X] = 8;
+	input_dev->absflat[ABS_X] = 8;
+
+	set_bit(ABS_Y, input_dev->absbit);
+	input_dev->absmin[ABS_Y] = 0;
+	input_dev->absmax[ABS_Y] = 255;
+	input_dev->absfuzz[ABS_Y] = 8;
+	input_dev->absflat[ABS_Y] = 8;
+
+	/* b pad */
+	set_bit(ABS_HAT0X, input_dev->absbit);
+	input_dev->absmin[ABS_HAT0X] = -1;
+	input_dev->absmax[ABS_HAT0X] = 1;
+
+	set_bit(ABS_HAT0Y, input_dev->absbit);
+	input_dev->absmin[ABS_HAT0Y] = -1;
+	input_dev->absmax[ABS_HAT0Y] = 1;
+
+	/* c stick */
+	set_bit(ABS_RX, input_dev->absbit);
+	input_dev->absmin[ABS_RX] = 0;
+	input_dev->absmax[ABS_RX] = 255;
+	input_dev->absfuzz[ABS_RX] = 8;
+	input_dev->absflat[ABS_RX] = 8;
+
+	set_bit(ABS_RY, input_dev->absbit);
+	input_dev->absmin[ABS_RY] = 0;
+	input_dev->absmax[ABS_RY] = 255;
+	input_dev->absfuzz[ABS_RY] = 8;
+	input_dev->absflat[ABS_RY] = 8;
+
+	/* triggers */
+	set_bit(ABS_GAS, input_dev->absbit);
+	input_dev->absmin[ABS_GAS] = -255;
+	input_dev->absmax[ABS_GAS] = 255;
+	input_dev->absfuzz[ABS_GAS] = 16;
+	input_dev->absflat[ABS_GAS] = 16;
+
+	set_bit(ABS_BRAKE, input_dev->absbit);
+	input_dev->absmin[ABS_BRAKE] = -255;
+	input_dev->absmax[ABS_BRAKE] = 255;
+	input_dev->absfuzz[ABS_BRAKE] = 16;
+	input_dev->absflat[ABS_BRAKE] = 16;
+
+	/* rumbling */
+	set_bit(FF_RUMBLE, input_dev->ffbit);
+	input_dev->event = gcn_si_event;
+
+	input_dev->ff_effects_max = 1;
+}
+
+/**
+ *
+ */
+static void si_setup_keyboard(struct input_dev *input_dev)
 {
 	int i;
-	int j;
+
+	set_bit(EV_KEY, input_dev->evbit);
+	set_bit(EV_REP, input_dev->evbit);
+
+	for (i = 0; i < 255; ++i)
+		set_bit(gamecube_keymap[i], input_dev->keybit);
+}
+
+/**
+ *
+ */
+static int si_setup_device(struct si_device *sdev, int idx)
+{
+	struct input_dev *input_dev;
+	int result = 0;
+
+	memset(sdev, 0, sizeof(*sdev));	
+
+	/* probe port */
+	sdev->si_id = gcn_si_get_controller_id(idx) >> 16;
+
+	/* convert si_id to id */
+	if (sdev->si_id == ID_PAD) {
+		sdev->id = CTL_PAD;
+		strcpy(sdev->name, "standard pad");
+	} else if (sdev->si_id & ID_WIRELESS_BIT) {
+		sdev->id = CTL_PAD;
+		strcpy(sdev->name,(sdev->si_id & ID_WAVEBIRD_BIT) ?
+		       "Nintendo Wavebird" : "wireless pad");
+	} else if (sdev->si_id == ID_KEYBOARD) {
+		sdev->id = CTL_KEYBOARD;
+		strcpy(sdev->name, "keyboard");
+	} else {
+		sdev->id = CTL_UNKNOWN;
+		if (sdev->si_id) {
+			sprintf(sdev->name, "unknown (%x)", 
+				sdev->si_id);
+#ifdef HACK_FORCE_KEYBOARD_PORT
+			if (idx+1 == gcn_si_force_keyboard_port) {
+				si_printk(KERN_WARNING,
+					  "port %d forced to keyboard mode\n",
+					  idx+1);
+				sdev->si_id = ID_KEYBOARD;
+				sdev->id = CTL_KEYBOARD;
+				strcpy(sdev->name, "keyboard (forced)");
+			}
+#endif /* HACK_FORCE_KEYBOARD_PORT */
+		} else {
+			strcpy(sdev->name, "Not Present");
+		}
+	}
+
+	if (sdev->id == CTL_UNKNOWN) {
+		result = -ENODEV;
+		goto done;
+	}
+
+	input_dev = input_allocate_device();		
+	if (!input_dev) {
+		si_printk(KERN_ERR, "not enough memory for input device\n");
+		result = -ENOMEM;
+		goto done;
+	}
+
+	input_dev->open = gcn_si_open;
+	input_dev->close = gcn_si_close;
+	input_dev->private = (unsigned int *)idx;
+	input_dev->name = sdev->name;
+		
+	switch (sdev->id) {
+	case CTL_PAD:
+		si_setup_pad(input_dev);
+		break;
+	case CTL_KEYBOARD:
+		si_setup_keyboard(input_dev);
+		break;
+	default:
+		/* this is here to avoid compiler warnings */
+		break;
+	}
+
+	sdev->idev = input_dev;
+
+done:
+	return result;
+}
+
+/**
+ *
+ */
+static int __init gcn_si_init(void)
+{
+	struct si_device *sdev;
+	int idx;
+	int result;
+
         si_printk(KERN_INFO, "%s\n", DRV_DESCRIPTION);
 
 	if (request_resource(&iomem_resource, &gcn_si_resources) < 0) {
@@ -412,140 +581,14 @@ static int __init gcn_si_init(void)
 		return -EBUSY;
 	}
 
-	for (i = 0; i < 4; ++i) {
-		memset(&port[i], 0, sizeof(port[i]));
+	for (idx = 0; idx < SI_MAX_PORTS; ++idx) {
+		sdev = &port[idx];
 
-		/* probe ports */
-		port[i].si_id = gcn_si_get_controller_id(i) >> 16;
+		result = si_setup_device(sdev, idx);
+		if (!result)
+			input_register_device(sdev->idev);
 
-		/* convert si_id to id */
-		if (port[i].si_id == ID_PAD) {
-			port[i].id = CTL_PAD;
-			strcpy(port[i].name,"Standard Pad");
-		} else if (port[i].si_id & ID_WIRELESS_BIT) {
-			port[i].id = CTL_PAD;
-			strcpy(port[i].name,(port[i].si_id & ID_WAVEBIRD_BIT) ?
-			       "Nintendo Wavebird" : "Wireless Pad");
-		} else if (port[i].si_id == ID_KEYBOARD) {
-			port[i].id = CTL_KEYBOARD;
-			strcpy(port[i].name, "Keyboard");
-		} else {
-			port[i].id = CTL_UNKNOWN;
-			if (port[i].si_id) {
-				sprintf(port[i].name, "Unknown (%x)", 
-					port[i].si_id);
-#ifdef HACK_FORCE_KEYBOARD_PORT
-				if (i+1 == gcn_si_force_keyboard_port) {
-					si_printk(KERN_WARNING,
-						  "port %d forced to"
-						  " keyboard mode\n", i+1);
-					port[i].si_id = ID_KEYBOARD;
-					port[i].id = CTL_KEYBOARD;
-					strcpy(port[i].name, "Keyboard"
-					       " (forced)");
-				}
-#endif /* HACK_FORCE_KEYBOARD_PORT */
-			} else {
-				strcpy(port[i].name, "Not Present");
-			}
-		}
-		
-		init_input_dev(&port[i].idev);
-
-		port[i].idev.open = gcn_si_open;
-		port[i].idev.close = gcn_si_close;
-		port[i].idev.private = (unsigned int *)i;
-		port[i].idev.name = port[i].name;
-		
-		switch (port[i].id) {
-		case CTL_PAD:
-			set_bit(EV_KEY, port[i].idev.evbit);
-			set_bit(EV_ABS, port[i].idev.evbit);
-			set_bit(EV_FF, port[i].idev.evbit);
-
-			set_bit(BTN_A, port[i].idev.keybit);
-			set_bit(BTN_B, port[i].idev.keybit);
-			set_bit(BTN_X, port[i].idev.keybit);
-			set_bit(BTN_Y, port[i].idev.keybit);
-			set_bit(BTN_Z, port[i].idev.keybit);
-			set_bit(BTN_TL, port[i].idev.keybit);
-			set_bit(BTN_TR, port[i].idev.keybit);
-			set_bit(BTN_START, port[i].idev.keybit);
-
-			/* a stick */
-			set_bit(ABS_X, port[i].idev.absbit);
-			port[i].idev.absmin[ABS_X] = 0;
-			port[i].idev.absmax[ABS_X] = 255;
-			port[i].idev.absfuzz[ABS_X] = 8;
-			port[i].idev.absflat[ABS_X] = 8;
-
-			set_bit(ABS_Y, port[i].idev.absbit);
-			port[i].idev.absmin[ABS_Y] = 0;
-			port[i].idev.absmax[ABS_Y] = 255;
-			port[i].idev.absfuzz[ABS_Y] = 8;
-			port[i].idev.absflat[ABS_Y] = 8;
-
-			/* b pad */
-			set_bit(ABS_HAT0X, port[i].idev.absbit);
-			port[i].idev.absmin[ABS_HAT0X] = -1;
-			port[i].idev.absmax[ABS_HAT0X] = 1;
-
-			set_bit(ABS_HAT0Y, port[i].idev.absbit);
-			port[i].idev.absmin[ABS_HAT0Y] = -1;
-			port[i].idev.absmax[ABS_HAT0Y] = 1;
-
-			/* c stick */
-			set_bit(ABS_RX, port[i].idev.absbit);
-			port[i].idev.absmin[ABS_RX] = 0;
-			port[i].idev.absmax[ABS_RX] = 255;
-			port[i].idev.absfuzz[ABS_RX] = 8;
-			port[i].idev.absflat[ABS_RX] = 8;
-
-			set_bit(ABS_RY, port[i].idev.absbit);
-			port[i].idev.absmin[ABS_RY] = 0;
-			port[i].idev.absmax[ABS_RY] = 255;
-			port[i].idev.absfuzz[ABS_RY] = 8;
-			port[i].idev.absflat[ABS_RY] = 8;
-
-			/* triggers */
-			set_bit(ABS_GAS, port[i].idev.absbit);
-			port[i].idev.absmin[ABS_GAS] = -255;
-			port[i].idev.absmax[ABS_GAS] = 255;
-			port[i].idev.absfuzz[ABS_GAS] = 16;
-			port[i].idev.absflat[ABS_GAS] = 16;
-
-			set_bit(ABS_BRAKE, port[i].idev.absbit);
-			port[i].idev.absmin[ABS_BRAKE] = -255;
-			port[i].idev.absmax[ABS_BRAKE] = 255;
-			port[i].idev.absfuzz[ABS_BRAKE] = 16;
-			port[i].idev.absflat[ABS_BRAKE] = 16;
-
-			/* rumbling */
-			set_bit(FF_RUMBLE, port[i].idev.ffbit);
-			port[i].idev.event = gcn_si_event;
-
-			port[i].idev.ff_effects_max = 1;
-
-			input_register_device(&port[i].idev);
-
-			break;
-
-		case CTL_KEYBOARD:
-			set_bit(EV_KEY, port[i].idev.evbit);
-			set_bit(EV_REP, port[i].idev.evbit);
-
-			for (j = 0; j < 255; ++j)
-				set_bit(gamecube_keymap[j],
-					port[i].idev.keybit);
-
-			input_register_device(&port[i].idev);
-
-			break;
-		default:
-			/* this is here to avoid compiler warnings */
-			break;
-		}
-		si_printk(KERN_INFO, "Port %d: %s\n", i+1, port[i].name);
+		si_printk(KERN_INFO, "Port %d: %s\n", idx+1, sdev->name);
 	}
 
 	gcn_si_set_polling();
@@ -558,17 +601,21 @@ static int __init gcn_si_init(void)
  */
 static void __exit gcn_si_exit(void)
 {
-	int i;
+	struct si_device *sdev;
+	int idx;
 
 	si_printk(KERN_INFO, "exit\n");
 
-	for (i = 0; i < 4; ++i) {
-		if (port[i].id != CTL_UNKNOWN) {
-			input_unregister_device(&port[i].idev);
-		}
+	for (idx = 0; idx < SI_MAX_PORTS; ++idx) {
+		sdev = &port[idx];
+		if (sdev->idev)
+			input_unregister_device(sdev->idev);
 	}
+
 	release_resource(&gcn_si_resources);
 }
 
 module_init(gcn_si_init);
 module_exit(gcn_si_exit);
+
+

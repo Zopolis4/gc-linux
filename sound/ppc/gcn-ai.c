@@ -21,6 +21,7 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <asm/io.h>
+#include <asm/cacheflush.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
 #define SNDRV_GET_ID

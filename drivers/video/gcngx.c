@@ -25,6 +25,7 @@
 #include <linux/wait.h>
 #include <asm/pgtable.h>
 #include <asm/atomic.h>
+#include <asm/cacheflush.h>
 #include <platforms/gamecube.h>
 #include "gcngx.h"
 
