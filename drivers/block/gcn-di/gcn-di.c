@@ -2,8 +2,8 @@
  * drivers/block/gcn-di/gcn-di.c
  *
  * Nintendo GameCube DVD Interface driver
- * Copyright (C) 2005 The GameCube Linux Team
- * Copyright (C) 2005 Albert Herranz
+ * Copyright (C) 2005-2006 The GameCube Linux Team
+ * Copyright (C) 2005,2006 Albert Herranz
  *
  * Portions based on previous work by Scream|CT.
  *
@@ -37,7 +37,7 @@
 #define DRV_DESCRIPTION	"Nintendo GameCube DVD Interface driver"
 #define DRV_AUTHOR	"Albert Herranz"
 
-static char di_driver_version[] = "0.4";
+static char di_driver_version[] = "0.7-isobel";
 
 #define di_printk(level, format, arg...) \
 	printk(level DRV_MODULE_NAME ": " format , ## arg)
@@ -232,7 +232,9 @@ enum {
 	__DI_INTEROPERABLE = 0,
 	__DI_MEDIA_CHANGED,
 	__DI_START_QUEUE,
-	__DI_RESETTING
+	__DI_RESETTING,
+	__DI_DRIVECHIP_PRESENT,
+	__DI_ALREADY_RESET,
 };
 
 /*
@@ -250,6 +252,7 @@ struct di_device {
 	struct di_command		*failed_cmd;
 
 	struct di_command		status;
+	u32				drive_status;
 
 	struct gendisk                  *disk;
 	struct request_queue            *queue;
@@ -258,13 +261,16 @@ struct di_device {
 	struct request                  *req;
 	struct di_command		req_cmd;
 
-	u32				drive_status;
+	struct di_drive_code		*drive_code;
 
+	u32				model;
 	unsigned long			flags;
 #define DI_INTEROPERABLE	(1<<__DI_INTEROPERABLE)
 #define DI_MEDIA_CHANGED	(1<<__DI_MEDIA_CHANGED)
 #define DI_START_QUEUE		(1<<__DI_START_QUEUE)
 #define DI_RESETTING		(1<<__DI_RESETTING)
+#define DI_DRIVECHIP_PRESENT	(1<<__DI_DRIVECHIP_PRESENT)
+#define DI_ALREADY_RESET	(1<<__DI_ALREADY_RESET)
 
 	unsigned long			nr_sectors;
 
@@ -283,6 +289,9 @@ struct di_device {
 #define to_di_device(n) container_of(n,struct di_device,pdev)
 
 
+static struct di_drive_info di_drive_info
+		 __attribute__ ((aligned (DI_DMA_ALIGN+1)));
+
 /*
  * We do not accept original media with this driver, as there is currently no
  * general need for that.
@@ -291,20 +300,13 @@ struct di_device {
  */
 static const int di_accept_gods = 0;
 
-
 /*
+ *
  * Drive firmware extensions.
  */
 
 #define DI_DRIVE_CODE_BASE	0x40d000
 #define DI_DRIVE_IRQ_VECTOR	0x00804c
-
-static u32 generic_drive_code_entry_point = DI_DRIVE_CODE_BASE;
-static struct di_drive_code generic_drive_code_trigger = {
-	.address = DI_DRIVE_IRQ_VECTOR,
-	.len = sizeof(generic_drive_code_entry_point),
-	.code = (u8 *)&generic_drive_code_entry_point,
-};
 
 /*
  * Drive 04 (20020402) firmware extensions.
@@ -312,12 +314,10 @@ static struct di_drive_code generic_drive_code_trigger = {
 
 #include "drive_20020402.h"
 
-static struct di_drive_code drive_20020402[] = {
-	[0] = {
-		.address = DI_DRIVE_CODE_BASE,
-		.len = sizeof(drive_20020402_firmware),
-		.code = (u8 *)drive_20020402_firmware,
-	},
+static struct di_drive_code drive_20020402 = {
+	.address = DI_DRIVE_CODE_BASE,
+	.len = sizeof(drive_20020402_firmware),
+	.code = (u8 *)drive_20020402_firmware,
 };
 
 /*
@@ -326,12 +326,10 @@ static struct di_drive_code drive_20020402[] = {
 
 #include "drive_20010608.h"
 
-static struct di_drive_code drive_20010608[] = {
-	[0] = {
-		.address = DI_DRIVE_CODE_BASE,
-		.len = sizeof(drive_20010608_firmware),
-		.code = (u8 *)drive_20010608_firmware,
-	},
+static struct di_drive_code drive_20010608 = {
+	.address = DI_DRIVE_CODE_BASE,
+	.len = sizeof(drive_20010608_firmware),
+	.code = (u8 *)drive_20010608_firmware,
 };
 
 /*
@@ -340,12 +338,10 @@ static struct di_drive_code drive_20010608[] = {
 
 #include "drive_20020823.h"
 
-static struct di_drive_code drive_20020823[] = {
-	[0] = {
-		.address = DI_DRIVE_CODE_BASE,
-		.len = sizeof(drive_20020823_firmware),
-		.code = (u8 *)drive_20020823_firmware,
-	},
+static struct di_drive_code drive_20020823 = {
+	.address = DI_DRIVE_CODE_BASE,
+	.len = sizeof(drive_20020823_firmware),
+	.code = (u8 *)drive_20020823_firmware,
 };
 
 /*
@@ -354,12 +350,10 @@ static struct di_drive_code drive_20020823[] = {
 
 #include "drive_20010831.h"
 
-static struct di_drive_code drive_20010831[] = {
-	[0] = {
-		.address = DI_DRIVE_CODE_BASE,
-		.len = sizeof(drive_20010831_firmware),
-		.code = (u8 *)drive_20010831_firmware,
-	},
+static struct di_drive_code drive_20010831 = {
+	.address = DI_DRIVE_CODE_BASE,
+	.len = sizeof(drive_20010831_firmware),
+	.code = (u8 *)drive_20010831_firmware,
 };
 
 
@@ -435,7 +429,14 @@ static struct di_opcode di_opcodes[] = {
 		.cmdbuf0 = 0xfe010100,
 	},
 
-#define DI_OP_GETSTATUS		(DI_OP_WRITEMEM+1)
+#define DI_OP_FUNC		(DI_OP_WRITEMEM+1)
+	[DI_OP_FUNC] = {
+		.op = DI_OP(DI_OP_FUNC, DI_DIR_READ | DI_MODE_IMMED),
+		.name = "FUNC",
+		.cmdbuf0 = 0xfe120000,
+	},
+
+#define DI_OP_GETSTATUS		(DI_OP_FUNC+1)
 	[DI_OP_GETSTATUS] = {
 		.op = DI_OP(DI_OP_GETSTATUS, DI_DIR_READ | DI_MODE_IMMED),
 		.name = "GETSTATUS",
@@ -447,7 +448,7 @@ static struct di_opcode di_opcodes[] = {
 	[DI_OP_SPINMOTOR] = {
 		.op = DI_OP(DI_OP_SPINMOTOR, DI_DIR_READ | DI_MODE_IMMED),
 		.name = "SPINMOTOR",
-		.cmdbuf0 = 0xfe110000,
+		.cmdbuf0 = 0xfe110001,
 #define DI_SPINMOTOR_MASK	0x0000ff00
 #define DI_SPINMOTOR_DOWN	0x00000000
 #define DI_SPINMOTOR_UP		0x00000100
@@ -522,9 +523,8 @@ static void di_op_basic(struct di_command *cmd,
 	cmd->opidx = opidx;
 	cmd->max_retries = cmd->retries = 0;
 	opcode = di_get_opcode(cmd);
-	if (opcode) {
+	if (opcode)
 		cmd->cmdbuf0 = opcode->cmdbuf0;
-	}
 }
 
 /*
@@ -611,6 +611,17 @@ static inline void di_op_readmem(struct di_command *cmd,
 }
 
 /*
+ * Builds a "Invoke func" command.
+ */
+static inline void di_op_func(struct di_command *cmd,
+			      struct di_device *ddev, u32 address)
+{
+	di_op_basic(cmd, ddev, DI_OP_FUNC);
+	cmd->cmdbuf1 = address;
+	cmd->cmdbuf2 = CMDBUF('f', 'u', 'n', 'c');
+}
+
+/*
  * Builds a "Write Memory" command.
  */
 static inline void di_op_writemem(struct di_command *cmd,
@@ -675,21 +686,6 @@ static inline void di_op_custom(struct di_command *cmd,
 
 
 /*
- * Converts a request direction into a DMA data direction.
- */
-static inline
-enum dma_data_direction di_opidx_to_dma_dir(struct di_command *cmd)
-{
-	u16 op = di_op(cmd);
-
-	if ((op & DI_DIR_WRITE)) {
-		return DMA_TO_DEVICE;
-	} else {
-		return DMA_FROM_DEVICE;
-	}
-}
-
-/*
  * Returns the printable form of the status part of a drive status.
  */
 static char *di_printable_status(u32 drive_status)
@@ -729,6 +725,7 @@ static char *di_printable_error(u32 drive_status)
 	switch(DI_ERROR(drive_status)) {
 		case DI_ERROR_NO_ERROR:
 			s = "no error";
+			break;
 		case DI_ERROR_MOTOR_STOPPED:
 			s = "motor stopped";
 			break;
@@ -789,6 +786,25 @@ static void di_print_disk_id(struct di_disk_id *disk_id)
 	di_printk(KERN_INFO, "disk_id = [%s]\n", disk_id->id);
 }
 
+/*
+ *
+ * I/O.
+ */
+
+/*
+ * Converts a request direction into a DMA data direction.
+ */
+static inline
+enum dma_data_direction di_opidx_to_dma_dir(struct di_command *cmd)
+{
+	u16 op = di_op(cmd);
+
+	if ((op & DI_DIR_WRITE)) {
+		return DMA_TO_DEVICE;
+	} else {
+		return DMA_FROM_DEVICE;
+	}
+}
 
 /*
  * Starts a DMA transfer.
@@ -859,6 +875,41 @@ static void di_wait_for_dma_transfer_raw(struct di_device *ddev)
 
 	return;
 }
+
+/*
+ * Quiesces the hardware to a calm and known state.
+ */
+static void di_quiesce(struct di_device *ddev)
+{
+	void __iomem *io_base = ddev->io_base;
+	u32 __iomem *cr_reg = io_base + DI_CR;
+	u32 __iomem *sr_reg = io_base + DI_SR;
+	u32 __iomem *cvr_reg = io_base + DI_CVR;
+	u32 sr, cvr;
+	unsigned long flags;
+
+	spin_lock_irqsave(&ddev->io_lock, flags);
+
+	/* ack and mask dvd io interrupts */
+	sr = readl(sr_reg);
+	sr |= DI_SR_BRKINT | DI_SR_TCINT | DI_SR_DEINT;
+	sr &= ~(DI_SR_BRKINTMASK | DI_SR_TCINTMASK | DI_SR_DEINTMASK);
+	writel(sr, sr_reg);
+
+	/* ack and mask dvd cover interrupts */
+	cvr = readl(cvr_reg);
+	writel((cvr | DI_CVR_CVRINT) & ~DI_CVR_CVRINTMASK, cvr_reg);
+
+	spin_unlock_irqrestore(&ddev->io_lock, flags);
+
+	/* busy-wait for transfer complete */
+	__wait_for_dma_transfer_or_timeout(cr_reg, DI_COMMAND_TIMEOUT);
+}
+
+/*
+ *
+ * Command engine.
+ */
 
 /*
  * Outputs the command buffers, and optionally starts a transfer.
@@ -1167,11 +1218,14 @@ static irqreturn_t di_irq_handler(int irq, void *dev0, struct pt_regs *regs)
 		writel(cvr | DI_CVR_CVRINT, cvr_reg);
 		set_bit(__DI_MEDIA_CHANGED, &ddev->flags);
 		if (test_and_clear_bit(__DI_RESETTING, &ddev->flags)) {
-			if (ddev->flags & DI_INTEROPERABLE) {
-				DBG("extensions loaded"
-				    " and hopefully working\n");
-			} else {
-				DBG("drive reset, no extensions loaded yet\n");
+			if (!test_bit(__DI_DRIVECHIP_PRESENT, &ddev->flags)) {
+				if (ddev->flags & DI_INTEROPERABLE) {
+					DBG("extensions loaded"
+					    " and hopefully working\n");
+				} else {
+					DBG("drive reset, no extensions"
+					    " loaded yet\n");
+				}
 			}
 		} else {
 			DBG("dvd cover interrupt\n");
@@ -1184,7 +1238,7 @@ static irqreturn_t di_irq_handler(int irq, void *dev0, struct pt_regs *regs)
 }
 
 /*
- * Resets the drive (hard).
+ * Hard-resets the drive.
  */
 static void di_reset(struct di_device *ddev)
 {
@@ -1193,13 +1247,38 @@ static void di_reset(struct di_device *ddev)
 
 #define FLIPPER_RESET_DVD 0x00000004
 
-	ddev->flags = DI_RESETTING|DI_MEDIA_CHANGED;
+	ddev->flags = (ddev->flags & DI_DRIVECHIP_PRESENT) |
+		      DI_RESETTING | DI_MEDIA_CHANGED | DI_ALREADY_RESET;
 
 	reset = readl(reset_reg);
 	writel((reset & ~FLIPPER_RESET_DVD) | 1, reset_reg);
 	mdelay(500);
 	writel((reset | FLIPPER_RESET_DVD) | 1, reset_reg);
 	mdelay(500);
+}
+
+
+/*
+ *
+ * 
+ */
+
+/*
+ * Retrieves (and prints out) the laser unit model.
+ */
+static u32 di_retrieve_drive_model(struct di_device *ddev)
+{
+	struct di_command cmd;
+
+	memset(&di_drive_info, 0, sizeof(di_drive_info));
+	di_op_inq(&cmd, ddev, &di_drive_info);
+	di_run_command_and_wait(&cmd);
+
+	di_printk(KERN_INFO, "laser unit: rev=%x, code=%x, date=%x\n",
+	    di_drive_info.rev, di_drive_info.code, di_drive_info.date);
+
+	ddev->model = di_drive_info.date;
+	return ddev->model;
 }
 
 /*
@@ -1220,24 +1299,66 @@ static u32 di_get_drive_status(struct di_device *ddev)
 }
 
 /*
- * Enables the "privileged" command set.
+ * Checks if the drive is in a ready state.
  */
-static int di_enable_privileged_commands(struct di_device *ddev)
+static int di_is_drive_ready(struct di_device *ddev)
 {
-	struct di_command cmd;
+	u32 drive_status;
+	int result = 0;
 
-	/* send these two consecutive enable commands */
-	di_op_enable1(&cmd, ddev);
+	drive_status = di_get_drive_status(ddev);
+	if (DI_STATUS(drive_status) == DI_STATUS_DISK_ID_NOT_READ ||
+	    DI_STATUS(drive_status) == DI_STATUS_READY) {
+		result = 1;
+	}
+
+	return result;
+}
+
+/*
+ *
+ * Firmware handling.
+ */
+
+/*
+ * Reads a long word from drive addressable memory.
+ * Requires debug mode enabled.
+ */
+static int di_fw_read_meml(struct di_device *ddev,
+			   unsigned long *data, unsigned long address)
+{
+	void __iomem *io_base = ddev->io_base;
+	struct di_command cmd;
+	int result = -1;
+
+	di_op_readmem(&cmd, ddev);
+	cmd.cmdbuf1 = address;
 	di_run_command_and_wait(&cmd);
-	di_op_enable2(&cmd, ddev);
-	return di_run_command_and_wait(&cmd);
+	if (di_command_ok(&cmd)) {
+		*data = readl(io_base + DI_DATA);
+		result = 0;
+	}
+	return result;
+}
+
+/*
+ * Retrieves the current active interrupt handler for the drive.
+ * Requires debug mode enabled.
+ */
+static unsigned long di_fw_get_irq_handler(struct di_device *ddev)
+{
+	unsigned long data = ~0;
+
+	di_fw_read_meml(ddev, &data, DI_DRIVE_IRQ_VECTOR);
+	return data;
 }
 
 /*
  * Patches drive addressable memory.
+ * Requires debug mode enabled.
  */
-static void di_patch_mem(struct di_device *ddev, u32 address,
-			 void *data, size_t len)
+static void di_fw_patch_mem(struct di_device *ddev, u32 address,
+			    void *data, size_t len)
 {
 	struct di_command cmd;
 	struct di_opcode opcode;
@@ -1256,6 +1377,8 @@ static void di_patch_mem(struct di_device *ddev, u32 address,
 		cmd.cmdbuf1 = address;
 		cmd.cmdbuf2 = chunk_size << 16;
 		di_run_command_and_wait(&cmd);
+		if (!di_command_ok(&cmd))
+			break;
 
 		/* ... and actually write to it */
 		opcode.op = DI_OP(DI_OP_CUSTOM, DI_DIR_READ | DI_MODE_IMMED);
@@ -1281,16 +1404,126 @@ static void di_patch_mem(struct di_device *ddev, u32 address,
 
 /*
  * Runs a series of patches.
+ * Requires debug mode enabled.
  */
-static void di_patch(struct di_device *ddev,
-		     struct di_drive_code *section, int nr_sections)
+static void di_fw_patch(struct di_device *ddev,
+			struct di_drive_code *section, int nr_sections)
 {
 	while(nr_sections > 0) {
-		di_patch_mem(ddev, section->address,
-			     section->code, section->len);
+		di_fw_patch_mem(ddev, section->address,
+				section->code, section->len);
 		section++;
 		nr_sections--;
 	}
+}
+
+/*
+ * Selects the appropiate drive code for each drive.
+ */
+static int di_select_drive_code(struct di_device *ddev)
+{
+	ddev->drive_code = NULL;
+
+	switch(ddev->model) {
+		case 0x20020402:
+			ddev->drive_code = &drive_20020402;
+			break;
+		case 0x20010608:
+			ddev->drive_code = &drive_20010608;
+			break;
+		case 0x20020823:
+			ddev->drive_code = &drive_20020823;
+			break;
+		case 0x20010831:
+			ddev->drive_code = &drive_20010831;
+			break;
+		default:
+			di_printk(KERN_ERR, "sorry, drive %x is not yet"
+				  " supported\n",
+				  di_drive_info.date);
+			break;
+	}
+
+	return (ddev->drive_code)?0:-EINVAL;
+}
+
+/*
+ * 
+ */
+static u8 parking_code[] = {
+	0xa0,				/* sub	d0, d0 */
+	0xc4, 0xda, 0xfc,		/* movb	d0, (ADBCTL) */
+	0xf4, 0x74, 0x74, 0x0a, 0x08,	/* mov	0x080a74, a0 */
+	0xf7, 0x20, 0x4c, 0x80,		/* mov	a0, (0x804c) */
+	0xfe,				/* rts */
+};
+
+/*
+ * Parks (disables) any existing alien drive code.
+ * Requires debug mode enabled.
+ */
+static u32 di_park_firmware(struct di_device *ddev)
+{
+	struct di_command cmd;
+	u32 irq_handler, original_irq_handler;
+	u32 load_address;
+
+	/* calculate an appropiate load address for the parking code */
+	irq_handler = le32_to_cpu(di_fw_get_irq_handler(ddev));
+	load_address = (irq_handler >= 0x400000)?0x008502:0x40c600;
+
+	/* get the original interrupt handler */
+	irq_handler = (ddev->model != 0x20010831)?0x00080A74:0x00080AA4;
+	original_irq_handler = irq_handler;
+
+	/* fix the parking code to match our drive model */
+	cpu_to_le32s(&irq_handler);
+	memcpy(parking_code + 6, &irq_handler, 3);
+
+	/* load and call it */
+	di_fw_patch_mem(ddev, load_address, parking_code, sizeof(parking_code));
+	di_op_func(&cmd, ddev, load_address);
+	di_run_command_and_wait(&cmd);
+
+	/*
+	 * Check if the parking code did its job.
+	 * The drive should be running now under the original irq handler.
+	 */
+	irq_handler = le32_to_cpu(di_fw_get_irq_handler(ddev));
+	if (irq_handler != original_irq_handler) {
+		di_printk(KERN_ERR, "parking failed!\n");
+		di_reset(ddev);
+	}
+
+	/* drive is not patched anymore here */
+	clear_bit(__DI_INTEROPERABLE, &ddev->flags);
+
+	return di_get_drive_status(ddev);
+}
+
+/*
+ * Spins down the drive, immediatelly.
+ */
+static void di_spin_down_drive(struct di_device *ddev)
+{
+	struct di_command cmd;
+
+	di_op_stopmotor(&cmd, ddev);
+	di_run_command_and_wait(&cmd);
+}
+
+/*
+ * Enables the "debug" command set.
+ */
+static int di_enable_debug_commands(struct di_device *ddev)
+{
+	struct di_command cmd;
+
+	/* send these two consecutive enable commands */
+	di_op_enable1(&cmd, ddev);
+	di_run_command_and_wait(&cmd);
+	di_op_enable2(&cmd, ddev);
+	return di_run_command_and_wait(&cmd);
 }
 
 /*
@@ -1298,70 +1531,119 @@ static void di_patch(struct di_device *ddev,
  */
 static void di_make_interoperable(struct di_device *ddev)
 {
-	static struct di_drive_info drive_info
-			 __attribute__ ((aligned (DI_DMA_ALIGN+1)));
 	struct di_command cmd;
+
+	if (ddev->drive_code) {
+		/* calm things down */
+		di_spin_down_drive(ddev);
+
+		di_enable_debug_commands(ddev);
+
+		/* disable any alien drive code */
+		di_park_firmware(ddev);
+
+		di_enable_debug_commands(ddev);
+
+		/* load our own drive code extensions */
+		di_fw_patch(ddev, ddev->drive_code, 1);
+
+		/*
+		 * The drive will become interoperable now.
+		 * Here we go...!
+		 */
+		set_bit(__DI_INTEROPERABLE, &ddev->flags);
+		di_op_func(&cmd, ddev, DI_DRIVE_CODE_BASE);
+		di_run_command_and_wait(&cmd);
+
+		/* this checks if drive is still working... */
+		di_get_drive_status(ddev);
+	}
+}
+
+/*
+ * Ensures that the debug features of the drive firmware are working.
+ */
+static int di_test_debug_features(struct di_device *ddev)
+{
 	int result;
 
-	/* check that no one is banning access to the privileged command set */
-	result = di_enable_privileged_commands(ddev);
+	result = di_enable_debug_commands(ddev);
 	if (!di_result_ok(result)) {
-		DBG("Uhmm, looks like a bad-mannered drive code is"
-		    " already in place\n");
-		DBG("Let's hard reset the drive then...\n");
+		DBG("uhmm, debug commands seem banned...\n");
+		DBG("... let's hard reset the drive!\n");
 
 		di_reset(ddev);
+		result = di_enable_debug_commands(ddev);
 	}
 
-	/* we'll use the drive model to select the appropiate firmware */
-	memset(&drive_info, 0, sizeof(drive_info));
-	di_op_inq(&cmd, ddev, &drive_info);
-	di_run_command_and_wait(&cmd);
+	return di_result_ok(result)?0:-EINVAL;
+}
 
-	DBG("drive_info: rev=%x, code=%x, date=%x\n",
-	    drive_info.rev, drive_info.code, drive_info.date);
+/*
+ * Tries to determine if firmware extensions are currently installed.
+ * Requires debug mode enabled.
+ */
+static int di_has_alien_drive_code(struct di_device *ddev)
+{
+	unsigned long address;
+	int result = 1;
 
-	/* we require here the privileged command set */
-	di_enable_privileged_commands(ddev);
+	/*
+	 * We assume that alien drive code is in place if the interrupt handler
+	 * is not pointing to ROM address space.
+	 */
+	address = di_fw_get_irq_handler(ddev);
+	if ((le32_to_cpu(address) & 0xffff0000) == 0x00080000)
+		result = 0;
 
-	/* extend the firmware to allow use of normal media */
-	di_printk(KERN_INFO, "loading drive %x extensions\n",
-		  drive_info.date);
+	return result;
+}
 
-	switch(drive_info.date) {
-		case 0x20020402:
-			di_patch(ddev, drive_20020402,
-				 ARRAY_SIZE(drive_20020402));
-			break;
-		case 0x20010608:
-			di_patch(ddev, drive_20010608,
-				 ARRAY_SIZE(drive_20010608));
-			break;
-		case 0x20020823:
-			di_patch(ddev, drive_20020823,
-				 ARRAY_SIZE(drive_20020823));
-			break;
-		case 0x20010831:
-			di_patch(ddev, drive_20010831,
-				 ARRAY_SIZE(drive_20010831));
-			break;
-		default:
-			di_printk(KERN_ERR, "sorry, drive %x is not yet"
-				  " supported\n",
-				  drive_info.date);
-			goto out;
-			break;
+/*
+ * Checks if a drivechip, modchip or custom firmware is present.
+ *
+ * We consider a drivechip a piece of hardware that automatically patches
+ * the laser unit firmware on reset.
+ */
+static void di_check_for_addons(struct di_device *ddev)
+{
+	unsigned long fingerprint;
+
+	/* this also enables the debug mode */
+	di_test_debug_features(ddev);
+
+	if (di_has_alien_drive_code(ddev)) {
+		di_printk(KERN_INFO, "alien drive code detected\n");
+
+		/*
+		 * Test if a xenogc is installed.
+		 */
+		if (!di_fw_read_meml(ddev, &fingerprint, 0x40c60a)) {
+			if (fingerprint == 0xf710fff7) {
+				di_printk(KERN_INFO, "drivechip: xenogc\n");
+				set_bit(__DI_DRIVECHIP_PRESENT, &ddev->flags);
+			}
+		}
+	} else {
+		/*
+		 * We avoid the first drive reset if no custom
+		 * firmware was found.
+		 */
+		set_bit(__DI_ALREADY_RESET, &ddev->flags);
 	}
 
-	/* the drive will become interoperable, and will go through a reset */
-	set_bit(__DI_INTEROPERABLE, &ddev->flags);
-	set_bit(__DI_RESETTING, &ddev->flags);
-
-	/* here we go ... */
-	di_patch(ddev, &generic_drive_code_trigger, 1);
-
-out:
-	return;
+	/*
+	 * Some optimizations for a fast startup...
+	 * If a drivechip was found, avoid the initial reset.
+	 * Otherwise, try to make the drive interoperable only if the drive
+	 * has not accepted the disc yet.
+	 */
+	if (test_bit(__DI_DRIVECHIP_PRESENT, &ddev->flags)) {
+		set_bit(__DI_ALREADY_RESET, &ddev->flags);
+	} else {
+		if (!di_is_drive_ready(ddev))
+			di_make_interoperable(ddev);
+	}
 }
 
 /*
@@ -1406,17 +1688,6 @@ static void di_schedule_motor_off(struct di_device *ddev, unsigned int secs)
 }
 
 /*
- * Spins down the drive, immediatelly.
- */
-static void di_spin_down_drive(struct di_device *ddev)
-{
-	struct di_command cmd;
-
-	di_op_stopmotor(&cmd, ddev);
-	di_run_command_and_wait(&cmd);
-}
-
-/*
  * Spins up the drive.
  */
 static void di_spin_up_drive(struct di_device *ddev, u8 enable_extensions)
@@ -1424,37 +1695,53 @@ static void di_spin_up_drive(struct di_device *ddev, u8 enable_extensions)
 	struct di_command cmd;
 	u32 drive_status;
 
-	/* first, make sure the drive is interoperable */
-	if (!(ddev->flags & DI_INTEROPERABLE)) {
-		di_spin_down_drive(ddev);
+	if (di_is_drive_ready(ddev))
+		goto out;
 
-		/* this actually will reset and spin up the drive */
-		di_make_interoperable(ddev);
+	if (test_bit(__DI_DRIVECHIP_PRESENT, &ddev->flags)) {
+		/* with a drivechip installed resetting the drive is enough */
+		di_reset(ddev);
+		di_get_drive_status(ddev);
 	} else {
+		/* first, make sure the drive is interoperable */
+		if (!(ddev->flags & DI_INTEROPERABLE))
+			di_make_interoperable(ddev);
+
 		/*
 		 * We only re-enable the extensions if the drive is not
-		 * in a peding read disk id state. Otherwise, we assume the
-		 * drive has already accepted the disk.
+		 * in a pending read disk id state. Otherwise, we assume
+		 * that the drive has already accepted the disk.
 		 */
 		drive_status = di_get_drive_status(ddev);
-		if (DI_STATUS(drive_status) != DI_STATUS_DISK_ID_NOT_READ) {
-			di_op_enableextensions(&cmd, ddev, enable_extensions);
+		if (DI_STATUS(drive_status) != 
+		    DI_STATUS_DISK_ID_NOT_READ) {
+			di_op_enableextensions(&cmd, ddev,
+					       enable_extensions);
+			di_run_command_and_wait(&cmd);
+		}
+
+		/* the spin motor command requires the debug mode */
+		di_enable_debug_commands(ddev);
+
+		di_op_spinmotor(&cmd, ddev, DI_SPINMOTOR_UP);
+		di_run_command_and_wait(&cmd);
+
+		if (!ddev->drive_status) {
+			di_op_setstatus(&cmd, ddev, 
+					DI_STATUS_DISK_ID_NOT_READ+1);
+			cmd.cmdbuf0 |= 0x00000300; /* XXX cheqmate */
 			di_run_command_and_wait(&cmd);
 		}
 	}
-
-	/* the spin motor command requires the privileged mode */
-	di_enable_privileged_commands(ddev);
-
-	di_op_spinmotor(&cmd, ddev, DI_SPINMOTOR_UP);
-	di_run_command_and_wait(&cmd);
-
-	if (!ddev->drive_status) {
-		di_op_setstatus(&cmd, ddev, DI_STATUS_DISK_ID_NOT_READ+1);
-		cmd.cmdbuf0 |= 0x00000300; /* XXX cheqmate */
-		di_run_command_and_wait(&cmd);
-	}
+out:
+	return;
 }
+
+
+/*
+ *
+ * Block Layer.
+ */
 
 /*
  * Determines media type and accepts accordingly.
@@ -1480,7 +1767,7 @@ static int di_read_toc(struct di_device *ddev)
 	di_op_readdiskid(&cmd, ddev, &disk_id);
 	di_run_command_and_wait(&cmd);
 	if (di_command_ok(&cmd)) {
-		if (disk_id.id[0] && strcmp(disk_id.id, "GBLPGL") &&
+		if (disk_id.id[0] && memcmp(disk_id.id, "GBL", 3) &&
 		    !di_accept_gods) {
 			di_print_disk_id(&disk_id);
 			di_printk(KERN_ERR, "sorry, gamecube media"
@@ -1629,6 +1916,11 @@ static void di_do_request(request_queue_t *q)
 		di_run_command(cmd);
 	}
 }
+
+/*
+ *
+ * Driver hooks.
+ */
 
 /*
  * Opens the drive device.
@@ -1804,36 +2096,6 @@ static struct block_device_operations di_fops = {
 };
 
 /*
- * Quiesces the hardware to a calm and known state.
- */
-static void di_quiesce(struct di_device *ddev)
-{
-	void __iomem *io_base = ddev->io_base;
-	u32 __iomem *cr_reg = io_base + DI_CR;
-	u32 __iomem *sr_reg = io_base + DI_SR;
-	u32 __iomem *cvr_reg = io_base + DI_CVR;
-	u32 sr, cvr;
-	unsigned long flags;
-
-	spin_lock_irqsave(&ddev->io_lock, flags);
-
-	/* ack and mask dvd io interrupts */
-	sr = readl(sr_reg);
-	sr |= DI_SR_BRKINT | DI_SR_TCINT | DI_SR_DEINT;
-	sr &= ~(DI_SR_BRKINTMASK | DI_SR_TCINTMASK | DI_SR_DEINTMASK);
-	writel(sr, sr_reg);
-
-	/* ack and mask dvd cover interrupts */
-	cvr = readl(cvr_reg);
-	writel((cvr | DI_CVR_CVRINT) & ~DI_CVR_CVRINTMASK, cvr_reg);
-
-	spin_unlock_irqrestore(&ddev->io_lock, flags);
-
-	/* busy-wait for transfer complete */
-	__wait_for_dma_transfer_or_timeout(cr_reg, DI_COMMAND_TIMEOUT);
-}
-
-/*
  * Initializes the hardware.
  */
 static int di_init_irq(struct di_device *ddev)
@@ -1842,7 +2104,6 @@ static int di_init_irq(struct di_device *ddev)
 	u32 __iomem *sr_reg = io_base + DI_SR;
 	u32 __iomem *cvr_reg = io_base + DI_CVR;
 	u32 sr, cvr;
-	struct di_command cmd;
 	unsigned long flags;
 	int retval;
 
@@ -1850,6 +2111,7 @@ static int di_init_irq(struct di_device *ddev)
 	ddev->motor_off_timer.function =
 		(void (*)(unsigned long))di_motor_off;
 
+	ddev->flags = 0;
 	set_bit(__DI_MEDIA_CHANGED, &ddev->flags);
 
 	/* calm down things a bit first */
@@ -1875,17 +2137,9 @@ static int di_init_irq(struct di_device *ddev)
 
 	spin_unlock_irqrestore(&ddev->io_lock, flags);
 
-	/*
-	 * We check if the drive is already interoperable by issuing one of
-	 * the extended commands.
-	 */
-	di_op_enableextensions(&cmd, ddev, 1);
-	di_run_command_and_wait(&cmd);
-	if (ddev->drive_status) {
-		di_make_interoperable(ddev);
-	} else {
-		set_bit(__DI_INTEROPERABLE, &ddev->flags);
-	}
+	di_retrieve_drive_model(ddev);
+	di_select_drive_code(ddev);
+	di_check_for_addons(ddev);
 
 	di_schedule_motor_off(ddev, DI_MOTOR_OFF_TIMEOUT);
 
@@ -2013,8 +2267,6 @@ static void di_exit_proc(struct di_device *ddev)
 static int di_init(struct di_device *ddev, struct resource *mem, int irq)
 {
 	int retval;
-
-	cpu_to_le32s(&generic_drive_code_entry_point);
 
 	memset(ddev, 0, sizeof(*ddev) - sizeof(ddev->pdev));
 
