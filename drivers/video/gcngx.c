@@ -14,6 +14,9 @@
  * of the License, or (at your option) any later version.
  *
  */
+
+#ifdef CONFIG_FB_GAMECUBE_GX
+
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/errno.h>
@@ -36,8 +39,9 @@ static void gcngx_munmap(struct vm_area_struct *vma);
 static void gcngx_free_munmap(struct vm_area_struct *vma);
 static void gcngx_destroy_fifo(void);
 static void gcngx_init_fifo(void);
+
+extern void vi_set_framebuffer(struct vi_ctl *ctl, u32 addr);
 extern int gcnfb_restorefb(struct fb_info *info);
-extern void gcnfb_set_framebuffer(u32 addr);
 
 extern struct fb_ops gcnfb_ops;
 
@@ -155,7 +159,7 @@ static irqreturn_t gcfb_fifo_irq_handler(int irq,void *dev_id,struct pt_regs *re
 	return IRQ_NONE;
 }
 
-void gcngx_vtrace(void)
+void gcngx_vtrace(struct vi_ctl *ctl)
 {
 	struct siginfo sig;
 	/* ok flip the image if we have a flip request.
@@ -168,7 +172,7 @@ void gcngx_vtrace(void)
 		currentFB = currentFB ? 0 : 1;
 		sig.si_errno  = xfb[currentFB];
 		/* inform the hardware */
-		gcnfb_set_framebuffer(xfb[currentFB]);
+		vi_set_framebuffer(ctl, xfb[currentFB]);
 		/* notify the process */
 		sig.si_signo = SIG_VTRACE_COMPLETE;
 		sig.si_code  = 0;
@@ -213,12 +217,60 @@ static irqreturn_t gcfb_pe_token_irq_handler(int irq,void *dev_id,struct pt_regs
 	return IRQ_HANDLED;
 }
 
-int gcngx_ioctl(struct fb_info *info,
-                unsigned int cmd, unsigned long arg)
+/**
+ *
+ */
+static u32 gcngx_uvirt_to_phys(u32 virt)
 {
+	pgd_t *dir;
+	pmd_t *pmd;
+	pte_t *pte;
+	u32 ret = 0;
+	struct mm_struct *mm = get_task_mm(current);
+	u32 offset = virt & (PAGE_SIZE - 1);
+	virt &= PAGE_MASK;
+
+	if (!mm) {
+		return 0;
+	}
+	down_read(&mm->mmap_sem);
+	/* convert to kernel address */
+	if ((dir = pgd_offset(mm, virt)) && pgd_present(*dir)) {
+		if ((pmd = pmd_offset(dir, virt)) && pmd_present(*pmd)) {
+			pte = pte_offset_kernel(pmd, virt);
+			if (pte && pte_present(*pte)) {
+				ret =
+				    (u32) page_address(pte_page(*pte)) + offset;
+				/* ok now we have the kern addr, map to phys */
+				ret = virt_to_phys((void *)ret);
+			}
+		}
+	}
+
+	up_read(&mm->mmap_sem);
+	mmput(mm);
+	return ret;
+}
+
+int gcngx_ioctl(struct fb_info *info,
+		unsigned int cmd, unsigned long arg)
+{
+	u32 phys;
+	void __user *argp;
+
 	if (cmd == FBIOFLIP)
 	{
 		flipRequest = 1;
+		return 0;
+	} else if (cmd == FBIOVIRTTOPHYS) {
+		argp = (void __user *)arg;
+		if (copy_from_user(&phys, argp, sizeof(void *)))
+			return -EFAULT;
+
+		phys = gcngx_uvirt_to_phys(phys);
+
+		if (copy_to_user(argp, &phys, sizeof(void *)))
+			return -EFAULT;
 		return 0;
 	}
 	return -EINVAL;
@@ -289,9 +341,10 @@ int gcngx_mmap(struct fb_info *info, struct vm_area_struct *vma)
 {
 	struct file *file = vma->vm_file;
 	int ret;
-	static spinlock_t lock = SPIN_LOCK_UNLOCKED;
+//	static spinlock_t lock = SPIN_LOCK_UNLOCKED;
 	u32 phys;
 	u32 len;
+
 
 	len = vma->vm_end - vma->vm_start;
 	
@@ -349,13 +402,13 @@ int gcngx_mmap(struct fb_info *info, struct vm_area_struct *vma)
 		 * This seems to be broken.
 		 * fb_mmap might sleep and we're getting a lock here.
 		 */
-		spin_lock(&lock);
+//		spin_lock(&lock);
 		/* reset our mmap since the fb driver will call it */
 		gcnfb_ops.fb_mmap = NULL;
 		ret = file->f_op->mmap(file,vma);
 		/* reset our mmap */
 		gcnfb_ops.fb_mmap = gcngx_mmap;
-		spin_unlock(&lock);
+//		spin_unlock(&lock);
 		return ret;
 	}
 	return -EINVAL;
@@ -624,3 +677,6 @@ void gcngx_exit(struct fb_info *info)
 	iounmap(mmap_fifo_base);
 	release_mem_region((u32)phys_fifo_base,fifo_len);
 }
+
+#endif /* CONFIG_FB_GAMECUBE_GX */
+

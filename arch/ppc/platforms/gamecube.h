@@ -84,9 +84,13 @@
  */
 #ifdef CONFIG_FB_GAMECUBE
   #define GCN_XFB_SIZE		(2*640*GCN_VIDEO_LINES*2) /* framebuffer */
-  #define GCN_GX_FIFO_SIZE	(256*1024)
 #else
   #define GCN_XFB_SIZE		(0)
+#endif
+
+#ifdef CONFIG_FB_GAMECUBE_GX
+  #define GCN_GX_FIFO_SIZE	(256*1024)
+#else
   #define GCN_GX_FIFO_SIZE	(0)
 #endif
 
