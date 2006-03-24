@@ -117,7 +117,7 @@ struct si_device {
 	char name[32];
 };
 
-struct si_device port[SI_MAX_PORTS];
+static struct si_device port[SI_MAX_PORTS];
 
 
 #ifdef HACK_FORCE_KEYBOARD_PORT
