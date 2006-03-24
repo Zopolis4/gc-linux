@@ -1824,6 +1824,7 @@ static void di_request_done(struct di_command *cmd)
 	struct di_device *ddev = cmd->ddev;
 	struct request *req;
 	unsigned long flags;
+	int uptodate = (cmd->result & DI_SR_TCINT)?1:0;
 
 	spin_lock_irqsave(&ddev->lock, flags);
 
@@ -1833,11 +1834,10 @@ static void di_request_done(struct di_command *cmd)
 	spin_unlock_irqrestore(&ddev->lock, flags);
 
 	if (req) {
-		if (!end_that_request_first(req,
-					    (cmd->result & DI_SR_TCINT)?1:0,
+		if (!end_that_request_first(req, uptodate,
 					    req->current_nr_sectors)) {
 			add_disk_randomness(req->rq_disk);
-			end_that_request_last(req);
+			end_that_request_last(req, uptodate);
 		}
 		spin_lock(&ddev->queue_lock);
 		blk_start_queue(ddev->queue);
@@ -2138,9 +2138,13 @@ static int di_init_irq(struct di_device *ddev)
 	spin_unlock_irqrestore(&ddev->io_lock, flags);
 
 	di_retrieve_drive_model(ddev);
-	di_select_drive_code(ddev);
-	di_check_for_addons(ddev);
+	if (di_select_drive_code(ddev)) {
+		free_irq(ddev->irq, ddev);
+		retval = -ENODEV;
+		goto out;
+	}
 
+	di_check_for_addons(ddev);
 	di_schedule_motor_off(ddev, DI_MOTOR_OFF_TIMEOUT);
 
 out:
@@ -2405,6 +2409,8 @@ static int __init di_init_module(void)
 	retval = driver_register(&di_driver);
 	if (!retval) {
 		retval = platform_device_register(&di_device.pdev);
+		if (retval)
+			driver_unregister(&di_driver);
 	}
 
 	return retval;

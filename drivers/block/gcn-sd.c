@@ -255,7 +255,7 @@ static void sd_kill(struct sd_host *host);
  * FIXME: use a faster method (table)
  * (the in-kernel crc 16 (ccitt crc) tables seem not compatible with us)
  */
-u16 crc_xmodem_update(u16 crc, u8 data)
+static u16 crc_xmodem_update(u16 crc, u8 data)
 {
 	int i;
 
@@ -1183,10 +1183,11 @@ static int sd_io_thread(void *param)
 			}
 
 			if (!end_that_request_first(req, uptodate, nr_sectors))
-				end_that_request_last(req);
+				end_that_request_last(req, uptodate);
 
 			/* avoid cpu monopolization, we are damn greedy */
-			yield();
+			//yield();
+			cond_resched();
 
 			spin_lock(&host->queue_lock);
 			blk_start_queue(host->queue);

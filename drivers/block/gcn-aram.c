@@ -207,7 +207,7 @@ static irqreturn_t aram_irq_handler(int irq, void *dev0, struct pt_regs *regs)
 	if (req) {
 		if (!end_that_request_first(req, 1, req->current_nr_sectors)) {
 			add_disk_randomness(req->rq_disk);
-			end_that_request_last(req);
+			end_that_request_last(req, 1);
 		}
 		dma_unmap_single(&adev->pdev.dev, adev->dma_addr, adev->dma_len,
 				 rq_dir_to_dma_dir(req));

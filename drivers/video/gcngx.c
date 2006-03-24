@@ -213,9 +213,8 @@ static irqreturn_t gcfb_pe_token_irq_handler(int irq,void *dev_id,struct pt_regs
 	return IRQ_HANDLED;
 }
 
-int gcngx_ioctl(struct inode *inode,struct file *file,
-		unsigned int cmd,unsigned long arg,
-		struct fb_info *info)
+int gcngx_ioctl(struct fb_info *info,
+                unsigned int cmd, unsigned long arg)
 {
 	if (cmd == FBIOFLIP)
 	{
@@ -286,9 +285,9 @@ static void gcngx_munmap(struct vm_area_struct *vma)
 #endif
 }
 
-int gcngx_mmap(struct fb_info *info,struct file *file,
-	       struct vm_area_struct *vma)
+int gcngx_mmap(struct fb_info *info, struct vm_area_struct *vma)
 {
+	struct file *file = vma->vm_file;
 	int ret;
 	static spinlock_t lock = SPIN_LOCK_UNLOCKED;
 	u32 phys;

@@ -378,9 +378,8 @@ static u32 gcnfb_uvirt_to_phys(u32 virt)
 /**
  *
  */
-static int gcnfb_ioctl(struct inode *inode, struct file *file,
-		       unsigned int cmd, unsigned long arg,
-		       struct fb_info *info)
+static int gcnfb_ioctl(struct fb_info *info,
+		       unsigned int cmd, unsigned long arg)
 {
 	u32 phys;
 	void __user *argp;
@@ -400,7 +399,7 @@ static int gcnfb_ioctl(struct inode *inode, struct file *file,
 		return 0;
 	}
 	/* see if the GX module will handle it */
-	return gcngx_ioctl(inode, file, cmd, arg, info);
+	return gcngx_ioctl(info, cmd, arg);
 }
 
 /**
