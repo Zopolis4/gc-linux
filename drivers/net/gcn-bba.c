@@ -45,7 +45,7 @@
 #define DRV_AUTHOR	"Albert Herranz, " \
 			"Todd Jeffreys"
 
-char bba_driver_version[] = "1.4-isobel";
+static char bba_driver_version[] = "1.4-isobel";
 
 
 #define bba_printk(level, format, arg...) \
@@ -935,7 +935,8 @@ static int bba_reset(struct net_device *dev)
 /*
  * Calculates a response for a given challenge.
  */
-unsigned long bba_calc_response(unsigned long val, struct bba_private *priv)
+static unsigned long bba_calc_response(unsigned long val,
+				       struct bba_private *priv)
 {
 	u8 revid_0, revid_eth_0, revid_eth_1;
 	revid_0 = priv->revid;
@@ -971,11 +972,11 @@ static int bba_event_handler(struct exi_channel *exi_channel,
 	struct bba_private *priv = (struct bba_private *)dev->priv;
 	register u8 status, mask;
 
-	/* get interrupt status from EXI glue */
-	status = bba_cmd_in8(0x03);
-
 	/* XXX mask all EXI glue interrupts */
 	bba_cmd_out8(0x02, BBA_CMD_IR_MASKALL);
+
+	/* get interrupt status from EXI glue */
+	status = bba_cmd_in8(0x03);
 
 	/* start with the usual case */
 	mask = (1<<7);
@@ -1142,7 +1143,7 @@ err_out:
 /*
  * Removes a BroadBand Adapter device from the system.
  */
-static void bba_remove(struct exi_device *exi_device)
+static void __devexit bba_remove(struct exi_device *exi_device)
 {
 	struct net_device *dev = (struct net_device *)
 				 exi_get_drvdata(exi_device);
@@ -1165,7 +1166,7 @@ static void bba_remove(struct exi_device *exi_device)
  * Probes for a BroadBand Adapter device.
  * Actually, the exi layer has already probed for us.
  */
-static int bba_probe(struct exi_device *exi_device)
+static int __devinit bba_probe(struct exi_device *exi_device)
 {
 	int ret = -ENODEV;
 
