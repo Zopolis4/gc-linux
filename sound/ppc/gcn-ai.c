@@ -316,7 +316,7 @@ static int __devinit snd_gcn_new_pcm(snd_gcn_t * chip)
 	int err;
 
 	if ((err =
-	     snd_pcm_new(chip->card, chip->card->shortname, 0, 1, 1, &pcm)) < 0)
+	     snd_pcm_new(chip->card, chip->card->shortname, 0, 1, 0, &pcm)) < 0)
 		return err;
 
 	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_PLAYBACK,

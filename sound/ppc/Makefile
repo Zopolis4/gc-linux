@@ -9,3 +9,4 @@ snd-gcn-objs := gcn-ai.o
 # Toplevel Module Dependency
 obj-$(CONFIG_SND_POWERMAC) += snd-powermac.o
 obj-$(CONFIG_SND_GAMECUBE) += snd-gcn.o
+obj-$(CONFIG_SND_GAMECUBE_MIC) += gcn-mic.o

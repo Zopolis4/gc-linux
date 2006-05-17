@@ -50,11 +50,12 @@ static struct exi_map_id_to_name exi_map_id_to_name[] = {
 	{ .id = 0x00000080,  .name = "Memory Card 2043" },
 	{ .id = 0x01010000,  .name = "USB Adapter" },
 	{ .id = 0x01020000,  .name = "NPDP GDEV" },
-	{ .id = 0x05070000,  .name = "IS Viewer" },
-	{ .id = 0x04120000,  .name = "AD16" },
-	{ .id = 0x03010000,  .name = "Marlin?" },
 	{ .id = 0x02020000,  .name = "Modem" },
-	{ .id = 0x04020200,  .name = "BroadBand Adapter" },
+	{ .id = 0x03010000,  .name = "Marlin?" },
+	{ .id = 0x04020200,  .name = "BroadBand Adapter (DOL-015)" },
+	{ .id = 0x04120000,  .name = "AD16" },
+	{ .id = 0x05070000,  .name = "IS Viewer" },
+	{ .id = 0x0a000000,  .name = "Microphone (DOL-022)" },
 	{ .id = 0 }
 };
 

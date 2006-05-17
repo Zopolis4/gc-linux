@@ -1026,20 +1026,17 @@ static void exi_cond_trigger_event(struct exi_channel *exi_channel,
 	struct exi_event *event;
 	unsigned long flags;
 
-	event = &exi_channel->events[event_id];
-	if (exi_can_trigger_event(event)) {
-		spin_lock_irqsave(&exi_channel->lock, flags);
-		if ((exi_channel->csr & csr_mask)) {
+	if ((exi_channel->csr & csr_mask)) {
+		event = &exi_channel->events[event_id];
+		if (exi_can_trigger_event(event)) {
+			spin_lock_irqsave(&exi_channel->lock, flags);
 			exi_channel->csr &= ~csr_mask;
 			spin_unlock_irqrestore(&exi_channel->lock, flags);
 			exi_trigger_event(exi_channel, event);
 			exi_finish_event(event);
-			goto out;
 		}
-		spin_unlock_irqrestore(&exi_channel->lock, flags);
 	}
 
-out:
 	return;
 }
 
@@ -1294,6 +1291,9 @@ u32 exi_get_id(struct exi_device *exi_device)
 	exi_dev_deselect(exi_device);
 	exi_dev_give(exi_device);
 
+	/* "canonicalize" the id */
+	if (!id)
+		id = EXI_ID_INVALID;
 	/*
 	 * We return a EXI_ID_NONE if there is some unidentified device
 	 * inserted in memcard slot A or memcard slot B.
