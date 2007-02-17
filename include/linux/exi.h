@@ -21,7 +21,6 @@
 #include <asm/io.h>
 
 
-extern struct bus_type exi_bus_type;
 struct exi_channel;
 
 /*

@@ -100,7 +100,7 @@ extern struct fb_ops gcnfb_ops;
 #define LOAD_BP_REG(x) do { FIFO_PUTU8(0x61); FIFO_PUTU32(x); } while (0)
 
 /* Static data */
-static task_t *mmap_task;
+static struct task_struct *mmap_task;
 static int overflow;
 static u32 xfb[2];
 static int currentFB = 0;

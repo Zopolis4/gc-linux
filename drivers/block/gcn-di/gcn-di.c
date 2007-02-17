@@ -1113,9 +1113,9 @@ static void di_complete_transfer(struct di_device *ddev, u32 result)
 
 	/* start the block layer queue if someone requested it */
 	if (test_and_clear_bit(__DI_START_QUEUE, &ddev->flags)) {
-		spin_lock(&ddev->queue_lock);
+		spin_lock_irqsave(&ddev->queue_lock, flags);
 		blk_start_queue(ddev->queue);
-		spin_unlock(&ddev->queue_lock);
+		spin_unlock_irqrestore(&ddev->queue_lock, flags);
 	}
 
 out:
@@ -1218,14 +1218,12 @@ static irqreturn_t di_irq_handler(int irq, void *dev0, struct pt_regs *regs)
 		writel(cvr | DI_CVR_CVRINT, cvr_reg);
 		set_bit(__DI_MEDIA_CHANGED, &ddev->flags);
 		if (test_and_clear_bit(__DI_RESETTING, &ddev->flags)) {
-			if (!test_bit(__DI_DRIVECHIP_PRESENT, &ddev->flags)) {
-				if (ddev->flags & DI_INTEROPERABLE) {
-					DBG("extensions loaded"
-					    " and hopefully working\n");
-				} else {
-					DBG("drive reset, no extensions"
-					    " loaded yet\n");
-				}
+			if (ddev->flags & DI_INTEROPERABLE) {
+				DBG("extensions loaded"
+				    " and hopefully working\n");
+			} else {
+				DBG("drive reset, no extensions"
+				    " loaded yet\n");
 			}
 		} else {
 			DBG("dvd cover interrupt\n");
@@ -1247,6 +1245,7 @@ static void di_reset(struct di_device *ddev)
 
 #define FLIPPER_RESET_DVD 0x00000004
 
+	/* set flags, but preserve the drivechip flag */
 	ddev->flags = (ddev->flags & DI_DRIVECHIP_PRESENT) |
 		      DI_RESETTING | DI_MEDIA_CHANGED | DI_ALREADY_RESET;
 
@@ -1453,7 +1452,8 @@ static int di_select_drive_code(struct di_device *ddev)
 static u8 parking_code[] = {
 	0xa0,				/* sub	d0, d0 */
 	0xc4, 0xda, 0xfc,		/* movb	d0, (ADBCTL) */
-	0xf4, 0x74, 0x74, 0x0a, 0x08,	/* mov	0x080a74, a0 */
+	0xf4, 0x40, 0x60, 0xec, 0x40,	/* movb d0,(0x40ec60) */
+	0xf4, 0x74, 0x74, 0x0a, 0x08,	/* mov	0x080a74, a0 */ /* fixup */
 	0xf7, 0x20, 0x4c, 0x80,		/* mov	a0, (0x804c) */
 	0xfe,				/* rts */
 };
@@ -1478,7 +1478,7 @@ static u32 di_park_firmware(struct di_device *ddev)
 
 	/* fix the parking code to match our drive model */
 	cpu_to_le32s(&irq_handler);
-	memcpy(parking_code + 6, &irq_handler, 3);
+	memcpy(parking_code + 11, &irq_handler, 3);
 
 	/* load and call it */
 	di_fw_patch_mem(ddev, load_address, parking_code, sizeof(parking_code));
@@ -1493,6 +1493,8 @@ static u32 di_park_firmware(struct di_device *ddev)
 	if (irq_handler != original_irq_handler) {
 		di_printk(KERN_ERR, "parking failed!\n");
 		di_reset(ddev);
+	} else {
+		DBG("parking done, irq handler = %08x\n", irq_handler);
 	}
 
 	/* drive is not patched anymore here */
@@ -1537,11 +1539,11 @@ static void di_make_interoperable(struct di_device *ddev)
 		/* calm things down */
 		di_spin_down_drive(ddev);
 
-		di_enable_debug_commands(ddev);
-
 		/* disable any alien drive code */
+		di_enable_debug_commands(ddev);
 		di_park_firmware(ddev);
 
+		/* re-enable debug commands */
 		di_enable_debug_commands(ddev);
 
 		/* load our own drive code extensions */
@@ -1616,11 +1618,12 @@ static void di_check_for_addons(struct di_device *ddev)
 		di_printk(KERN_INFO, "alien drive code detected\n");
 
 		/*
-		 * Test if a xenogc is installed.
+		 * Test if a xenogc/duoq is installed.
 		 */
 		if (!di_fw_read_meml(ddev, &fingerprint, 0x40c60a)) {
 			if (fingerprint == 0xf710fff7) {
-				di_printk(KERN_INFO, "drivechip: xenogc\n");
+				di_printk(KERN_INFO, "drivechip: "
+					  "xenogc/duoq\n");
 				set_bit(__DI_DRIVECHIP_PRESENT, &ddev->flags);
 			}
 		}
@@ -1634,16 +1637,11 @@ static void di_check_for_addons(struct di_device *ddev)
 
 	/*
 	 * Some optimizations for a fast startup...
-	 * If a drivechip was found, avoid the initial reset.
-	 * Otherwise, try to make the drive interoperable only if the drive
+	 * Try to make the drive interoperable only if the drive
 	 * has not accepted the disc yet.
 	 */
-	if (test_bit(__DI_DRIVECHIP_PRESENT, &ddev->flags)) {
-		set_bit(__DI_ALREADY_RESET, &ddev->flags);
-	} else {
-		if (!di_is_drive_ready(ddev))
-			di_make_interoperable(ddev);
-	}
+	if (!di_is_drive_ready(ddev))
+		di_make_interoperable(ddev);
 }
 
 /*
@@ -1695,43 +1693,35 @@ static void di_spin_up_drive(struct di_device *ddev, u8 enable_extensions)
 	struct di_command cmd;
 	u32 drive_status;
 
-	if (di_is_drive_ready(ddev))
-		goto out;
-
-	if (test_bit(__DI_DRIVECHIP_PRESENT, &ddev->flags)) {
-		/* with a drivechip installed resetting the drive is enough */
-		di_reset(ddev);
-		di_get_drive_status(ddev);
+	if (test_bit(__DI_INTEROPERABLE, &ddev->flags)) {
+		/* do nothing if the drive is already spinning */
+		if (di_is_drive_ready(ddev))
+			goto out;
 	} else {
-		/* first, make sure the drive is interoperable */
-		if (!(ddev->flags & DI_INTEROPERABLE))
-			di_make_interoperable(ddev);
+		di_make_interoperable(ddev);
+	}
 
-		/*
-		 * We only re-enable the extensions if the drive is not
-		 * in a pending read disk id state. Otherwise, we assume
-		 * that the drive has already accepted the disk.
-		 */
-		drive_status = di_get_drive_status(ddev);
-		if (DI_STATUS(drive_status) != 
-		    DI_STATUS_DISK_ID_NOT_READ) {
-			di_op_enableextensions(&cmd, ddev,
-					       enable_extensions);
-			di_run_command_and_wait(&cmd);
-		}
-
-		/* the spin motor command requires the debug mode */
-		di_enable_debug_commands(ddev);
-
-		di_op_spinmotor(&cmd, ddev, DI_SPINMOTOR_UP);
+	/*
+	 * We only re-enable the extensions if the drive is not
+	 * in a pending read disk id state. Otherwise, we assume
+	 * that the drive has already accepted the disk.
+	 */
+	drive_status = di_get_drive_status(ddev);
+	if (DI_STATUS(drive_status) != DI_STATUS_DISK_ID_NOT_READ) {
+		di_op_enableextensions(&cmd, ddev, enable_extensions);
 		di_run_command_and_wait(&cmd);
+	}
 
-		if (!ddev->drive_status) {
-			di_op_setstatus(&cmd, ddev, 
-					DI_STATUS_DISK_ID_NOT_READ+1);
-			cmd.cmdbuf0 |= 0x00000300; /* XXX cheqmate */
-			di_run_command_and_wait(&cmd);
-		}
+	/* the spin motor command requires the debug mode */
+	di_enable_debug_commands(ddev);
+
+	di_op_spinmotor(&cmd, ddev, DI_SPINMOTOR_UP);
+	di_run_command_and_wait(&cmd);
+
+	if (!ddev->drive_status) {
+		di_op_setstatus(&cmd, ddev, DI_STATUS_DISK_ID_NOT_READ+1);
+		cmd.cmdbuf0 |= 0x00000300; /* XXX cheqmate */
+		di_run_command_and_wait(&cmd);
 	}
 out:
 	return;
@@ -1839,9 +1829,9 @@ static void di_request_done(struct di_command *cmd)
 			add_disk_randomness(req->rq_disk);
 			end_that_request_last(req, uptodate);
 		}
-		spin_lock(&ddev->queue_lock);
+		spin_lock_irqsave(&ddev->queue_lock, flags);
 		blk_start_queue(ddev->queue);
-		spin_unlock(&ddev->queue_lock);
+		spin_unlock_irqrestore(&ddev->queue_lock, flags);
 	}
 }
 
@@ -2211,7 +2201,6 @@ static int di_init_blk_dev(struct di_device *ddev)
 	disk->first_minor = 0;
 	disk->fops = &di_fops;
 	strcpy(disk->disk_name, DI_NAME);
-	strcpy(disk->devfs_name, disk->disk_name);
 	disk->queue = ddev->queue;
 	disk->private_data = ddev;
 	ddev->disk = disk;

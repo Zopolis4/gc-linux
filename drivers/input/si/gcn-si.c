@@ -90,10 +90,10 @@ MODULE_LICENSE("GPL");
 
 
 static struct resource gcn_si_resources = {
-	DRV_MODULE_NAME,
-	0xcc006400,
-	0xcc006500,
-	IORESOURCE_MEM | IORESOURCE_BUSY
+	.start = 0xcc006400,
+	.end = 0xcc006500,
+	.name = DRV_MODULE_NAME,
+	.flags = IORESOURCE_MEM | IORESOURCE_BUSY
 };
 
 typedef struct {
@@ -151,15 +151,15 @@ static void gcn_si_reset(void)
 	/* clear si registers */
 
 	/* SICOUTBUF */
-	for (i = 0; i < 4; ++i)
+	for (i = 0; i < SI_MAX_PORTS; ++i)
 		writel(0, SICOUTBUF(i));
 
 	/* SICINBUFH */
-	for (i = 0; i < 4; ++i)
+	for (i = 0; i < SI_MAX_PORTS; ++i)
 		writel(0, SICINBUFH(i));
 
 	/* SICINBUFL */
-	for (i = 0; i < 4; ++i)
+	for (i = 0; i < SI_MAX_PORTS; ++i)
 		writel(0, SICINBUFL(i));
 
 	writel(0, SIPOLL);
@@ -221,7 +221,7 @@ static void gcn_si_set_polling(void)
 	unsigned long pad_bits = 0;
 	int i;
 
-	for (i = 0; i < 4; ++i) {
+	for (i = 0; i < SI_MAX_PORTS; ++i) {
 		switch (port[i].id) {
 		case CTL_PAD:
 			writel(0x00400300, SICOUTBUF(i));
@@ -284,6 +284,10 @@ static void gcn_si_timer(unsigned long portno)
 				 raw[0] & PAD_RT);
 		input_report_key(sdev->idev, BTN_START,
 				 raw[0] & PAD_START);
+		input_report_key(sdev->idev, BTN_0, raw[0] & PAD_UP);
+		input_report_key(sdev->idev, BTN_1, raw[0] & PAD_RIGHT);
+		input_report_key(sdev->idev, BTN_2, raw[0] & PAD_DOWN);
+		input_report_key(sdev->idev, BTN_3, raw[0] & PAD_LEFT);
 
 		/* axis */
 		/* a stick */
@@ -402,88 +406,91 @@ static int gcn_si_event(struct input_dev *dev, unsigned int type,
 /**
  *
  */
-static void si_setup_pad(struct input_dev *input_dev)
+static void si_setup_pad(struct input_dev *idev)
 {
-	set_bit(EV_KEY, input_dev->evbit);
-	set_bit(EV_ABS, input_dev->evbit);
-	set_bit(EV_FF, input_dev->evbit);
+	set_bit(EV_KEY, idev->evbit);
+	set_bit(EV_ABS, idev->evbit);
+	set_bit(EV_FF, idev->evbit);
 
-	set_bit(BTN_A, input_dev->keybit);
-	set_bit(BTN_B, input_dev->keybit);
-	set_bit(BTN_X, input_dev->keybit);
-	set_bit(BTN_Y, input_dev->keybit);
-	set_bit(BTN_Z, input_dev->keybit);
-	set_bit(BTN_TL, input_dev->keybit);
-	set_bit(BTN_TR, input_dev->keybit);
-	set_bit(BTN_START, input_dev->keybit);
+	set_bit(BTN_A, idev->keybit);
+	set_bit(BTN_B, idev->keybit);
+	set_bit(BTN_X, idev->keybit);
+	set_bit(BTN_Y, idev->keybit);
+	set_bit(BTN_Z, idev->keybit);
+	set_bit(BTN_TL, idev->keybit);
+	set_bit(BTN_TR, idev->keybit);
+	set_bit(BTN_START, idev->keybit);
+	set_bit(BTN_0, idev->keybit);
+	set_bit(BTN_1, idev->keybit);
+	set_bit(BTN_2, idev->keybit);
+	set_bit(BTN_3, idev->keybit);
 
 	/* a stick */
-	set_bit(ABS_X, input_dev->absbit);
-	input_dev->absmin[ABS_X] = 0;
-	input_dev->absmax[ABS_X] = 255;
-	input_dev->absfuzz[ABS_X] = 8;
-	input_dev->absflat[ABS_X] = 8;
+	set_bit(ABS_X, idev->absbit);
+	idev->absmin[ABS_X] = 0;
+	idev->absmax[ABS_X] = 255;
+	idev->absfuzz[ABS_X] = 8;
+	idev->absflat[ABS_X] = 8;
 
-	set_bit(ABS_Y, input_dev->absbit);
-	input_dev->absmin[ABS_Y] = 0;
-	input_dev->absmax[ABS_Y] = 255;
-	input_dev->absfuzz[ABS_Y] = 8;
-	input_dev->absflat[ABS_Y] = 8;
+	set_bit(ABS_Y, idev->absbit);
+	idev->absmin[ABS_Y] = 0;
+	idev->absmax[ABS_Y] = 255;
+	idev->absfuzz[ABS_Y] = 8;
+	idev->absflat[ABS_Y] = 8;
 
 	/* b pad */
-	set_bit(ABS_HAT0X, input_dev->absbit);
-	input_dev->absmin[ABS_HAT0X] = -1;
-	input_dev->absmax[ABS_HAT0X] = 1;
+	set_bit(ABS_HAT0X, idev->absbit);
+	idev->absmin[ABS_HAT0X] = -1;
+	idev->absmax[ABS_HAT0X] = 1;
 
-	set_bit(ABS_HAT0Y, input_dev->absbit);
-	input_dev->absmin[ABS_HAT0Y] = -1;
-	input_dev->absmax[ABS_HAT0Y] = 1;
+	set_bit(ABS_HAT0Y, idev->absbit);
+	idev->absmin[ABS_HAT0Y] = -1;
+	idev->absmax[ABS_HAT0Y] = 1;
 
 	/* c stick */
-	set_bit(ABS_RX, input_dev->absbit);
-	input_dev->absmin[ABS_RX] = 0;
-	input_dev->absmax[ABS_RX] = 255;
-	input_dev->absfuzz[ABS_RX] = 8;
-	input_dev->absflat[ABS_RX] = 8;
+	set_bit(ABS_RX, idev->absbit);
+	idev->absmin[ABS_RX] = 0;
+	idev->absmax[ABS_RX] = 255;
+	idev->absfuzz[ABS_RX] = 8;
+	idev->absflat[ABS_RX] = 8;
 
-	set_bit(ABS_RY, input_dev->absbit);
-	input_dev->absmin[ABS_RY] = 0;
-	input_dev->absmax[ABS_RY] = 255;
-	input_dev->absfuzz[ABS_RY] = 8;
-	input_dev->absflat[ABS_RY] = 8;
+	set_bit(ABS_RY, idev->absbit);
+	idev->absmin[ABS_RY] = 0;
+	idev->absmax[ABS_RY] = 255;
+	idev->absfuzz[ABS_RY] = 8;
+	idev->absflat[ABS_RY] = 8;
 
 	/* triggers */
-	set_bit(ABS_GAS, input_dev->absbit);
-	input_dev->absmin[ABS_GAS] = -255;
-	input_dev->absmax[ABS_GAS] = 255;
-	input_dev->absfuzz[ABS_GAS] = 16;
-	input_dev->absflat[ABS_GAS] = 16;
+	set_bit(ABS_GAS, idev->absbit);
+	idev->absmin[ABS_GAS] = -255;
+	idev->absmax[ABS_GAS] = 255;
+	idev->absfuzz[ABS_GAS] = 16;
+	idev->absflat[ABS_GAS] = 16;
 
-	set_bit(ABS_BRAKE, input_dev->absbit);
-	input_dev->absmin[ABS_BRAKE] = -255;
-	input_dev->absmax[ABS_BRAKE] = 255;
-	input_dev->absfuzz[ABS_BRAKE] = 16;
-	input_dev->absflat[ABS_BRAKE] = 16;
+	set_bit(ABS_BRAKE, idev->absbit);
+	idev->absmin[ABS_BRAKE] = -255;
+	idev->absmax[ABS_BRAKE] = 255;
+	idev->absfuzz[ABS_BRAKE] = 16;
+	idev->absflat[ABS_BRAKE] = 16;
 
 	/* rumbling */
-	set_bit(FF_RUMBLE, input_dev->ffbit);
-	input_dev->event = gcn_si_event;
-
-	input_dev->ff_effects_max = 1;
+	set_bit(FF_RUMBLE, idev->ffbit);
+	idev->event = gcn_si_event;
+	idev->ff_effects_max = 1;
 }
 
 /**
  *
  */
-static void si_setup_keyboard(struct input_dev *input_dev)
+static void si_setup_keyboard(struct input_dev *idev)
 {
 	int i;
 
-	set_bit(EV_KEY, input_dev->evbit);
-	set_bit(EV_REP, input_dev->evbit);
+	set_bit(EV_KEY, idev->evbit);
+	set_bit(EV_REP, idev->evbit);
 
 	for (i = 0; i < 255; ++i)
-		set_bit(gamecube_keymap[i], input_dev->keybit);
+		set_bit(gamecube_keymap[i], idev->keybit);
 }
 
 /**
@@ -491,7 +498,7 @@ static void si_setup_keyboard(struct input_dev *input_dev)
  */
 static int si_setup_device(struct si_device *sdev, int idx)
 {
-	struct input_dev *input_dev;
+	struct input_dev *idev;
 	int result = 0;
 
 	memset(sdev, 0, sizeof(*sdev));	
@@ -535,31 +542,31 @@ static int si_setup_device(struct si_device *sdev, int idx)
 		goto done;
 	}
 
-	input_dev = input_allocate_device();		
-	if (!input_dev) {
+	idev = input_allocate_device();		
+	if (!idev) {
 		si_printk(KERN_ERR, "not enough memory for input device\n");
 		result = -ENOMEM;
 		goto done;
 	}
 
-	input_dev->open = gcn_si_open;
-	input_dev->close = gcn_si_close;
-	input_dev->private = (unsigned int *)idx;
-	input_dev->name = sdev->name;
+	idev->open = gcn_si_open;
+	idev->close = gcn_si_close;
+	idev->private = (unsigned int *)idx;
+	idev->name = sdev->name;
 		
 	switch (sdev->id) {
 	case CTL_PAD:
-		si_setup_pad(input_dev);
+		si_setup_pad(idev);
 		break;
 	case CTL_KEYBOARD:
-		si_setup_keyboard(input_dev);
+		si_setup_keyboard(idev);
 		break;
 	default:
 		/* this is here to avoid compiler warnings */
 		break;
 	}
 
-	sdev->idev = input_dev;
+	sdev->idev = idev;
 
 done:
 	return result;

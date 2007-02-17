@@ -26,6 +26,7 @@
 #include <asm/cacheflush.h>
 #include <asm/cache.h>
 #include <linux/interrupt.h>
+#include <linux/dma-mapping.h>
 
 #include <linux/fcntl.h>        /* O_ACCMODE */
 #include <linux/hdreg.h>  /* HDIO_GETGEO */
@@ -201,8 +202,7 @@ static int alloc_dma_buffer(size_t size,struct dma_buffer *pRet)
 
 inline static void sync_dma_buffer(struct dma_buffer *pRet)
 {
-	invalidate_dcache_range((unsigned long)pRet->alignedPtr,
-				(unsigned long)pRet->alignedPtr + pRet->size);
+	__dma_sync(pRet->alignedPtr, pRet->size, DMA_FROM_DEVICE);
 }
 
 inline static void free_dma_buffer(struct dma_buffer *pRet)
@@ -522,21 +522,21 @@ static void gc_dvd_read_request_callback(struct gc_dvd_command *cmd)
 	unsigned long flags;
 	struct request *req = (struct request*)cmd->param;
 	struct request_queue *rqueue = req->q;
-	enum gc_dvd_interrupt_status int_status = cmd->int_status;
+	int status;
   
 	/* since this was performed via DMA, invalidate the cache */
 	if (cmd->int_status == is_transfer_complete) {
-		invalidate_dcache_range((unsigned int)req->buffer,(unsigned int)req->buffer + cmd->r_DI_DILENGTH);
+		__dma_sync(req->buffer, cmd->r_DI_DILENGTH, DMA_FROM_DEVICE);
 	}
 	/* free this item so another request can get it */
 	gc_dvd_request_release_data(cmd);
 	/* now end the request and send back to block layer */
 	spin_lock_irqsave(rqueue->queue_lock,flags);
+	status = is_transfer_complete;
 	if (!end_that_request_first(req,
-				    (int_status == is_transfer_complete),
-				    req->current_nr_sectors)) {
+				    status, req->current_nr_sectors)) {
 		add_disk_randomness(req->rq_disk);
-		end_that_request_last(req);
+		end_that_request_last(req, status);
 	}
 	/* start queue back up */
 	blk_start_queue(rqueue);
@@ -740,7 +740,6 @@ static int __init gc_dvd_init(void)
 	dvd_gendisk->first_minor = 0;
 	dvd_gendisk->fops = &dvd_fops;
 	strcpy(dvd_gendisk->disk_name,"dvd");
-	strcpy(dvd_gendisk->devfs_name,dvd_gendisk->disk_name);
 
 	dvd_gendisk->queue = dvd_queue;
 

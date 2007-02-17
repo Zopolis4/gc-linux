@@ -15,8 +15,6 @@
 #ifndef __GCN_MI_H
 #define __GCN_MI_H
 
-#ifdef CONFIG_GAMECUBE_MI
-
 #define MI_MAX_REGIONS  4
 
 #define MI_PROT_NONE 0x00
@@ -27,8 +25,6 @@
 int gcn_mi_region_protect(unsigned long physlo, unsigned long physhi, int type);
 int gcn_mi_region_unprotect(int region);
 void gcn_mi_region_unprotect_all(void);
-
-#endif /* CONFIG_GAMECUBE_MI */
 
 #endif /* __GCN_MI_H */
 

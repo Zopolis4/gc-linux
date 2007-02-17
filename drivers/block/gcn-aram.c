@@ -416,7 +416,6 @@ static int aram_init_blk_dev(struct aram_device *adev)
 	disk->first_minor = 0;
 	disk->fops = &aram_fops;
 	strcpy(disk->disk_name, ARAM_NAME);
-	strcpy(disk->devfs_name, disk->disk_name);
 	disk->queue = adev->queue;
 	set_capacity(disk, ARAM_BUFFERSIZE >> 9);
 	disk->private_data = adev;

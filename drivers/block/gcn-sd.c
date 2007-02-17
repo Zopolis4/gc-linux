@@ -2,10 +2,10 @@
  * drivers/block/gcn-sd.c
  *
  * MMC/SD card block driver for the Nintendo GameCube
- * Copyright (C) 2005 The GameCube Linux Team
+ * Copyright (C) 2004-2006 The GameCube Linux Team
  * Copyright (C) 2004,2005 Rob Reylink
  * Copyright (C) 2005 Todd Jeffreys
- * Copyright (C) 2005 Albert Herranz
+ * Copyright (C) 2005,2006 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -17,7 +17,7 @@
 /*
  * This is a block device driver for the Nintendo SD Card Adapter (DOL-019)
  * and compatible hardware.
- * The driver has been tested with SPI-enabled MMC cards, and SD cards.
+ * The driver has been tested with SPI-enabled MMC cards and SD cards.
  *
  * The following table shows the device major and minors needed to access
  * MMC/SD cards:
@@ -81,7 +81,7 @@ MODULE_AUTHOR(DRV_AUTHOR);
 MODULE_DESCRIPTION(DRV_DESCRIPTION);
 MODULE_LICENSE("GPL");
 
-static char sd_driver_version[] = "0.4-isobel";
+static char sd_driver_version[] = "3.1-isobel";
 
 #define sd_printk(level, format, arg...) \
 	printk(level DRV_MODULE_NAME ": " format , ## arg)
@@ -93,6 +93,11 @@ static char sd_driver_version[] = "0.4-isobel";
 #  define DBG(fmt, args...)
 #endif
 
+
+/*
+ *
+ * EXI related definitions.
+ */
 #define SD_SLOTA_CHANNEL	0	/* EXI0xxx */
 #define SD_SLOTA_DEVICE		0	/* chip select, EXI0CSB0 */
 
@@ -101,6 +106,12 @@ static char sd_driver_version[] = "0.4-isobel";
 
 #define SD_SPI_CLK		16000000
 #define SD_SPI_CLK_IDX		EXI_CLK_16MHZ
+
+
+/*
+ *
+ * MMC/SD related definitions.
+ */
 
 /* cycles in 8 clock units */
 #define SD_IDLE_CYCLES		80
@@ -149,14 +160,6 @@ static char sd_driver_version[] = "0.4-isobel";
 /* this is still a missing command in the current MMC framework ... */
 #define MMC_READ_OCR		58
 
-#define MMC_SHIFT		3	/* 8 partitions */
-
-#define SD_MAJOR		61
-#define SD_NAME			"sdcard"
-
-#define KERNEL_SECTOR_SHIFT     9
-#define KERNEL_SECTOR_SIZE      (1 << KERNEL_SECTOR_SHIFT)	/*512 */
-
 /*
  * OCR Bit positions to 10s of Vdd mV.
  */
@@ -185,9 +188,25 @@ static const unsigned int tacc_mant[] = {
 	35, 40, 45, 50, 55, 60, 70, 80,
 };
 
+/*
+ *
+ * Driver settings.
+ */
+#define MMC_SHIFT		3	/* 8 partitions */
+
+#define SD_MAJOR		61
+#define SD_NAME			"sdcard"
+
+#define KERNEL_SECTOR_SHIFT     9
+#define KERNEL_SECTOR_SIZE      (1 << KERNEL_SECTOR_SHIFT)	/*512 */
+
+unsigned long unclean_slots = 0;
+
 enum {
 	__SD_MEDIA_CHANGED = 0,
+	__SD_DEL,
 };
+
 
 /*
  * Raw MMC/SD command.
@@ -206,7 +225,7 @@ struct sd_command {
  */
 struct sd_host {
 	spinlock_t lock;
-
+	int refcnt;
 	unsigned long flags;
 #define SD_MEDIA_CHANGED	(1<<__SD_MEDIA_CHANGED)
 
@@ -235,9 +254,8 @@ struct sd_host {
 	struct request_queue *queue;
 	spinlock_t queue_lock;
 
-	int refcnt;
-
 	struct task_struct	*io_thread;
+	struct completion	io_thread_complete;
 	wait_queue_head_t	io_waitq;
 	struct request		*req;
 
@@ -247,8 +265,8 @@ struct sd_host {
 static void sd_kill(struct sd_host *host);
 
 /*
- * MMC/SD data structures manipulation.
  *
+ * MMC/SD data structures manipulation.
  */
 
 /*
@@ -468,6 +486,7 @@ static void sd_calc_timeouts(struct sd_host *host)
 }
 
 /*
+ *
  * SPI I/O support routines, including some handy SPI to EXI language
  * translations.
  */
@@ -628,8 +647,8 @@ out:
 }
 
 /*
- * MMC/SD command transactions related routines.
  *
+ * MMC/SD command transactions related routines.
  */
 
 /* */
@@ -1063,8 +1082,8 @@ out:
 }
 
 /*
- * Block layer.
  *
+ * Block layer.
  */
 
 /*
@@ -1091,7 +1110,6 @@ static int sd_read_request(struct sd_host *host, struct request *req)
 
 		start += block_len;
 		buf += block_len;
-
 	}
 
 	/* number of kernel sectors transferred */
@@ -1126,7 +1144,6 @@ static int sd_write_request(struct sd_host *host, struct request *req)
 
 		start += block_len;
 		buf += block_len;
-
 	}
 
 	/* number of kernel sectors transferred */
@@ -1134,6 +1151,8 @@ static int sd_write_request(struct sd_host *host, struct request *req)
 
 	return retval;
 }
+
+static void sd_end_request(struct request *req, unsigned long nr_sectors);
 
 /*
  * Input/Output thread. Sends and receives packets.
@@ -1156,46 +1175,74 @@ static int sd_io_thread(void *param)
         current->flags |= PF_NOFREEZE;
         set_current_state(TASK_RUNNING);
 
-        while(!kthread_should_stop()) {
-                for(;;) {
-			spin_lock_irqsave(&host->lock, flags);
-			if (!host->req) {
-				spin_unlock_irqrestore(&host->lock, flags);
-				break;
-			}
-			req = host->req;
-			host->req = NULL;
-			spin_unlock_irqrestore(&host->lock, flags);
-
-			/* proceed with i/o requests */
-			if (rq_data_dir(req) == WRITE) {
-				retval = sd_write_request(host, req);
-			} else {
-				retval = sd_read_request(host, req);
-			}
-
-			if (retval <= 0) {
-				uptodate = 0;
-				nr_sectors = 0;
-			} else {
-				uptodate = (retval > 0)?1:0;
-				nr_sectors = retval;
-			}
-
-			if (!end_that_request_first(req, uptodate, nr_sectors))
-				end_that_request_last(req, uptodate);
-
-			/* avoid cpu monopolization, we are damn greedy */
-			//yield();
-			cond_resched();
-
-			spin_lock(&host->queue_lock);
-			blk_start_queue(host->queue);
-			spin_unlock(&host->queue_lock);
-                }
+	for(;;) {
                 wait_event(host->io_waitq, host->req || kthread_should_stop());
-        }
-        return 0;
+
+		spin_lock_irqsave(&host->lock, flags);
+		if (!host->req) {
+			spin_unlock_irqrestore(&host->lock, flags);
+			if (kthread_should_stop())
+				break;
+			else {
+				spin_lock_irqsave(&host->queue_lock, flags);
+				blk_start_queue(host->queue);
+				spin_unlock_irqrestore(&host->queue_lock, flags);
+				continue;
+			}
+		}
+		req = host->req;
+		host->req = NULL;
+		spin_unlock_irqrestore(&host->lock, flags);
+
+		if (kthread_should_stop()) {
+			req->errors++;
+			sd_end_request(req, 0);
+			break;
+		}
+
+		/* proceed with i/o requests */
+		if (rq_data_dir(req) == WRITE) {
+			retval = sd_write_request(host, req);
+		} else {
+			retval = sd_read_request(host, req);
+		}
+
+		if (retval <= 0) {
+			uptodate = 0;
+			nr_sectors = 0;
+		} else {
+			uptodate = (retval > 0)?1:0;
+			nr_sectors = retval;
+		}
+		if (!uptodate)
+			req->errors++;
+
+		sd_end_request(req, nr_sectors);
+
+		/* avoid cpu monopolization, we are damn greedy */
+		//yield();
+		cond_resched();
+
+		spin_lock_irqsave(&host->queue_lock, flags);
+		blk_start_queue(host->queue);
+		spin_unlock_irqrestore(&host->queue_lock, flags);
+	}
+
+	complete(&host->io_thread_complete);
+	return 0;
+}
+
+static void sd_end_request(struct request *req, unsigned long nr_sectors)
+{
+	int uptodate = (req->errors == 0) ? 1 : 0;
+	request_queue_t *q = req->q;
+	unsigned long flags;
+
+	spin_lock_irqsave(q->queue_lock, flags);
+	if (!end_that_request_first(req, uptodate, nr_sectors)) {
+		end_that_request_last(req, uptodate);
+	}
+	spin_unlock_irqrestore(q->queue_lock, flags);
 }
 
 /*
@@ -1213,9 +1260,14 @@ static void sd_do_request(request_queue_t * q)
 					KERNEL_SECTOR_SHIFT);
 
 	while ((req = elv_next_request(q))) {
+		/* ignore requests that we can't handle */
+		if (!blk_fs_request(req)) {
+			continue;
+		}
+
 		/* pulling the card out while mounted is bold... */
-		if (exi_is_dying(host->exi_device)) {
-			sd_printk(KERN_ERR, "card in use removed, aborting\n");
+		if (!host->exi_device) {
+			sd_printk(KERN_ERR, "device removed, aborting\n");
 			end_request(req, 0);
 			continue;
 		}
@@ -1225,10 +1277,6 @@ static void sd_do_request(request_queue_t * q)
 			continue;
 		}
 
-		/* ignore requests that we can't handle */
-		if (!blk_fs_request(req))
-			continue;
-
 		/* keep our reads within limits */
 		if (req->sector + req->current_nr_sectors > nr_sectors) {
 			sd_printk(KERN_ERR, "reading past end\n");
@@ -1236,27 +1284,29 @@ static void sd_do_request(request_queue_t * q)
 			continue;
 		}
 
-		/* schedule the request if there transfer slot is free */
 		spin_lock_irqsave(&host->lock, flags);
+
+		/* throttle if the transfer slot is not free */
 		if (host->req) {
 			blk_stop_queue(q);
 			spin_unlock_irqrestore(&host->lock, flags);
 			break;
 		}
-		blkdev_dequeue_request(req);
+
 		host->req = req;
-		blk_stop_queue(q);
 		spin_unlock_irqrestore(&host->lock, flags);
 
-		/* wake up the i/o thread */
+		/* pop a single request... */
+		blkdev_dequeue_request(req);
+
+		/* ... and wake up the i/o thread to process it */
 		wake_up(&host->io_waitq);
-		break;
 	}
 }
 
 /*
- * Driver
  *
+ * Driver interface.
  */
 
 static DECLARE_MUTEX(open_lock);
@@ -1267,9 +1317,11 @@ static DECLARE_MUTEX(open_lock);
 static int sd_open(struct inode *inode, struct file *filp)
 {
 	struct sd_host *host = inode->i_bdev->bd_disk->private_data;
+	int slot;
 	int retval = 0;
 
-	down(&open_lock);
+	if (!host || !host->exi_device)
+		return -ENXIO;
 
 	/* honor exclusive open mode */
 	if (host->refcnt == -1 ||
@@ -1278,21 +1330,37 @@ static int sd_open(struct inode *inode, struct file *filp)
 		goto out;
 	}
 
+	/*
+	 * Force revalidation of media on slots where a card was unsafely
+	 * removed while mounted.
+	 * This makes sure that partitions will be visible on a card
+	 * inserted between the unsafe removal of a card and the umount
+	 * of all mounts from that card.
+	 */
+	if (host->exi_device) {
+		slot = to_channel(exi_get_exi_channel(host->exi_device));
+		if (test_and_clear_bit(slot, &unclean_slots)) {
+			set_bit(__SD_MEDIA_CHANGED, &host->flags);
+		}
+	}
+
 	/* this takes care of revalidating the media if needed */
 	check_disk_change(inode->i_bdev);
-
 	if (!host->card.csd.capacity) {
 		retval = -ENOMEDIUM;
 		goto out;
 	}
+
+	down(&open_lock);
 
 	if ((filp->f_flags & O_EXCL))
 		host->refcnt = -1;
 	else
 		host->refcnt++;
 
-out:
 	up(&open_lock);
+
+out:
 	return retval;
 
 }
@@ -1304,6 +1372,9 @@ static int sd_release(struct inode *inode, struct file *filp)
 {
 	struct sd_host *host = inode->i_bdev->bd_disk->private_data;
 
+	if (!host)
+		return -ENXIO;
+
 	down(&open_lock);
 
 	if (host->refcnt > 0)
@@ -1312,11 +1383,11 @@ static int sd_release(struct inode *inode, struct file *filp)
 		host->refcnt = 0;
 	}
 
-	/* kill the device if we are dying and no more openers exist */
-	if (!host->refcnt && exi_is_dying(host->exi_device))
-		sd_kill(host);
-
 	up(&open_lock);
+
+	/* lazy removal of unreferenced zombies */
+	if (!host->refcnt && !host->exi_device)
+		kfree(host);
 
 	return 0;
 }
@@ -1329,6 +1400,10 @@ static int sd_media_changed(struct gendisk *disk)
 	struct sd_host *host = disk->private_data;
 	unsigned int last_serial;
 	int retval;
+
+	/* report a media change for zombies */
+	if (!host)
+		return 1;
 
 	/* report a media change if someone forced it */
 	if (test_bit(__SD_MEDIA_CHANGED, &host->flags))
@@ -1353,6 +1428,12 @@ static int sd_revalidate_disk(struct gendisk *disk)
 {
 	struct sd_host *host = disk->private_data;
 	int retval = 0;
+
+	/* report missing medium for zombies */
+	if (!host) {
+		retval = -ENOMEDIUM;
+		goto out;
+	}
 
 	/* the block layer likes to call us multiple times... */
 	if (!sd_media_changed(host->disk))
@@ -1433,8 +1514,8 @@ static int sd_init_blk_dev(struct sd_host *host)
 	int retval;
 
 	channel = to_channel(exi_get_exi_channel(host->exi_device));
-	host->refcnt = 0;
 
+	/* queue */
 	retval = -ENOMEM;
 	spin_lock_init(&host->queue_lock);
 	queue = blk_init_queue(sd_do_request, &host->queue_lock);
@@ -1442,7 +1523,6 @@ static int sd_init_blk_dev(struct sd_host *host)
 		sd_printk(KERN_ERR, "error initializing queue\n");
 		goto err_blk_init_queue;
 	}
-
 	blk_queue_dma_alignment(queue, EXI_DMA_ALIGN);
 	blk_queue_max_phys_segments(queue, 1);
 	blk_queue_max_hw_segments(queue, 1);
@@ -1450,6 +1530,7 @@ static int sd_init_blk_dev(struct sd_host *host)
 	queue->queuedata = host;
 	host->queue = queue;
 
+	/* disk */
 	disk = alloc_disk(1 << MMC_SHIFT);
 	if (!disk) {
 		sd_printk(KERN_ERR, "error allocating disk\n");
@@ -1459,27 +1540,16 @@ static int sd_init_blk_dev(struct sd_host *host)
 	disk->first_minor = channel << MMC_SHIFT;
 	disk->fops = &sd_fops;
 	sprintf(disk->disk_name, "%s%c", SD_NAME, 'a' + channel);
-	sprintf(disk->devfs_name, "%s/target%d", SD_NAME, channel);
 	disk->private_data = host;
 	disk->queue = host->queue;
 	host->disk = disk;
 
-	init_waitqueue_head(&host->io_waitq);
-	host->io_thread = kthread_run(sd_io_thread, host,
-				      "ksdiod/%c", 'a' + channel);
-	if (IS_ERR(host->io_thread)) {
-		sd_printk(KERN_ERR, "error creating io thread\n");
-		goto err_io_thread;
-	}
-
 	retval = 0;
 	goto out;
 
-err_io_thread:
-	del_gendisk(host->disk);
-	put_disk(host->disk);
 err_alloc_disk:
-	blk_put_queue(host->queue);
+	blk_cleanup_queue(host->queue);
+	host->queue = NULL;
 err_blk_init_queue:
 out:
 	return retval;
@@ -1491,23 +1561,52 @@ out:
 static void sd_exit_blk_dev(struct sd_host *host)
 {
 	if (host->disk) {
-		del_gendisk(host->disk);
 		put_disk(host->disk);
 		host->disk = NULL;
 	}
 	if (host->queue) {
-		blk_put_queue(host->queue);
+		blk_cleanup_queue(host->queue);
 		host->queue = NULL;
 	}
+}
 
+
+/*
+ * Initializes and launches the IO thread.
+ */
+static int sd_init_io_thread(struct sd_host *host)
+{
+	int channel;
+	int result = 0;
+
+	channel = to_channel(exi_get_exi_channel(host->exi_device));
+
+	init_completion(&host->io_thread_complete);
+	init_waitqueue_head(&host->io_waitq);
+	host->io_thread = kthread_run(sd_io_thread, host,
+				      "ksdiod/%c", 'a' + channel);
+	if (IS_ERR(host->io_thread)) {
+		sd_printk(KERN_ERR, "error creating io thread\n");
+		result = PTR_ERR(host->io_thread);
+	}
+	return result;
+}
+
+/*
+ * Terminates and waits for the IO thread to complete.
+ */
+static void sd_exit_io_thread(struct sd_host *host)
+{
 	if (!IS_ERR(host->io_thread)) {
 		kthread_stop(host->io_thread);
 		wake_up(&host->io_waitq);
+		wait_for_completion(&host->io_thread_complete);
+		host->io_thread = ERR_PTR(-EINVAL);
 	}
 }
 
 /*
- *
+ * Initializes a host.
  */
 static int sd_init(struct sd_host *host)
 {
@@ -1515,6 +1614,7 @@ static int sd_init(struct sd_host *host)
 
 	spin_lock_init(&host->lock);
 
+	host->refcnt = 0;
 	set_bit(__SD_MEDIA_CHANGED, &host->flags);
 
 	host->ocr_avail = MMC_VDD_32_33 | MMC_VDD_33_34;
@@ -1528,8 +1628,14 @@ static int sd_init(struct sd_host *host)
 			retval = -ENODEV;
 			goto err_blk_dev;
 		}
+
+		retval = sd_init_io_thread(host);
+		if (retval) 
+			goto err_blk_dev;
+
 		add_disk(host->disk);
 	}
+
 	return retval;
 
 err_blk_dev:
@@ -1538,33 +1644,47 @@ err_blk_dev:
 }
 
 /*
- *
+ * Deinitializes (exits) a host.
  */
 static void sd_exit(struct sd_host *host)
 {
+	del_gendisk(host->disk);
+	sd_exit_io_thread(host);
 	sd_exit_blk_dev(host);
 }
 
 /*
- *
+ * Terminates a host.
  */
 static void sd_kill(struct sd_host *host)
 {
 	struct exi_device *exi_device = host->exi_device;
+	int slot;
 
-	if (host) {
-		sd_exit(host);
-		if (host->exi_device)
-			exi_device_put(host->exi_device);
-		host->exi_device = NULL;
-		kfree(host);
+	if (host->refcnt > 0) {
+		sd_printk(KERN_ERR, "hey! card removed while in use!\n");
+		if (exi_device) {
+			slot = to_channel(exi_get_exi_channel(exi_device));
+			set_bit(slot, &unclean_slots);
+		}
 	}
-	exi_set_dying(exi_device, 0);
-	exi_set_drvdata(exi_device, NULL);
+
+	sd_exit(host);
+	host->exi_device = NULL;
+
+	if (exi_device) {
+		exi_set_drvdata(exi_device, NULL);
+		exi_device_put(exi_device);
+	}
+
+	/* release the host immediately when not in use */
+	if (!host->refcnt)
+		kfree(host);
 }
 
 /*
- *
+ * Checks if the given EXI device is a MMC/SD card and makes it available
+ * if true.
  */
 static int sd_probe(struct exi_device *exi_device)
 {
@@ -1575,37 +1695,31 @@ static int sd_probe(struct exi_device *exi_device)
 	if (exi_device->eid.id != EXI_ID_NONE)
 		return -ENODEV;
 
-	host = kmalloc(sizeof(*host), GFP_KERNEL);
+	host = kzalloc(sizeof(*host), GFP_KERNEL);
 	if (!host)
 		return -ENOMEM;
 
-	memset(host, 0, sizeof(*host));
-
 	host->exi_device = exi_device_get(exi_device);
+	exi_set_drvdata(exi_device, host);
 	retval = sd_init(host);
-	if (!retval) {
-		exi_set_drvdata(exi_device, host);
-	} else {
-		exi_device_put(exi_device);
+	if (retval) {
+		exi_set_drvdata(exi_device, NULL);
 		host->exi_device = NULL;
 		kfree(host);
+		exi_device_put(exi_device);
 	}
 	return retval;
 }
 
 /*
- *
+ * Makes unavailable the MMC/SD card identified by the EXI device `exi_device'.
  */
 static void sd_remove(struct exi_device *exi_device)
 {
 	struct sd_host *host = exi_get_drvdata(exi_device);
 
-	if (host->refcnt > 0) {
-		sd_printk(KERN_ERR, "hey! attempt to remove device in use!\n");
-		exi_set_dying(exi_device, 1);
-	} else {
+	if (host)
 		sd_kill(host);
-	}
 }
 
 static struct exi_device_id sd_eid_table[] = {
@@ -1645,7 +1759,7 @@ static int __init sd_init_module(void)
 
 	retval = exi_driver_register(&sd_driver);
 
-      out:
+out:
 	return retval;
 }
 
@@ -1657,3 +1771,4 @@ static void __exit sd_exit_module(void)
 
 module_init(sd_init_module);
 module_exit(sd_exit_module);
+

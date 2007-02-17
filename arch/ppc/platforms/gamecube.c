@@ -11,8 +11,8 @@
  *
  */
 
+#include <linux/kernel.h>
 #include <linux/init.h>
-#include <linux/config.h>
 #include <linux/irq.h>
 #include <linux/initrd.h>
 #include <linux/seq_file.h>
@@ -149,7 +149,7 @@ static void gamecube_init_IRQ(void)
 	writel(0xffffffff, FLIPPER_ICR);
 
 	for (i = 0; i < FLIPPER_NR_IRQS; i++)
-		irq_desc[i].handler = &flipper_pic;
+		irq_desc[i].chip = &flipper_pic;
 }
 
 static int gamecube_show_cpuinfo(struct seq_file *m)

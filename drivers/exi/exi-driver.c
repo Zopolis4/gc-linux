@@ -2,10 +2,10 @@
  * drivers/exi/exi-driver.c
  *
  * Nintendo GameCube Expansion Interface support. Driver model routines.
- * Copyright (C) 2004-2005 The GameCube Linux Team
+ * Copyright (C) 2004-2006 The GameCube Linux Team
  * Copyright (C) 2004 Arthur Othieno <a.othieno@bluewin.ch>
  * Copyright (C) 2004,2005 Todd Jeffreys <todd@voidpointer.org>
- * Copyright (C) 2005 Albert Herranz
+ * Copyright (C) 2005,2006 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -27,17 +27,43 @@
 			"Todd Jeffreys <todd@voidpointer.org>, " \
 			"Albert Herranz"
 
-static char exi_driver_version[] = "3.1-isobel";
-
-
-extern struct device exi_bus_devices[EXI_MAX_CHANNELS];
-extern struct exi_device exi_devices[EXI_MAX_CHANNELS][EXI_DEVICES_PER_CHANNEL];
+static char exi_driver_version[] = "3.2-isobel";
 
 
 struct exi_map_id_to_name {
 	unsigned int id;
 	char *name;
 };
+
+
+static void exi_device_release(struct device *dev);
+static int exi_bus_match(struct device *dev, struct device_driver *drv);
+
+
+static struct bus_type exi_bus_type = {
+	.name = "exi",
+	.match = exi_bus_match,
+};
+
+static struct device exi_bus_devices[EXI_MAX_CHANNELS] = {
+	[0] = {
+		.bus_id = "exi0",
+		.release = exi_device_release,
+		.parent = NULL
+	},
+	[1] = {
+		.bus_id = "exi1",
+		.release = exi_device_release,
+		 .parent = NULL
+	},
+	[2] = {
+		.bus_id = "exi2",
+		.release = exi_device_release,
+		.parent = NULL
+	},
+};
+
+static struct exi_device exi_devices[EXI_MAX_CHANNELS][EXI_DEVICES_PER_CHANNEL];
 
 static struct exi_map_id_to_name exi_map_id_to_name[] = {
 	{ .id = EXI_ID_NONE, .name = "(external card)" },
@@ -126,7 +152,7 @@ static int exi_bus_match(struct device *dev, struct device_driver *drv)
 }
 
 /*
- * Device release.
+ * Internal. Device release.
  */
 static void exi_device_release(struct device *dev)
 {
@@ -351,8 +377,6 @@ static int exi_bus_thread(void *__unused)
 	int is_loaded, was_loaded;
 
 	while(!kthread_should_stop()) {
-		sleep_on_timeout(&exi_bus_waitq, HZ);
-
 		/* scan the memcard slot channels for device changes */
 		for (channel = 0; channel <= 1; ++channel) {
 			exi_channel = to_exi_channel(channel);
@@ -365,24 +389,13 @@ static int exi_bus_thread(void *__unused)
 				exi_device_rescan(exi_device);
 			}
 		}
+
+		sleep_on_timeout(&exi_bus_waitq, HZ);
 	}
 
 	return 0;
 }
 
-
-static struct exi_device exi_devices[EXI_MAX_CHANNELS][EXI_DEVICES_PER_CHANNEL];
-
-static struct bus_type exi_bus_type = {
-	.name = "exi",
-	.match = exi_bus_match,
-};
-
-static struct device exi_bus_devices[EXI_MAX_CHANNELS] = {
-	[0] = {.bus_id = "exi0"},
-	[1] = {.bus_id = "exi1"},
-	[2] = {.bus_id = "exi2"},
-};
 
 extern void exi_channel_init(struct exi_channel *exi_channel,
 			     unsigned int channel);

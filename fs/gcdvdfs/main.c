@@ -141,8 +141,9 @@ static void gc_dvdfs_read_inode(struct inode *i)
   i_size_write(i,size);
 }
 
-static int gc_dvdfs_statfs(struct super_block *sb,struct kstatfs *sfs)
+static int gc_dvdfs_statfs(struct dentry * dentry,struct kstatfs *sfs)
 {
+  struct super_block *sb = dentry->d_sb;
   struct gc_dvdfs_fst *fst = (struct gc_dvdfs_fst*)sb->s_fs_info;
 
   sfs->f_type   = sb->s_magic;
@@ -312,9 +313,9 @@ static int gc_dvdfs_fill_super(struct super_block *s,void *data,int silent)
   return -EINVAL;
 }
 
-static struct super_block *gc_dvdfs_get_sb(struct file_system_type *fs_type,int flags,const char *dev_name,void *data)
+static int gc_dvdfs_get_sb(struct file_system_type *fs_type,int flags,const char *dev_name,void *data,struct vfsmount *mnt)
 {
-  return get_sb_bdev(fs_type,flags,dev_name,data,gc_dvdfs_fill_super);
+  return get_sb_bdev(fs_type,flags,dev_name,data,gc_dvdfs_fill_super,mnt);
 }
 
 static struct file_system_type gcdvdfs_type = {
