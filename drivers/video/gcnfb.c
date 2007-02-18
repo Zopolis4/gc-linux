@@ -484,7 +484,7 @@ static void vi_dispatch_vtrace(struct vi_ctl *ctl)
 /*
  * Handler for video related interrupts.
  */
-static irqreturn_t vi_irq_handler(int irq, void *dev, struct pt_regs *regs)
+static irqreturn_t vi_irq_handler(int irq, void *dev)
 {
 	struct fb_info *info =
 	    platform_get_drvdata((struct platform_device *)dev);

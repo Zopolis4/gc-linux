@@ -649,7 +649,7 @@ DBG("enter\n");
 
 	if (dev->card) {
 		snd_card_disconnect(dev->card);
-		snd_card_free_in_thread(dev->card);
+		snd_card_free_when_closed(dev->card);
 
 		dev->card = NULL;
 		dev->pcm = NULL;

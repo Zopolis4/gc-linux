@@ -95,7 +95,7 @@ static void gamecube_calibrate_decr(void)
 	tb_to_us = mulhwu_scale_factor(freq/divisor, 1000000);
 }
 
-static int gamecube_get_irq(struct pt_regs *regs)
+static int gamecube_get_irq(void)
 {
 	int irq;
 	u32 irq_status;

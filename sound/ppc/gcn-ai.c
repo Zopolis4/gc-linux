@@ -250,7 +250,7 @@ static snd_pcm_uframes_t snd_gcn_pointer(snd_pcm_substream_t * substream)
 	return bytes_to_frames(runtime, bytes - left);
 }
 
-static irqreturn_t snd_gcn_interrupt(int irq, void *dev, struct pt_regs *regs)
+static irqreturn_t snd_gcn_interrupt(int irq, void *dev)
 {
 	snd_gcn_t *chip = (snd_gcn_t *) dev;
 	unsigned long flags;

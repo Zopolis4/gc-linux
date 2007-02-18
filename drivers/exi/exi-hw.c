@@ -1067,7 +1067,7 @@ static void exi_tasklet(unsigned long param)
 /*
  * Internal. Interrupt handler for EXI interrupts.
  */
-static irqreturn_t exi_irq_handler(int irq, void *dev_id, struct pt_regs *regs)
+static irqreturn_t exi_irq_handler(int irq, void *dev_id)
 {
 	struct exi_channel *exi_channel;
 	u32 __iomem *csr_reg;

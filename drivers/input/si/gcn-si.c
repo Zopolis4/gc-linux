@@ -406,11 +406,13 @@ static int gcn_si_event(struct input_dev *dev, unsigned int type,
 /**
  *
  */
-static void si_setup_pad(struct input_dev *idev)
+static int si_setup_pad(struct input_dev *idev)
 {
+	struct ff_device *ff;
+	int error;
+
 	set_bit(EV_KEY, idev->evbit);
 	set_bit(EV_ABS, idev->evbit);
-	set_bit(EV_FF, idev->evbit);
 
 	set_bit(BTN_A, idev->keybit);
 	set_bit(BTN_B, idev->keybit);
@@ -474,9 +476,14 @@ static void si_setup_pad(struct input_dev *idev)
 	idev->absflat[ABS_BRAKE] = 16;
 
 	/* rumbling */
+	set_bit(EV_FF, idev->evbit);
 	set_bit(FF_RUMBLE, idev->ffbit);
+	error = input_ff_create(idev, 1);
+	if (error)
+		return error;
+	ff = idev->ff;
 	idev->event = gcn_si_event;
-	idev->ff_effects_max = 1;
+	return 0;
 }
 
 /**
@@ -556,7 +563,7 @@ static int si_setup_device(struct si_device *sdev, int idx)
 		
 	switch (sdev->id) {
 	case CTL_PAD:
-		si_setup_pad(idev);
+		result = si_setup_pad(idev);
 		break;
 	case CTL_KEYBOARD:
 		si_setup_keyboard(idev);
@@ -564,6 +571,11 @@ static int si_setup_device(struct si_device *sdev, int idx)
 	default:
 		/* this is here to avoid compiler warnings */
 		break;
+	}
+
+	if (result) {
+		input_free_device(idev);
+		goto done;
 	}
 
 	sdev->idev = idev;

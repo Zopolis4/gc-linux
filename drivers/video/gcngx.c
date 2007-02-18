@@ -123,7 +123,7 @@ static volatile u16* const _peReg = (volatile u16*)0xCC001000;
 static volatile u16* const _memReg = (volatile u16*)0xCC004000;
 static volatile u32* const WGPIPE  = (volatile u32*)0xCC008000;
 
-static irqreturn_t gcfb_fifo_irq_handler(int irq,void *dev_id,struct pt_regs *regs)
+static irqreturn_t gcfb_fifo_irq_handler(int irq,void *dev_id)
 {
 	/* now handle the int */
 	u16 val = readw(VIDEO_CP_SR);
@@ -180,7 +180,7 @@ void gcngx_vtrace(struct vi_ctl *ctl)
 	}
 }
 
-static irqreturn_t gcfb_pe_finish_irq_handler(int irq,void *dev_id,struct pt_regs *regs)
+static irqreturn_t gcfb_pe_finish_irq_handler(int irq,void *dev_id)
 {
 	u16 val;
 	struct siginfo sig;
@@ -199,7 +199,7 @@ static irqreturn_t gcfb_pe_finish_irq_handler(int irq,void *dev_id,struct pt_reg
 	return IRQ_HANDLED;
 }
 
-static irqreturn_t gcfb_pe_token_irq_handler(int irq,void *dev_id,struct pt_regs *regs)
+static irqreturn_t gcfb_pe_token_irq_handler(int irq,void *dev_id)
 {
 	u16 val;
 	struct siginfo sig;

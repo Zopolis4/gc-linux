@@ -173,7 +173,7 @@ static void aram_start_dma_transfer(struct aram_device *adev,
 /*
  * Handles ARAM interrupts.
  */
-static irqreturn_t aram_irq_handler(int irq, void *dev0, struct pt_regs *regs)
+static irqreturn_t aram_irq_handler(int irq, void *dev0)
 {
 	struct aram_device *adev = dev0;
 	struct request *req;

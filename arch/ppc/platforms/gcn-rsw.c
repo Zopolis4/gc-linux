@@ -94,8 +94,7 @@ static void gcn_rsw_emergency_reset(void)
 /**
  *
  */
-static irqreturn_t gcn_rsw_handler(int this_irq, void *data,
-				     struct pt_regs *regs)
+static irqreturn_t gcn_rsw_handler(int this_irq, void *data)
 {
 	struct gcn_rsw_private *priv = (struct gcn_rsw_private *)data;
 	unsigned long flags;

@@ -101,8 +101,7 @@ static int mi_setup_default_regions(void)
 /**
  *
  */
-static irqreturn_t mi_handler(int this_irq, void *data,
-			      struct pt_regs *regs)
+static irqreturn_t mi_handler(int this_irq, void *data)
 {
 	struct mi_private *priv = (struct mi_private *)data;
 	unsigned long flags;

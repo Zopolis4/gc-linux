@@ -1179,7 +1179,7 @@ static int di_run_command_and_wait(struct di_command *cmd)
 /*
  * Interrupt handler for DI interrupts.
  */
-static irqreturn_t di_irq_handler(int irq, void *dev0, struct pt_regs *regs)
+static irqreturn_t di_irq_handler(int irq, void *dev0)
 {
 	struct di_device *ddev = dev0;
 	void __iomem *io_base = ddev->io_base;

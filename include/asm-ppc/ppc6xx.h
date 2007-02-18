@@ -8,8 +8,6 @@
 #ifndef __ASM_PPC_PPC6xx_H__
 #define __ASM_PPC_PPC6xx_H__
 
-#include <linux/config.h>
-
 #ifdef CONFIG_6xx
 
 #ifdef CONFIG_GAMECUBE
