@@ -19,6 +19,7 @@
 #include <linux/init.h>
 #include <linux/kthread.h>
 #include <linux/delay.h>
+#include <linux/freezer.h>
 #include <linux/proc_fs.h>
 #include <linux/exi.h>
 
