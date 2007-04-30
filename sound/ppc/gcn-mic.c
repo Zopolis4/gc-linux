@@ -1,9 +1,9 @@
 /*
- * gcn-mic.c
+ * sound/ppc/gcn-mic.c
  *
  * Nintendo Microphone (DOL-022) driver
- * Copyright (C) 2006 The GameCube Linux Team
- * Copyright (C) 2006 Albert Herranz
+ * Copyright (C) 2006-2007 The GameCube Linux Team
+ * Copyright (C) 2006,2007 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -258,7 +258,7 @@ static void mic_exit_proc(struct mic_device *dev)
 static int index = SNDRV_DEFAULT_IDX1;
 static char *id = SNDRV_DEFAULT_STR1;
 
-static snd_pcm_hardware_t mic_snd_capture = {
+static struct snd_pcm_hardware mic_snd_capture = {
 #if 0
          .info = (SNDRV_PCM_INFO_MMAP |
                    SNDRV_PCM_INFO_INTERLEAVED | SNDRV_PCM_INFO_NONINTERLEAVED |
@@ -395,21 +395,21 @@ DBG("rate: min %d, max %d\n", rate->min, rate->max);
 
 	if (rate->min == rate->max) {
 	if (rate->min >= 44100) {
-		snd_interval_t t = {
+		struct snd_interval t = {
 			.min = 128,
 			.max = 128,
 			.integer = 1,
 		};
 		return snd_interval_refine(period_bytes, &t);
 	} else if (rate->min >= 22050) {
-		snd_interval_t t = {
+		struct snd_interval t = {
 			.min = 32,
 			.max = 32,
 			.integer = 1,
 		};
 		return snd_interval_refine(period_bytes, &t);
 	} else {
-		snd_interval_t t = {
+		struct snd_interval t = {
 			.min = 32,
 			.max = 32,
 			.integer = 1,
@@ -420,10 +420,10 @@ DBG("rate: min %d, max %d\n", rate->min, rate->max);
 	return 0;
 }
 
-static int mic_snd_pcm_capture_open(snd_pcm_substream_t *substream)
+static int mic_snd_pcm_capture_open(struct snd_pcm_substream *substream)
 {
         struct mic_device *dev = snd_pcm_substream_chip(substream);
-        snd_pcm_runtime_t *runtime = substream->runtime;
+        struct snd_pcm_runtime *runtime = substream->runtime;
 	unsigned long flags;
 	int retval;
 
@@ -457,7 +457,7 @@ DBG("enter\n");
 
 }
 
-static int mic_snd_pcm_capture_close(snd_pcm_substream_t *substream)
+static int mic_snd_pcm_capture_close(struct snd_pcm_substream *substream)
 {
         struct mic_device *dev = snd_pcm_substream_chip(substream);
 	unsigned long flags;
@@ -474,8 +474,8 @@ DBG("enter\n");
 	return 0;
 }
 
-static int mic_snd_pcm_hw_params(snd_pcm_substream_t *substream,
-			     snd_pcm_hw_params_t *hw_params)
+static int mic_snd_pcm_hw_params(struct snd_pcm_substream *substream,
+			     struct snd_pcm_hw_params *hw_params)
 {
 DBG("enter\n");
 
@@ -483,7 +483,7 @@ DBG("enter\n");
 					params_buffer_bytes(hw_params));
 }
 
-static int mic_snd_pcm_hw_free(snd_pcm_substream_t *substream)
+static int mic_snd_pcm_hw_free(struct snd_pcm_substream *substream)
 {
 DBG("enter\n");
 
@@ -491,10 +491,10 @@ DBG("enter\n");
 	return 0;
 }
 
-static int mic_snd_pcm_prepare(snd_pcm_substream_t *substream)
+static int mic_snd_pcm_prepare(struct snd_pcm_substream *substream)
 {
 	struct mic_device *dev = snd_pcm_substream_chip(substream);
-        snd_pcm_runtime_t *runtime = substream->runtime;
+        struct snd_pcm_runtime *runtime = substream->runtime;
 	unsigned long flags;
 	int retval;
 
@@ -523,7 +523,7 @@ DBG("enter\n");
 	return retval;
 }
 
-static int mic_snd_pcm_trigger(snd_pcm_substream_t *substream, int cmd)
+static int mic_snd_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
 {
 	struct mic_device *dev = snd_pcm_substream_chip(substream);
 
@@ -547,7 +547,7 @@ DBG("trigger stop\n");
 	return 0;
 }
 
-static snd_pcm_uframes_t mic_snd_pcm_pointer(snd_pcm_substream_t *substream)
+static snd_pcm_uframes_t mic_snd_pcm_pointer(struct snd_pcm_substream *substream)
 {
 	struct mic_device *dev = snd_pcm_substream_chip(substream);
 	size_t ptr;
@@ -604,7 +604,7 @@ DBG("enter\n");
  */
 static int mic_init_snd(struct mic_device *dev)
 {
-	snd_card_t *card;
+	struct snd_card *card;
 	int retval = -ENOMEM;
 
 DBG("enter\n");
