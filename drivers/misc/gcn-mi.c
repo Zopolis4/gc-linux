@@ -1,9 +1,9 @@
 /*
- * arch/ppc/platforms/gcn-mi.c
+ * drivers/misc/gcn-mi.c
  *
  * Nintendo GameCube Memory Interface driver
- * Copyright (C) 2004-2005 The GameCube Linux Team
- * Copyright (C) 2004,2005 Albert Herranz
+ * Copyright (C) 2004-2007 The GameCube Linux Team
+ * Copyright (C) 2004,2005,2007 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -110,10 +110,10 @@ static irqreturn_t mi_handler(int this_irq, void *data)
 
 	spin_lock_irqsave(&priv->lock, flags);
 
-	address = readw(MI_ADDRLO) | (readw(MI_ADDRHI)<<16);
+	address = in_be16(MI_ADDRLO) | (in_be16(MI_ADDRHI)<<16);
 
 	ack = 0;
-	cause = readw(MI_ICR);
+	cause = in_be16(MI_ICR);
 
 	/* a fault was detected in some of the registered regions */
 	if ( (cause & 0xf) != 0) {
@@ -145,8 +145,8 @@ static irqreturn_t mi_handler(int this_irq, void *data)
 		}
 	}
 	ack |= cause;
-	writew(ack, MI_ICR); /* ack int */
-	writew(0, MI_0x4020); /* kind of ack */
+	out_be16(MI_ICR, ack); /* ack int */
+	out_be16(MI_0x4020, 0); /* kind of ack */
 
 	spin_unlock_irqrestore(&priv->lock, flags);
 
@@ -191,7 +191,7 @@ static int mi_setup_irq(struct mi_private *priv)
 	if (retval) {
 		mi_printk(KERN_ERR, "request of irq%d failed\n", priv->irq);
 	} else {
-		writew((1<<4), MI_IMR); /* do not mask all MI interrupts */
+		out_be16(MI_IMR, (1<<4)); /* do not mask all MI interrupts */
 	}
 
 	return retval;
@@ -412,13 +412,12 @@ int gcn_mi_region_protect(unsigned long physlo, unsigned long physhi, int type)
 	priv->regions_bitmap |= (1 << region);
 	priv->nr_regions++;
 
-	writew((readw(MI_PROT_TYPE) & ~(3 << 2*region))|(type << 2*region),
-	       MI_PROT_TYPE);
+	out_be16(MI_PROT_TYPE,
+		(in_be16(MI_PROT_TYPE) & ~(3 << 2*region))|(type << 2*region));
 	pagelo = physlo >> MI_PAGE_SHIFT;
 	pagehi = (physhi >> MI_PAGE_SHIFT) - 1;
-	writel((pagelo << 16) | pagehi,
-	       MI_PROT_REGION0 + 4*region);
-	writew(readw(MI_IMR) | (1 << region), MI_IMR);
+	out_be32(MI_PROT_REGION0 + 4*region, (pagelo << 16) | pagehi);
+	out_be16(MI_IMR, in_be16(MI_IMR) | (1 << region));
 
 	mi_printk(KERN_INFO, "protected region #%d"
 		  " from 0x%0lx to 0x%0lx with 0x%0x\n", region,
@@ -442,9 +441,9 @@ int gcn_mi_region_unprotect(int region)
 	if (region < 0 || region > MI_MAX_REGIONS)
 		return -EINVAL;
 	
-	writew(readw(MI_IMR) & ~(1 << region), MI_IMR);
-	writel(0, MI_PROT_REGION0 + 4*region);
-	writew(readw(MI_PROT_TYPE) | (MI_PROT_RW << 2*region), MI_PROT_TYPE);
+	out_be16(MI_IMR, in_be16(MI_IMR) & ~(1 << region));
+	out_be32(MI_PROT_REGION0 + 4*region, 0);
+	out_be16(MI_PROT_TYPE, in_be16(MI_PROT_TYPE) | (MI_PROT_RW << 2*region));
 
 	if ( (priv->regions_bitmap & (1<<region)) != 0 )
 		mi_printk(KERN_INFO, "region #%d unprotected\n", region);
@@ -462,7 +461,7 @@ void gcn_mi_region_unprotect_all(void)
 {
 	int region;
 
-	writew(0, MI_IMR);
+	out_be16(MI_IMR, 0);
 	for (region = 0; region < MI_MAX_REGIONS; region++) {
 		gcn_mi_region_unprotect(region);
 	}

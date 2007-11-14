@@ -2,8 +2,9 @@
  * drivers/misc/gcn-gqr.c
  *
  * Nintendo GameCube GQR driver
+ * Copyright (C) 2004-2007 The GameCube Linux Team
  * Copyright (C) 2004 Todd Jeffreys <todd@voidpointer.org>
- * Copyright (C) 2004 The GameCube Linux Team
+ * Copyright (C) 2007 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -121,7 +122,7 @@ static ctl_table gqr_table[] = {
 
 int __init gcngqr_init(void)
 {
-	if (!(gqr_table_header = register_sysctl_table(gqr_table,1))) {
+	if (!(gqr_table_header = register_sysctl_table(gqr_table))) {
 		printk(KERN_ERR "Unable to register GQR sysctl table\n");
 		return -ENOMEM;
 	}

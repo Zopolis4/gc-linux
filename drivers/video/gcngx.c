@@ -2,8 +2,9 @@
  * drivers/video/gcngx.c
  *
  * Nintendo GameCube GX driver extension
- * Copyright (C) 2004-2005 The GameCube Linux Team
+ * Copyright (C) 2004-2007 The GameCube Linux Team
  * Copyright (C) 2004,2005 Todd Jeffreys <todd@voidpointer.org>
+ * Copyright (C) 2007 Albert Herranz
  *
  * Parts borrowed heavily from libogc.  This driver would not have
  * been possible with this library.  Thanks!
@@ -75,8 +76,8 @@ extern struct fb_ops gcnfb_ops;
 #define VIDEO_PE_INTERRUPT_TOKEN_INTERRUPT  (1 << 2)
 #define VIDEO_PE_INTERRUPT_FINISH_INTERRUPT (1 << 3)
 
-#define	gcngx_disable_pe_interrupts() writew(readw(VIDEO_PE_INTERRUPT) & ~(VIDEO_PE_INTERRUPT_TOKEN_ENABLE | VIDEO_PE_INTERRUPT_FINISH_ENABLE),VIDEO_PE_INTERRUPT)
-#define gcngx_enable_pe_interrupts() { writew(readw(VIDEO_PE_INTERRUPT) | (VIDEO_PE_INTERRUPT_TOKEN_ENABLE | VIDEO_PE_INTERRUPT_FINISH_ENABLE | VIDEO_PE_INTERRUPT_TOKEN_INTERRUPT | VIDEO_PE_INTERRUPT_FINISH_INTERRUPT),VIDEO_PE_INTERRUPT); writew(0,VIDEO_PE_TOKEN); }
+#define	gcngx_disable_pe_interrupts() out_be16(VIDEO_PE_INTERRUPT,in_be16(VIDEO_PE_INTERRUPT) & ~(VIDEO_PE_INTERRUPT_TOKEN_ENABLE | VIDEO_PE_INTERRUPT_FINISH_ENABLE))
+#define gcngx_enable_pe_interrupts() { out_be16(VIDEO_PE_INTERRUPT,in_be16(VIDEO_PE_INTERRUPT) | (VIDEO_PE_INTERRUPT_TOKEN_ENABLE | VIDEO_PE_INTERRUPT_FINISH_ENABLE | VIDEO_PE_INTERRUPT_TOKEN_INTERRUPT | VIDEO_PE_INTERRUPT_FINISH_INTERRUPT)); out_be16(VIDEO_PE_TOKEN, 0); }
 
 #define VIDEO_CP_SR		((volatile u16 __iomem *)0xcc000000)
 #define VIDEO_CP_SR_OVERFLOW	(1 << 0)
@@ -126,7 +127,7 @@ static volatile u32* const WGPIPE  = (volatile u32*)0xCC008000;
 static irqreturn_t gcfb_fifo_irq_handler(int irq,void *dev_id)
 {
 	/* now handle the int */
-	u16 val = readw(VIDEO_CP_SR);
+	u16 val = in_be16(VIDEO_CP_SR);
 	
 	/* ENABLE_RUMBLE(); */
 	
@@ -185,8 +186,8 @@ static irqreturn_t gcfb_pe_finish_irq_handler(int irq,void *dev_id)
 	u16 val;
 	struct siginfo sig;
 	/* ack the interrupt */
-	val = readw(VIDEO_PE_INTERRUPT) | VIDEO_PE_INTERRUPT_FINISH_INTERRUPT;
-	writew(val,VIDEO_PE_INTERRUPT);
+	val = in_be16(VIDEO_PE_INTERRUPT) | VIDEO_PE_INTERRUPT_FINISH_INTERRUPT;
+	out_be16(VIDEO_PE_INTERRUPT, val);
 	
 	/* send SIG_PE_FINISH to the process */
 	if (mmap_task)
@@ -204,8 +205,8 @@ static irqreturn_t gcfb_pe_token_irq_handler(int irq,void *dev_id)
 	u16 val;
 	struct siginfo sig;
 	/* ack the interrupt */
-	val = readw(VIDEO_PE_INTERRUPT) | VIDEO_PE_INTERRUPT_TOKEN_INTERRUPT;
-	writew(val,VIDEO_PE_INTERRUPT);
+	val = in_be16(VIDEO_PE_INTERRUPT) | VIDEO_PE_INTERRUPT_TOKEN_INTERRUPT;
+	out_be16(VIDEO_PE_INTERRUPT, val);
 	/* send SIG_PE_TOKEN to the process */
 	if (mmap_task)
 	{
@@ -640,15 +641,15 @@ int gcngx_init(struct fb_info *info)
 		goto free_mem;
 	}
 	
-	if ((err=request_irq(IRQ_PE_TOKEN,gcfb_pe_token_irq_handler,SA_INTERRUPT,"PE Token",0)))
+	if ((err=request_irq(IRQ_PE_TOKEN,gcfb_pe_token_irq_handler,IRQF_DISABLED,"PE Token",0)))
 	{
 		goto free_iounmap;
 	}
-	if ((err=request_irq(IRQ_PE_FINISH,gcfb_pe_finish_irq_handler,SA_INTERRUPT,"PE Finish",0)))
+	if ((err=request_irq(IRQ_PE_FINISH,gcfb_pe_finish_irq_handler,IRQF_DISABLED,"PE Finish",0)))
 	{
 		goto free_pe_token;
 	}
-	if ((err=request_irq(IRQ_CP_FIFO,gcfb_fifo_irq_handler,SA_INTERRUPT,"CP FIFO",0)))
+	if ((err=request_irq(IRQ_CP_FIFO,gcfb_fifo_irq_handler,IRQF_DISABLED,"CP FIFO",0)))
 	{
 		goto free_pe_finish;
 	}

@@ -2,10 +2,10 @@
  * drivers/block/gcn-sd.c
  *
  * MMC/SD card block driver for the Nintendo GameCube
- * Copyright (C) 2004-2006 The GameCube Linux Team
+ * Copyright (C) 2004-2007 The GameCube Linux Team
  * Copyright (C) 2004,2005 Rob Reylink
  * Copyright (C) 2005 Todd Jeffreys
- * Copyright (C) 2005,2006 Albert Herranz
+ * Copyright (C) 2005,2006,2007 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -44,7 +44,7 @@
  * | B    | partition 7 | 61    | 15    |
  * +------+-------------+-------+-------+
  *
- * For example, run "mknod /dev/sdcardb1 b 61 9" to create a device file
+ * For example, run "mknod /dev/gcnsdb1 b 61 9" to create a device file
  * to access the 1st partition on the card inserted in memcard slot B.
  *
  */
@@ -67,7 +67,8 @@
  */
 #include <linux/mmc/host.h>
 #include <linux/mmc/card.h>
-#include <linux/mmc/protocol.h>
+#include <linux/mmc/mmc.h>
+#include <linux/mmc/sd.h>
 
 #include <linux/exi.h>
 
@@ -81,7 +82,7 @@ MODULE_AUTHOR(DRV_AUTHOR);
 MODULE_DESCRIPTION(DRV_DESCRIPTION);
 MODULE_LICENSE("GPL");
 
-static char sd_driver_version[] = "3.1-isobel";
+static char sd_driver_version[] = "4.0-isobel";
 
 #define sd_printk(level, format, arg...) \
 	printk(level DRV_MODULE_NAME ": " format , ## arg)
@@ -195,7 +196,7 @@ static const unsigned int tacc_mant[] = {
 #define MMC_SHIFT		3	/* 8 partitions */
 
 #define SD_MAJOR		61
-#define SD_NAME			"sdcard"
+#define SD_NAME			"gcnsd"
 
 #define KERNEL_SECTOR_SHIFT     9
 #define KERNEL_SECTOR_SIZE      (1 << KERNEL_SECTOR_SHIFT)	/*512 */
@@ -204,7 +205,7 @@ unsigned long unclean_slots = 0;
 
 enum {
 	__SD_MEDIA_CHANGED = 0,
-	__SD_DEL,
+	__SD_BAD_CARD,
 };
 
 
@@ -228,6 +229,7 @@ struct sd_host {
 	int refcnt;
 	unsigned long flags;
 #define SD_MEDIA_CHANGED	(1<<__SD_MEDIA_CHANGED)
+#define SD_BAD_CARD		(1<<__SD_BAD_CARD)
 
 	/* card related info */
 	struct mmc_card card;
@@ -263,6 +265,17 @@ struct sd_host {
 };
 
 static void sd_kill(struct sd_host *host);
+
+
+static void sd_card_set_bad(struct sd_host *host)
+{
+	set_bit(__SD_BAD_CARD, &host->flags);
+}
+
+static int sd_card_bad(struct sd_host *host)
+{
+	return test_bit(__SD_BAD_CARD, &host->flags);
+}
 
 /*
  *
@@ -367,7 +380,6 @@ static void mmc_decode_cid(struct mmc_card *card)
 		default:
 			sd_printk(KERN_ERR, "card has unknown MMCA"
 				  " version %d\n", card->csd.mmca_vsn);
-			mmc_card_set_bad(card);
 			break;
 		}
 	}
@@ -390,7 +402,6 @@ static void mmc_decode_csd(struct mmc_card *card)
 	if (csd_struct != 0 && csd_struct != 1 && csd_struct != 2) {
 		sd_printk(KERN_ERR, "unrecognised CSD structure"
 			  " version %d\n", csd_struct);
-		mmc_card_set_bad(card);
 		return;
 	}
 
@@ -543,10 +554,7 @@ static inline void spi_read(struct sd_host *host, void *data, size_t len)
 	 * This will help reducing CPU monopolization on large reads.
 	 *
 	 */
-	exi_transfer(exi_get_exi_channel(host->exi_device), data, len,
-		     EXI_OP_READ, EXI_CMD_IDI);
-	//exi_transfer(exi_get_exi_channel(host->exi_device), data, len,
-	//	     EXI_OP_READ, EXI_CMD_NODMA);
+	exi_dev_transfer(host->exi_device, data, len, EXI_OP_READ, EXI_CMD_IDI);
 }
 
 /* cycles are expressed in 8 clock cycles */
@@ -987,7 +995,7 @@ static int sd_reset_sequence(struct sd_host *host)
 		if (retval == 0x00) {
 			/* we found a SD card */
 			mmc_card_set_present(&host->card);
-			mmc_card_set_sd(&host->card);
+			host->card.type = MMC_TYPE_SD;
 			break;
 		}
 		if ((retval & R1_SPI_ILLEGAL_COMMAND)) {
@@ -1016,7 +1024,7 @@ static int sd_reset_sequence(struct sd_host *host)
 		}
 		if (retval != 0x00) {
 			DBG("MMC card, bad, retval=%02x\n", retval);
-			mmc_card_set_bad(&host->card);
+			sd_card_set_bad(host);
 		}
 	}
 
@@ -1033,7 +1041,7 @@ static int sd_welcome_card(struct sd_host *host)
 
 	/* soft reset the card */
 	retval = sd_reset_sequence(host);
-	if (retval < 0 || mmc_card_bad(&host->card))
+	if (retval < 0 || sd_card_bad(host))
 		goto out;
 
 	/* read Operating Conditions Register */
@@ -1076,7 +1084,7 @@ static int sd_welcome_card(struct sd_host *host)
 	goto out;
 
 err_bad_card:
-	mmc_card_set_bad(&host->card);
+	sd_card_set_bad(host);
 out:
 	return retval;
 }
@@ -1441,7 +1449,7 @@ static int sd_revalidate_disk(struct gendisk *disk)
 
 	/* get the card into a known status */
 	retval = sd_welcome_card(host);
-	if (retval < 0 || mmc_card_bad(&host->card)) {
+	if (retval < 0 || sd_card_bad(host)) {
 		retval = -ENOMEDIUM;
 		goto out;
 	}

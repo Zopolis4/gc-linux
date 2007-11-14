@@ -13,6 +13,7 @@
  *
  */
 
+#include <linux/io.h>
 #include <linux/string.h>
 #include <linux/console.h>
 #include <linux/font.h>
@@ -45,7 +46,7 @@ struct console_data_s {
 	int scrolled_lines;
 };
 
-static struct console_data_s *default_console;
+static struct console_data_s *default_console = NULL;
 
 #if 0
 static int console_set_color(int background, int foreground)
@@ -169,6 +170,10 @@ static void console_init(struct console_data_s *con, void *framebuffer,
 	while (c--)
 		*p++ = con->background;
 
+	flush_dcache_range((unsigned long)con->framebuffer,
+			   (unsigned long)(con->framebuffer +
+					   con->stride * con->yres));
+
 	default_console = con;
 }
 
@@ -217,8 +222,19 @@ static void gcn_con_write(struct console *co, const char *b,
  */
 void gcn_con_init(void)
 {
-	console_init(&gcn_con_data, (void *)(0xd0000000 | GCN_XFB_START),
+	unsigned long framebuffer = GCN_XFB_START;
+	unsigned long tfbl = 0x10000000 | (framebuffer>>5);
+	unsigned long bfbl = 0x10000000 | ((framebuffer+2*640)>>5);
+
+#if (GCN_XFB_START <= 0x00fffe00) 
+        #error Sorry, debug console needs the framebuffer at a higher address.
+#endif
+
+        out_be32(GCN_VI_TFBL, tfbl);
+        out_be32(GCN_VI_BFBL, bfbl);
+	console_init(&gcn_con_data, (void *)(0xd0000000 | framebuffer),
 		     640, GCN_VIDEO_LINES, 640 * 2);
+
 	gcn_con_puts("gcn-con: console initialized.\n");
 
 	gcn_con.write = gcn_con_write;

@@ -2,9 +2,9 @@
  * drivers/exi/exi-hw.h
  *
  * Nintendo GameCube EXpansion Interface support. Hardware routines.
- * Copyright (C) 2004-2005 The GameCube Linux Team
+ * Copyright (C) 2004-2007 The GameCube Linux Team
  * Copyright (C) 2004,2005 Todd Jeffreys <todd@voidpointer.org>
- * Copyright (C) 2005 Albert Herranz
+ * Copyright (C) 2005,2006,2007 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -163,24 +163,24 @@ static inline void __exi_transfer_raw_##_type(struct exi_channel *exi_channel,\
 	 */								\
 	if ((mode & EXI_OP_WRITE))					\
 		_on_write;						\
-	writel(_val, data_reg);						\
+	out_be32(data_reg, _val);					\
 									\
 	/* start transfer */						\
 	_val = EXI_CR_TSTART | EXI_CR_TLEN(sizeof(_type)) | (mode&0xf);	\
-	writel(_val, cr_reg);						\
+	out_be32(cr_reg, _val);						\
 									\
 	/* wait for transfer completion */				\
-	while(readl(cr_reg) & EXI_CR_TSTART)				\
+	while(in_be32(cr_reg) & EXI_CR_TSTART)				\
 		cpu_relax();						\
 									\
 	/* XXX check if we need that on immediate mode */		\
 	/* assert transfer complete interrupt */			\
 	spin_lock_irqsave(&exi_channel->io_lock, flags);		\
-	writel(readl(csr_reg) | EXI_CSR_TCINT, csr_reg);		\
+	out_be32(csr_reg, in_be32(csr_reg) | EXI_CSR_TCINT);		\
 	spin_unlock_irqrestore(&exi_channel->io_lock, flags);		\
 									\
 	if ((mode&0xf) != EXI_OP_WRITE) { /* read or read-write */	\
-		_val = readl(data_reg);					\
+		_val = in_be32(data_reg);				\
 		_on_read;						\
 	}								\
 }

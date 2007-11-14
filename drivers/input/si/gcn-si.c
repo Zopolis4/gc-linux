@@ -152,34 +152,34 @@ static void gcn_si_reset(void)
 
 	/* SICOUTBUF */
 	for (i = 0; i < SI_MAX_PORTS; ++i)
-		writel(0, SICOUTBUF(i));
+		out_be32(SICOUTBUF(i), 0);
 
 	/* SICINBUFH */
 	for (i = 0; i < SI_MAX_PORTS; ++i)
-		writel(0, SICINBUFH(i));
+		out_be32(SICINBUFH(i), 0);
 
 	/* SICINBUFL */
 	for (i = 0; i < SI_MAX_PORTS; ++i)
-		writel(0, SICINBUFL(i));
+		out_be32(SICINBUFL(i), 0);
 
-	writel(0, SIPOLL);
-	writel(0, SICOMCSR);
-	writel(0, SISR);
+	out_be32(SIPOLL, 0);
+	out_be32(SICOMCSR, 0);
+	out_be32(SISR, 0);
 
-	writel(0, (void __iomem *)0xcc006480);
-	writel(0, (void __iomem *)0xcc006484);
-	writel(0, (void __iomem *)0xcc006488);
-	writel(0, (void __iomem *)0xcc00648c);
+	out_be32((void __iomem *)0xcc006480, 0);
+	out_be32((void __iomem *)0xcc006484, 0);
+	out_be32((void __iomem *)0xcc006488, 0);
+	out_be32((void __iomem *)0xcc00648c, 0);
 
-	writel(0, (void __iomem *)0xcc006490);
-	writel(0, (void __iomem *)0xcc006494);
-	writel(0, (void __iomem *)0xcc006498);
-	writel(0, (void __iomem *)0xcc00649c);
+	out_be32((void __iomem *)0xcc006490, 0);
+	out_be32((void __iomem *)0xcc006494, 0);
+	out_be32((void __iomem *)0xcc006498, 0);
+	out_be32((void __iomem *)0xcc00649c, 0);
 
-	writel(0, (void __iomem *)0xcc0064a0);
-	writel(0, (void __iomem *)0xcc0064a4);
-	writel(0, (void __iomem *)0xcc0064a8);
-	writel(0, (void __iomem *)0xcc0064ac);
+	out_be32((void __iomem *)0xcc0064a0, 0);
+	out_be32((void __iomem *)0xcc0064a4, 0);
+	out_be32((void __iomem *)0xcc0064a8, 0);
+	out_be32((void __iomem *)0xcc0064ac, 0);
 }
 
 /**
@@ -190,10 +190,10 @@ static void gcn_si_wait_transfer_done(void)
 	unsigned long transfer_done;
 
 	do {
-		transfer_done = readl(SICOMCSR) & (1 << 31);
+		transfer_done = in_be32(SICOMCSR) & (1 << 31);
 	} while (!transfer_done);
 
-	writel(readl(SICOMCSR) | (1 << 31), SICOMCSR);	/* ack IRQ */
+	out_be32(SICOMCSR, in_be32(SICOMCSR) | (1 << 31));	/* ack IRQ */
 }
 
 /**
@@ -203,14 +203,14 @@ static unsigned long gcn_si_get_controller_id(int port)
 {
 	gcn_si_reset();
 
-	writel(0, SIPOLL);
-	writel(0, SICOUTBUF(port));
-	writel(0x80000000, SISR);
-	writel(0xd0010001 | port << 1, SICOMCSR);
+	out_be32(SIPOLL, 0);
+	out_be32(SICOUTBUF(port), 0);
+	out_be32(SISR, 0x80000000);
+	out_be32(SICOMCSR, 0xd0010001 | port << 1);
 
 	gcn_si_wait_transfer_done();
 
-	return readl((void __iomem *)0xcc006480);
+	return in_be32((void __iomem *)0xcc006480);
 }
 
 /**
@@ -224,10 +224,10 @@ static void gcn_si_set_polling(void)
 	for (i = 0; i < SI_MAX_PORTS; ++i) {
 		switch (port[i].id) {
 		case CTL_PAD:
-			writel(0x00400300, SICOUTBUF(i));
+			out_be32(SICOUTBUF(i), 0x00400300);
 			break;
 		case CTL_KEYBOARD:
-			writel(0x00540000, SICOUTBUF(i));
+			out_be32(SICOUTBUF(i), 0x00540000);
 			break;
 		default:
 			continue;
@@ -235,9 +235,9 @@ static void gcn_si_set_polling(void)
 		pad_bits |= 1 << (7 - i);
 	}
 
-	writel(0x00F70200 | pad_bits, SIPOLL);
-	writel(0x80000000, SISR);
-	writel(0xC0010801, SICOMCSR);
+	out_be32(SIPOLL, 0x00F70200 | pad_bits);
+	out_be32(SISR, 0x80000000);
+	out_be32(SICOMCSR, 0xC0010801);
 
 	gcn_si_wait_transfer_done();
 }
@@ -247,13 +247,8 @@ static void gcn_si_set_polling(void)
  */
 static void gcn_si_set_rumbling(int portno, int rumble)
 {
-	if (rumble) {
-		writel(0x00400001, SICOUTBUF(portno));
-		writel(0x80000000, SISR);
-	} else {
-		writel(0x00400000, SICOUTBUF(portno));
-		writel(0x80000000, SISR);
-	}
+	out_be32(SICOUTBUF(portno), 0x00400000 | (rumble)?1:0);
+	out_be32(SISR, 0x80000000);
 }
 
 /**
@@ -267,8 +262,8 @@ static void gcn_si_timer(unsigned long portno)
 	unsigned char oldkey;
 	int i;
 
-	raw[0] = readl(SICINBUFH(portno));
-	raw[1] = readl(SICINBUFL(portno));
+	raw[0] = in_be32(SICINBUFH(portno));
+	raw[1] = in_be32(SICINBUFL(portno));
 
 	switch (sdev->id) {
 	case CTL_PAD:

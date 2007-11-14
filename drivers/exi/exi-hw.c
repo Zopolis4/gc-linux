@@ -2,9 +2,9 @@
  * drivers/exi/exi-hw.c
  *
  * Nintendo GameCube EXpansion Interface support. Hardware routines.
- * Copyright (C) 2004-2005 The GameCube Linux Team
+ * Copyright (C) 2004-2007 The GameCube Linux Team
  * Copyright (C) 2004,2005 Todd Jeffreys <todd@voidpointer.org>
- * Copyright (C) 2005 Albert Herranz
+ * Copyright (C) 2005,2006,2007 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -190,10 +190,10 @@ void exi_select_raw(struct exi_channel *exi_channel, unsigned int device,
 	 * Preserve interrupt masks while setting the CS line bits.
 	 */
 	spin_lock_irqsave(&exi_channel->io_lock, flags);
-	csr = readl(csr_reg);
+	csr = in_be32(csr_reg);
 	csr &= (EXI_CSR_EXTINMASK | EXI_CSR_TCINTMASK | EXI_CSR_EXIINTMASK);
 	csr |= ((1<<device) << 7) | (freq << 4);
-	writel(csr, csr_reg);
+	out_be32(csr_reg, csr);
 	spin_unlock_irqrestore(&exi_channel->io_lock, flags);
 }
 
@@ -215,9 +215,9 @@ void exi_deselect_raw(struct exi_channel *exi_channel)
 	 * Preserve interrupt masks while clearing the CS line bits.
 	 */
 	spin_lock_irqsave(&exi_channel->io_lock, flags);
-	csr = readl(csr_reg);
+	csr = in_be32(csr_reg);
 	csr &= (EXI_CSR_EXTINMASK | EXI_CSR_TCINTMASK | EXI_CSR_EXIINTMASK);
-	writel(csr, csr_reg);
+	out_be32(csr_reg, csr);
 	spin_unlock_irqrestore(&exi_channel->io_lock, flags);
 }
 
@@ -290,15 +290,15 @@ static void exi_start_idi_transfer_raw(struct exi_channel *exi_channel,
 		}
 	}
 
-	writel(val, io_base + EXI_DATA);
+	out_be32(io_base + EXI_DATA, val);
 
 	/* enable the Transfer Complete interrupt */
 	spin_lock_irqsave(&exi_channel->io_lock, flags);
-	writel(readl(csr_reg) | EXI_CSR_TCINTMASK, csr_reg);
+	out_be32(csr_reg, in_be32(csr_reg) | EXI_CSR_TCINTMASK);
 	spin_unlock_irqrestore(&exi_channel->io_lock, flags);
 
 	/* start the transfer */
-	writel(EXI_CR_TSTART | EXI_CR_TLEN(len) | (mode&0xf), io_base + EXI_CR);
+	out_be32(io_base + EXI_CR, EXI_CR_TSTART | EXI_CR_TLEN(len) | (mode&0xf));
 }
 
 /*
@@ -313,7 +313,7 @@ static void exi_end_idi_transfer_raw(struct exi_channel *exi_channel,
 	BUG_ON(len < 1 || len > 4);
 
 	if ((mode&0xf) != EXI_OP_WRITE) {
-		val = readl(io_base + EXI_DATA);
+		val = in_be32(io_base + EXI_DATA);
 		switch(len) {
 			case 1:
 				*((u8*)data) = (u8)(val >> 24);
@@ -352,19 +352,19 @@ static void exi_start_dma_transfer_raw(struct exi_channel *exi_channel,
 	 * special hardware, like SD cards.
 	 * Indeed, we need all 1s here.
 	 */
-	writel(~0, io_base + EXI_DATA);
+	out_be32(io_base + EXI_DATA, ~0);
 
 	/* setup address and length of transfer */
-	writel(data, io_base + EXI_MAR);
-	writel(len, io_base + EXI_LENGTH);
+	out_be32(io_base + EXI_MAR, data);
+	out_be32(io_base + EXI_LENGTH, len);
 
 	/* enable the Transfer Complete interrupt */
 	spin_lock_irqsave(&exi_channel->io_lock, flags);
-	writel(readl(csr_reg) | EXI_CSR_TCINTMASK, csr_reg);
+	out_be32(csr_reg, in_be32(csr_reg) | EXI_CSR_TCINTMASK);
 	spin_unlock_irqrestore(&exi_channel->io_lock, flags);
 
 	/* start the transfer */
-	writel(EXI_CR_TSTART | EXI_CR_DMA | (mode&0xf), io_base + EXI_CR);
+	out_be32(io_base + EXI_CR, EXI_CR_TSTART | EXI_CR_DMA | (mode&0xf));
 }
 
 
@@ -379,16 +379,16 @@ static void exi_wait_for_transfer_raw(struct exi_channel *exi_channel)
 
 	/* we don't want TCINTs to disturb us while waiting */
 	spin_lock_irqsave(&exi_channel->io_lock, flags);
-	writel(readl(csr_reg) & ~EXI_CSR_TCINTMASK, csr_reg);
+	out_be32(csr_reg, in_be32(csr_reg) & ~EXI_CSR_TCINTMASK);
 	spin_unlock_irqrestore(&exi_channel->io_lock, flags);
 
 	/* busy-wait for transfer complete */
-	while(readl(cr_reg) & EXI_CR_TSTART)
+	while(in_be32(cr_reg) & EXI_CR_TSTART)
 		cpu_relax();
 
 	/* ack the Transfer Complete interrupt */
 	spin_lock_irqsave(&exi_channel->io_lock, flags);
-	writel(readl(csr_reg) | EXI_CSR_TCINT, csr_reg);
+	out_be32(csr_reg, in_be32(csr_reg) | EXI_CSR_TCINT);
 	spin_unlock_irqrestore(&exi_channel->io_lock, flags);
 }
 
@@ -1083,7 +1083,7 @@ static irqreturn_t exi_irq_handler(int irq, void *dev_id)
 		 */
 		spin_lock_irqsave(&exi_channel->io_lock, flags);
 
-		csr = readl(csr_reg);
+		csr = in_be32(csr_reg);
 		mask = csr & (EXI_CSR_EXTINMASK |
 			      EXI_CSR_TCINTMASK | EXI_CSR_EXIINTMASK);
 		status = csr & (mask << 1);
@@ -1099,7 +1099,7 @@ static irqreturn_t exi_irq_handler(int irq, void *dev_id)
 		    exi_channel->csr);
 
 		/* ack all for this channel */
-                writel(csr | status, csr_reg);
+                out_be32(csr_reg, csr | status);
 
 		spin_unlock_irqrestore(&exi_channel->io_lock, flags);
 
@@ -1128,18 +1128,18 @@ static int exi_enable_event(struct exi_channel *exi_channel,
 	unsigned long flags;
 
 	spin_lock_irqsave(&exi_channel->io_lock, flags);
-	csr = readl(csr_reg);
+	csr = in_be32(csr_reg);
 
 	/* ack and enable the associated interrupt */
 	switch (event_id) {
 	case EXI_EVENT_INSERT:
-		writel(csr | (EXI_CSR_EXTIN | EXI_CSR_EXTINMASK), csr_reg);
+		out_be32(csr_reg, csr | (EXI_CSR_EXTIN | EXI_CSR_EXTINMASK));
 		break;
 	case EXI_EVENT_TC:
-		//writel(csr | (EXI_CSR_TCINT | EXI_CSR_TCINTMASK), csr_reg);
+		//out_be32(csr_reg, csr | (EXI_CSR_TCINT | EXI_CSR_TCINTMASK));
 		break;
 	case EXI_EVENT_IRQ:
-		writel(csr | (EXI_CSR_EXIINT | EXI_CSR_EXIINTMASK), csr_reg);
+		out_be32(csr_reg, csr | (EXI_CSR_EXIINT | EXI_CSR_EXIINTMASK));
 		break;
 	}
 	spin_unlock_irqrestore(&exi_channel->io_lock, flags);
@@ -1157,18 +1157,18 @@ static int exi_disable_event(struct exi_channel *exi_channel,
 	unsigned long flags;
 
 	spin_lock_irqsave(&exi_channel->io_lock, flags);
-	csr = readl(csr_reg);
+	csr = in_be32(csr_reg);
 
 	/* ack and disable the associated interrupt */
 	switch (event_id) {
 	case EXI_EVENT_INSERT:
-		writel((csr | EXI_CSR_EXTIN) & ~EXI_CSR_EXTINMASK, csr_reg);
+		out_be32(csr_reg, (csr | EXI_CSR_EXTIN) & ~EXI_CSR_EXTINMASK);
 		break;
 	case EXI_EVENT_TC:
-		//writel((csr | EXI_CSR_TCINT) & ~EXI_CSR_TCINTMASK, csr_reg);
+		//out_be32(csr_reg, (csr | EXI_CSR_TCINT) & ~EXI_CSR_TCINTMASK);
 		break;
 	case EXI_EVENT_IRQ:
-		writel((csr | EXI_CSR_EXIINT) & ~EXI_CSR_EXIINTMASK, csr_reg);
+		out_be32(csr_reg, (csr | EXI_CSR_EXIINT) & ~EXI_CSR_EXIINTMASK);
 		break;
 	}
 	spin_unlock_irqrestore(&exi_channel->io_lock, flags);
@@ -1251,8 +1251,8 @@ static void exi_quiesce_channel(struct exi_channel *exi_channel, u32 csr_mask)
 	exi_wait_for_transfer_raw(exi_channel);
 
 	/* ack and mask all interrupts */
-	writel(EXI_CSR_TCINT  | EXI_CSR_EXIINT | EXI_CSR_EXTIN | csr_mask,
-	       exi_channel->io_base + EXI_CSR);
+	out_be32(exi_channel->io_base + EXI_CSR,
+		EXI_CSR_TCINT  | EXI_CSR_EXIINT | EXI_CSR_EXTIN | csr_mask);
 }
 
 /*
@@ -1303,7 +1303,7 @@ u32 exi_get_id(struct exi_device *exi_device)
 		if ((__to_channel(exi_channel) == 0 ||
 		     __to_channel(exi_channel) == 1)
 		    && exi_device->eid.device == 0) {
-			if (readl(csr_reg) & EXI_CSR_EXT) {
+			if (in_be32(csr_reg) & EXI_CSR_EXT) {
 				id = EXI_ID_NONE;
 			}
 		} 
@@ -1318,7 +1318,7 @@ u32 exi_get_id(struct exi_device *exi_device)
 int exi_get_ext_line(struct exi_channel *exi_channel)
 {
 	u32 __iomem *csr_reg = exi_channel->io_base + EXI_CSR;
-	return (readl(csr_reg) & EXI_CSR_EXT)?1:0;
+	return (in_be32(csr_reg) & EXI_CSR_EXT)?1:0;
 }
 
 /*

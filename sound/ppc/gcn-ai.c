@@ -362,7 +362,8 @@ static int __init alsa_card_gcn_init(void)
 	strcpy(card->shortname, card->driver);
 	sprintf(card->longname, "Nintendo GameCube Audio Interface");
 
-	if (request_irq(DSP_IRQ, snd_gcn_interrupt, SA_INTERRUPT | SA_SHIRQ, 
+	if (request_irq(DSP_IRQ, snd_gcn_interrupt,
+			IRQF_DISABLED | IRQF_SHARED, 
 			card->shortname,gcn_audio)) {
 		snd_printk(KERN_ERR "%s: unable to grab IRQ %d\n",
 			   card->shortname, DSP_IRQ);

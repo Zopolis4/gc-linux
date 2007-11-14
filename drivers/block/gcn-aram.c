@@ -2,9 +2,9 @@
  * drivers/block/gcn-aram.c
  *
  * Nintendo GameCube Auxiliary RAM block driver
- * Copyright (C) 2004-2005 The GameCube Linux Team
+ * Copyright (C) 2004-2007 The GameCube Linux Team
  * Copyright (C) 2005 Todd Jeffreys <todd@voidpointer.org>
- * Copyright (C) 2005 Albert Herranz
+ * Copyright (C) 2005,2007 Albert Herranz
  *
  * Based on previous work by Franz Lehner.
  *
@@ -31,7 +31,7 @@
 #define DRV_AUTHOR      "Todd Jeffreys <todd@voidpointer.org>, " \
 			"Albert Herranz"
 
-static char aram_driver_version[] = "2.0";
+static char aram_driver_version[] = "3.0";
 
 #define aram_printk(level, format, arg...) \
 	printk(level DRV_MODULE_NAME ": " format , ## arg)
@@ -90,7 +90,7 @@ static char aram_driver_version[] = "2.0";
 /*
  * Driver settings
  */
-#define ARAM_NAME		"aram"
+#define ARAM_NAME		"gcnaram"
 #define ARAM_MAJOR		Z2RAM_MAJOR
 
 #define ARAM_SECTOR_SIZE	PAGE_SIZE
@@ -163,11 +163,11 @@ static void aram_start_dma_transfer(struct aram_device *adev,
 	BUG_ON((dma_addr & ARAM_DMA_ALIGN) != 0 ||
 	       (dma_len & ARAM_DMA_ALIGN) != 0);
 
-	writel(dma_addr, io_base + AR_DMA_MMADDR);
-	writel(aram_addr, io_base + AR_DMA_ARADDR);
+	out_be32(io_base + AR_DMA_MMADDR, dma_addr);
+	out_be32(io_base + AR_DMA_ARADDR, aram_addr);
 
 	/* writing the low-word kicks off the DMA */
-	writel(rq_dir_to_aram_dir(adev->req) | dma_len, io_base + AR_DMA_CNT);
+	out_be32(io_base + AR_DMA_CNT, rq_dir_to_aram_dir(adev->req) | dma_len);
 }
 
 /*
@@ -183,7 +183,7 @@ static irqreturn_t aram_irq_handler(int irq, void *dev0)
 
 	spin_lock_irqsave(&adev->io_lock, flags);
 
-	csr = readw(csr_reg);
+	csr = in_be16(csr_reg);
 
 	/*
 	 * Do nothing if the interrupt is not targetted for us.
@@ -196,7 +196,7 @@ static irqreturn_t aram_irq_handler(int irq, void *dev0)
 
 	/* strictly ack the ARAM interrupt, and nothing more */
 	csr &= ~(DSP_CSR_AIDINT | DSP_CSR_DSPINT);
-	writew(csr, csr_reg);
+	out_be16(csr_reg, csr);
 
 	/* pick up current request being serviced */
 	req = adev->req;
@@ -462,13 +462,13 @@ static void aram_quiesce(struct aram_device *adev)
 	 * Disable ARAM interrupts, but do not accidentally ack non-ARAM ones.
 	 */
 	spin_lock_irqsave(&adev->io_lock, flags);
-	csr = readw(csr_reg);
+	csr = in_be16(csr_reg);
 	csr &= ~(DSP_CSR_AIDINT | DSP_CSR_DSPINT | DSP_CSR_ARINTMASK);
-	writew(csr, csr_reg);
+	out_be16(csr_reg, csr);
 	spin_unlock_irqrestore(&adev->io_lock, flags);
 
 	/* wait until pending transfers are finished */
-	while(readw(csr_reg) & DSP_CSR_DSPDMA)
+	while(in_be16(csr_reg) & DSP_CSR_DSPDMA)
 		cpu_relax();
 }
 
@@ -484,7 +484,7 @@ static int aram_init_irq(struct aram_device *adev)
 
 	/* request interrupt */
 	retval = request_irq(adev->irq, aram_irq_handler,
-			     SA_INTERRUPT | SA_SHIRQ,
+			     IRQF_DISABLED | IRQF_SHARED,
 			     DRV_MODULE_NAME, adev);
 	if (retval) {
 		aram_printk(KERN_ERR, "request of irq%d failed\n", adev->irq);
@@ -496,10 +496,10 @@ static int aram_init_irq(struct aram_device *adev)
 	 * As in the other cases, preserve the AI and DSP interrupts.
 	 */
 	spin_lock_irqsave(&adev->io_lock, flags);
-	csr = readw(csr_reg);
+	csr = in_be16(csr_reg);
 	csr |= (DSP_CSR_ARINT | DSP_CSR_ARINTMASK | DSP_CSR_PIINT);
 	csr &= ~(DSP_CSR_AIDINT | DSP_CSR_DSPINT);
-	writew(csr, csr_reg);
+	out_be16(csr_reg, csr);
 	spin_unlock_irqrestore(&adev->io_lock, flags);
 
 out:

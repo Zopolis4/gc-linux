@@ -2,10 +2,10 @@
  * drivers/video/gcnfb.c
  *
  * Nintendo GameCube "Flipper" chipset frame buffer driver
- * Copyright (C) 2004-2006 The GameCube Linux Team
+ * Copyright (C) 2004-2007 The GameCube Linux Team
  * Copyright (C) 2004 Michael Steil <mist@c64.org>
  * Copyright (C) 2004,2005 Todd Jeffreys <todd@voidpointer.org>
- * Copyright (C) 2006 Albert Herranz
+ * Copyright (C) 2006,2007 Albert Herranz
  *
  * Based on vesafb (c) 1998 Gerd Knorr <kraxel@goldbach.in-berlin.de>
  *
@@ -183,14 +183,14 @@ static struct vi_video_mode vi_video_modes[] = {
 };
 
 
-static struct fb_fix_screeninfo gcnfb_fix __initdata = {
+static struct fb_fix_screeninfo gcnfb_fix = {
 	.id = DRV_MODULE_NAME,
 	.type = FB_TYPE_PACKED_PIXELS,
 	.visual = FB_VISUAL_TRUECOLOR,	/* lies, lies, lies, ... */
 	.accel = FB_ACCEL_NONE,
 };
 
-static struct fb_var_screeninfo gcnfb_var __initdata = {
+static struct fb_var_screeninfo gcnfb_var = {
 	.bits_per_pixel = 16,
 	.activate = FB_ACTIVATE_NOW,
 	.height = -1,
@@ -325,7 +325,7 @@ static inline uint32_t rgbrgb16toycbycr(uint16_t rgb1, uint16_t rgb2)
  */
 static inline int vi_get_mode(struct vi_ctl *ctl)
 {
-	return (readw(ctl->io_base + VI_DCR) >> 8) & 3;
+	return (in_be16(ctl->io_base + VI_DCR) >> 8) & 3;
 }
 
 /*
@@ -349,7 +349,7 @@ static inline int vi_is_mode_progressive(__u32 vmode)
  */
 static inline int vi_can_do_progressive(struct vi_ctl *ctl)
 {
-	return readw(ctl->io_base + VI_VISEL) & VI_VISEL_PROGRESSIVE;
+	return in_be16(ctl->io_base + VI_VISEL) & VI_VISEL_PROGRESSIVE;
 }
 
 /*
@@ -362,7 +362,7 @@ static void vi_mode_guess(struct vi_ctl *ctl)
 
 	if (vi_current_video_mode == NULL) {
 		/* auto detection */
-		if (readl(io_base + VI_HTR0) == 0x4B6A01B0) {
+		if (in_be32(io_base + VI_HTR0) == 0x4B6A01B0) {
 			/* PAL50 */
 			vi_current_video_mode = vi_video_modes + VI_VM_PAL50;
 		} else {
@@ -403,13 +403,13 @@ void vi_set_framebuffer(struct vi_ctl *ctl, u32 addr)
 	void __iomem *io_base = ctl->io_base;
 
 	/* set top field */
-	writel(0x10000000 | (addr >> 5), io_base + VI_TFBL);
+	out_be32(io_base + VI_TFBL, 0x10000000 | (addr >> 5));
 
 	/* set bottom field */
 	if (!vi_is_mode_progressive(info->var.vmode)) {
 		addr += info->fix.line_length;
 	}
-	writel(0x10000000 | (addr >> 5), io_base + VI_BFBL);
+	out_be32(io_base + VI_BFBL, 0x10000000 | (addr >> 5));
 }
 
 /*
@@ -449,20 +449,20 @@ static void vi_enable_interrupts(struct vi_ctl *ctl, int enable)
 		}
 
 		/* first dot, first line */
-		writel(VI_DI_INT | VI_DI_ENB |
-		       (1 << VI_DI_VCT_SHIFT) | (1 << VI_DI_HCT_SHIFT),
-		       io_base + VI_DI0);
+		out_be32(io_base + VI_DI0,
+			VI_DI_INT | VI_DI_ENB |
+		       (1 << VI_DI_VCT_SHIFT) | (1 << VI_DI_HCT_SHIFT));
 		/* last dot, last line */
-		writel(VI_DI_INT | VI_DI_ENB |
-		       (vtrap << VI_DI_VCT_SHIFT) | (htrap << VI_DI_HCT_SHIFT),
-		       io_base + VI_DI1);
+		out_be32(io_base + VI_DI1,
+			VI_DI_INT | VI_DI_ENB |
+		       (vtrap << VI_DI_VCT_SHIFT) | (htrap << VI_DI_HCT_SHIFT));
 	} else {
-		writel(0, io_base + VI_DI0);
-		writel(0, io_base + VI_DI1);
+		out_be32(io_base + VI_DI0, 0);
+		out_be32(io_base + VI_DI1, 0);
 	}
 	/* these two are currently not used */
-	writel(0, io_base + VI_DI2);
-	writel(0, io_base + VI_DI3);
+	out_be32(io_base + VI_DI2, 0);
+	out_be32(io_base + VI_DI3, 0);
 }
 
 /*
@@ -493,33 +493,33 @@ static irqreturn_t vi_irq_handler(int irq, void *dev)
 	u32 val;
 
 	/* DI0 and DI1 are used to account for the vertical retrace */
-	val = readl(io_base + VI_DI0);
+	val = in_be32(io_base + VI_DI0);
 	if (val & VI_DI_INT) {
 		ctl->in_vtrace = 0;
 		gcngx_dispatch_vtrace(ctl); /* backwards compatibility */
 
-		writel(val & ~VI_DI_INT, io_base + VI_DI0);
+		out_be32(io_base + VI_DI0, val & ~VI_DI_INT);
 		return IRQ_HANDLED;
 	}
-	val = readl(io_base + VI_DI1);
+	val = in_be32(io_base + VI_DI1);
 	if (val & VI_DI_INT) {
 		ctl->in_vtrace = 1;
 		vi_dispatch_vtrace(ctl);
 		gcngx_dispatch_vtrace(ctl); /* backwards compatibility */
 
-		writel(val & ~VI_DI_INT, io_base + VI_DI1);
+		out_be32(io_base + VI_DI1, val & ~VI_DI_INT);
 		return IRQ_HANDLED;
 	}
 
 	/* currently unused, just in case */
-	val = readl(io_base + VI_DI2);
+	val = in_be32(io_base + VI_DI2);
 	if (val & VI_DI_INT) {
-		writel(val & ~VI_DI_INT, io_base + VI_DI2);
+		out_be32(io_base + VI_DI2, val & ~VI_DI_INT);
 		return IRQ_HANDLED;
 	}
-	val = readl(io_base + VI_DI3);
+	val = in_be32(io_base + VI_DI3);
 	if (val & VI_DI_INT) {
-		writel(val & ~VI_DI_INT, io_base + VI_DI3);
+		out_be32(io_base + VI_DI3, val & ~VI_DI_INT);
 		return IRQ_HANDLED;
 	}
 
@@ -562,18 +562,18 @@ int gcnfb_restorefb(struct fb_info *info)
 
 	/* initialize video registers */
 	for (i = 0; i < 7; i++) {
-		writel(vi_current_video_mode->regs[i],
-		       io_base + i * sizeof(__u32));
+		out_be32(io_base + i * sizeof(__u32),
+			vi_current_video_mode->regs[i]);
 	}
-	writel(vi_current_video_mode->regs[VI_TFBR / sizeof(__u32)],
-	       io_base + VI_TFBR);
-	writel(vi_current_video_mode->regs[VI_BFBR / sizeof(__u32)],
-	       io_base + VI_BFBR);
-	writel(vi_current_video_mode->regs[VI_DPV / sizeof(__u32)],
-	       io_base + VI_DPV);
+	out_be32(io_base + VI_TFBR,
+		vi_current_video_mode->regs[VI_TFBR / sizeof(__u32)]);
+	out_be32(io_base + VI_BFBR,
+		vi_current_video_mode->regs[VI_BFBR / sizeof(__u32)]);
+	out_be32(io_base + VI_DPV,
+		vi_current_video_mode->regs[VI_DPV / sizeof(__u32)]);
 	for (i = 16; i < 32; i++) {
-		writel(vi_current_video_mode->regs[i],
-		       io_base + i * sizeof(__u32));
+		out_be32(io_base + i * sizeof(__u32),
+			vi_current_video_mode->regs[i]);
 	}
 
 	/* enable the video retrace handling */
@@ -912,7 +912,7 @@ static int gcnfb_probe(struct platform_device *dev)
 
 	platform_set_drvdata(dev, info);
 
-	if (request_irq(VI_IRQ, vi_irq_handler, SA_INTERRUPT, "gcn-vi", dev)) {
+	if (request_irq(VI_IRQ, vi_irq_handler, IRQF_DISABLED, "gcn-vi", dev)) {
 		printk(KERN_ERR "unable to register IRQ %u\n", VI_IRQ);
 		goto err_request_irq;
 	}

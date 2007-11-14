@@ -26,6 +26,7 @@
 
 #include "gamecube.h"
 
+#if 0
 /*
  * include/asm-ppc/io.h assumes everyone else that is not APUS provides
  * these.  Since we don't have either PCI or ISA busses, these are only
@@ -34,11 +35,12 @@
 unsigned long isa_io_base = 0;
 unsigned long isa_mem_base = 0;
 unsigned long pci_dram_offset = 0;
+#endif
 
 /*
  * These are used in setup_arch. *
  */
-#define CSR_REG ((void __iomem*)0xCC00500A)
+#define CSR_REG			((void __iomem *)0xCC00500A)
 #define  DSP_CSR_RES		(1<<0)
 #define  DSP_CSR_PIINT		(1<<1)
 #define  DSP_CSR_HALT		(1<<2)
@@ -51,9 +53,8 @@ unsigned long pci_dram_offset = 0;
 #define  DSP_CSR_DSPDMA		(1<<9)
 #define  DSP_CSR_RESETXXX	(1<<11)
 
-#define AUDIO_DMA_LENGTH    *(volatile u_int16_t *)(0xCC005036)
-#define  AI_DCL_PLAY        (1<<15)
-#define StopSample()   AUDIO_DMA_LENGTH &= ~AI_DCL_PLAY
+#define AUDIO_DMA_LENGTH	((void __iomem *)0xCC005036)
+#define  AI_DCL_PLAY		(1<<15)
 
 static unsigned long gamecube_find_end_of_memory(void)
 {
@@ -62,8 +63,9 @@ static unsigned long gamecube_find_end_of_memory(void)
 
 static void gamecube_map_io(void)
 {
-	/* all RAM and more ??? */
+#ifdef CONFIG_GAMECUBE_DEBUG_CONSOLE
 	io_block_mapping(0xd0000000, 0, 0x02000000, _PAGE_IO);
+#endif
 
 	/* access to hardware registers */
 	io_block_mapping(0xcc000000, 0x0c000000, 0x00100000, _PAGE_IO);
@@ -72,7 +74,7 @@ static void gamecube_map_io(void)
 static void gamecube_restart(char *cmd)
 {
 	local_irq_disable();
-	writeb(0x00, FLIPPER_RESET);
+	out_8(FLIPPER_RESET, 0x00);
 }
 
 static void gamecube_power_off(void)
@@ -100,7 +102,7 @@ static int gamecube_get_irq(void)
 	int irq;
 	u32 irq_status;
 
-	irq_status = readl(FLIPPER_ICR) & readl(FLIPPER_IMR);
+	irq_status = in_be32(FLIPPER_ICR) & in_be32(FLIPPER_IMR);
 	if (irq_status == 0)
 		return -1;	/* no more IRQs pending */
 
@@ -133,7 +135,7 @@ static void flipper_end_irq(unsigned int irq)
 }
 
 static struct hw_interrupt_type flipper_pic = {
-	.typename	= " FLIPPER-PIC ",
+	.typename	= "flipper-pic",
 	.enable		= flipper_unmask_irq,
 	.disable	= flipper_mask_irq,
 	.ack		= flipper_mask_and_ack_irq,
@@ -145,8 +147,8 @@ static void gamecube_init_IRQ(void)
 	int i;
 
 	/* mask and ack all IRQs */
-	writel(0x00000000, FLIPPER_IMR);
-	writel(0xffffffff, FLIPPER_ICR);
+	out_be32(FLIPPER_IMR, 0x00000000);
+	out_be32(FLIPPER_ICR, 0xffffffff);
 
 	for (i = 0; i < FLIPPER_NR_IRQS; i++)
 		irq_desc[i].chip = &flipper_pic;
@@ -169,13 +171,9 @@ static int gamecube_show_cpuinfo(struct seq_file *m)
 static void gamecube_setup_arch(void)
 {
 #ifdef CONFIG_GAMECUBE_CONSOLE
-#if (GCN_XFB_START <= 0x00fffe00) 
-	#error Sorry, debug console needs the framebuffer at a higher address.
-#endif
-	writel(0x10000000 | (GCN_XFB_START>>5), GCN_VI_TFBL);
-	writel(0x10000000 | ((GCN_XFB_START+2*640)>>5), GCN_VI_BFBL);
 	gcn_con_init();
 #endif
+
 	/* On my North American Launch cube booted
 	 * via PSO, I get a flooding of ARAM interrupts and audio MADNESS 
 	 * when I first boot.  By clearing the AI interrupts and stopping 
@@ -183,9 +181,11 @@ static void gamecube_setup_arch(void)
 	 */
 
 	/* ack and clear the interrupts for the AI line */
-	writew(DSP_CSR_PIINT | DSP_CSR_AIDINT | DSP_CSR_ARINT | DSP_CSR_DSPINT,CSR_REG);
+	out_be16(CSR_REG,
+		 DSP_CSR_PIINT|DSP_CSR_AIDINT|DSP_CSR_ARINT|DSP_CSR_DSPINT);
 	/* stop any audio */
-	StopSample();
+	out_be16(AUDIO_DMA_LENGTH,
+		 in_be16(AUDIO_DMA_LENGTH) & ~AI_DCL_PLAY);
 }
 
 #ifdef CONFIG_KEXEC
