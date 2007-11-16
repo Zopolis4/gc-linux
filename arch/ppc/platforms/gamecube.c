@@ -56,19 +56,48 @@ unsigned long pci_dram_offset = 0;
 #define AUDIO_DMA_LENGTH	((void __iomem *)0xCC005036)
 #define  AI_DCL_PLAY		(1<<15)
 
-static unsigned long gamecube_find_end_of_memory(void)
+static unsigned long __init gamecube_find_end_of_memory(void)
 {
 	return GCN_MEM_SIZE;
 }
 
-static void gamecube_map_io(void)
+static void __init gamecube_map_io(void)
 {
-#ifdef CONFIG_GAMECUBE_DEBUG_CONSOLE
+#ifdef CONFIG_GAMECUBE_CONSOLE
 	io_block_mapping(0xd0000000, 0, 0x02000000, _PAGE_IO);
 #endif
 
 	/* access to hardware registers */
 	io_block_mapping(0xcc000000, 0x0c000000, 0x00100000, _PAGE_IO);
+}
+
+static void __init gamecube_calibrate_decr(void)
+{
+	int freq, divisor;
+	freq = 162000000;
+	divisor = 4;
+	tb_ticks_per_jiffy = freq / HZ / divisor;
+	tb_to_us = mulhwu_scale_factor(freq/divisor, 1000000);
+}
+
+static void __init gamecube_setup_arch(void)
+{
+#ifdef CONFIG_GAMECUBE_CONSOLE
+	gcn_con_init();
+#endif
+
+	/* On my North American Launch cube booted
+	 * via PSO, I get a flooding of ARAM interrupts and audio MADNESS 
+	 * when I first boot.  By clearing the AI interrupts and stopping 
+	 * audio, it goes away and I can boot normally.
+	 */
+
+	/* ack and clear the interrupts for the AI line */
+	out_be16(CSR_REG,
+		 DSP_CSR_PIINT|DSP_CSR_AIDINT|DSP_CSR_ARINT|DSP_CSR_DSPINT);
+	/* stop any audio */
+	out_be16(AUDIO_DMA_LENGTH,
+		 in_be16(AUDIO_DMA_LENGTH) & ~AI_DCL_PLAY);
 }
 
 static void gamecube_restart(char *cmd)
@@ -86,15 +115,6 @@ static void gamecube_power_off(void)
 static void gamecube_halt(void)
 {
 	gamecube_restart(NULL);
-}
-
-static void gamecube_calibrate_decr(void)
-{
-	int freq, divisor;
-	freq = 162000000;
-	divisor = 4;
-	tb_ticks_per_jiffy = freq / HZ / divisor;
-	tb_to_us = mulhwu_scale_factor(freq/divisor, 1000000);
 }
 
 static int gamecube_get_irq(void)
@@ -142,7 +162,7 @@ static struct hw_interrupt_type flipper_pic = {
 	.end		= flipper_end_irq,
 };
 
-static void gamecube_init_IRQ(void)
+static void __init gamecube_init_IRQ(void)
 {
 	int i;
 
@@ -166,26 +186,6 @@ static int gamecube_show_cpuinfo(struct seq_file *m)
 	seq_printf(m, "bus width\t: 64 bit\n");
 
 	return 0;
-}
-
-static void gamecube_setup_arch(void)
-{
-#ifdef CONFIG_GAMECUBE_CONSOLE
-	gcn_con_init();
-#endif
-
-	/* On my North American Launch cube booted
-	 * via PSO, I get a flooding of ARAM interrupts and audio MADNESS 
-	 * when I first boot.  By clearing the AI interrupts and stopping 
-	 * audio, it goes away and I can boot normally.
-	 */
-
-	/* ack and clear the interrupts for the AI line */
-	out_be16(CSR_REG,
-		 DSP_CSR_PIINT|DSP_CSR_AIDINT|DSP_CSR_ARINT|DSP_CSR_DSPINT);
-	/* stop any audio */
-	out_be16(AUDIO_DMA_LENGTH,
-		 in_be16(AUDIO_DMA_LENGTH) & ~AI_DCL_PLAY);
 }
 
 #ifdef CONFIG_KEXEC
@@ -214,20 +214,19 @@ platform_init(unsigned long r3, unsigned long r4, unsigned long r5,
 	}
 #endif
 
+	ppc_md.find_end_of_memory = gamecube_find_end_of_memory;
+	ppc_md.setup_io_mappings = gamecube_map_io;
+	ppc_md.calibrate_decr = gamecube_calibrate_decr;
 	ppc_md.setup_arch = gamecube_setup_arch;
+
 	ppc_md.show_cpuinfo = gamecube_show_cpuinfo;
 
-	ppc_md.init_IRQ = gamecube_init_IRQ;
 	ppc_md.get_irq = gamecube_get_irq;
+	ppc_md.init_IRQ = gamecube_init_IRQ;
 
 	ppc_md.restart = gamecube_restart;
 	ppc_md.power_off = gamecube_power_off;
 	ppc_md.halt = gamecube_halt;
-
-	ppc_md.calibrate_decr = gamecube_calibrate_decr;
-
-	ppc_md.find_end_of_memory = gamecube_find_end_of_memory;
-	ppc_md.setup_io_mappings = gamecube_map_io;
 
 #ifdef CONFIG_KEXEC
 	ppc_md.machine_shutdown = gamecube_shutdown;

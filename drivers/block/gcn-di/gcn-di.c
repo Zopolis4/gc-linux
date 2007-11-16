@@ -1867,7 +1867,7 @@ static void di_request_done(struct di_command *cmd)
 /*
  * Processes a block layer request.
  */
-static void di_do_request(request_queue_t *q)
+static void di_do_request(struct request_queue *q)
 {
 	struct di_device *ddev = q->queuedata;
 	struct di_command *cmd = &ddev->req_cmd;
