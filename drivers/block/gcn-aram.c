@@ -224,7 +224,7 @@ static irqreturn_t aram_irq_handler(int irq, void *dev0)
 /*
  * Performs block layer requests.
  */
-static void aram_do_request(request_queue_t *q)
+static void aram_do_request(struct request_queue *q)
 {
 	struct aram_device *adev = q->queuedata;
 	struct request *req;

@@ -1243,7 +1243,7 @@ static int sd_io_thread(void *param)
 static void sd_end_request(struct request *req, unsigned long nr_sectors)
 {
 	int uptodate = (req->errors == 0) ? 1 : 0;
-	request_queue_t *q = req->q;
+	struct request_queue *q = req->q;
 	unsigned long flags;
 
 	spin_lock_irqsave(q->queue_lock, flags);
@@ -1256,7 +1256,7 @@ static void sd_end_request(struct request *req, unsigned long nr_sectors)
 /*
  * Processes a block layer request.
  */
-static void sd_do_request(request_queue_t * q)
+static void sd_do_request(struct request_queue * q)
 {
 	struct sd_host *host = q->queuedata;
 	struct request *req;
