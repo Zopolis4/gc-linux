@@ -2,9 +2,9 @@
  * drivers/exi/exi-hw.c
  *
  * Nintendo GameCube EXpansion Interface support. Hardware routines.
- * Copyright (C) 2004-2007 The GameCube Linux Team
+ * Copyright (C) 2004-2008 The GameCube Linux Team
  * Copyright (C) 2004,2005 Todd Jeffreys <todd@voidpointer.org>
- * Copyright (C) 2005,2006,2007 Albert Herranz
+ * Copyright (C) 2005,2006,2007,2008 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -226,7 +226,7 @@ void exi_deselect_raw(struct exi_channel *exi_channel)
  *	@exi_channel:	channel
  *	@data:		pointer to data being read/writen
  *	@len:		length of data
- *	@mode:		direction of transfer (EXI_OP_READ or EXI_OP_WRITE)
+ *	@mode:		direction of transfer (EXI_OP_{READ,READWRITE,WRITE})
  *
  *	Read or write data on a given EXI channel.
  *
@@ -376,6 +376,8 @@ static void exi_wait_for_transfer_raw(struct exi_channel *exi_channel)
 	u32 __iomem *cr_reg = exi_channel->io_base + EXI_CR;
 	u32 __iomem *csr_reg = exi_channel->io_base + EXI_CSR;
 	unsigned long flags;
+	unsigned long deadline = jiffies + 2*HZ;
+	int borked = 0;
 
 	/* we don't want TCINTs to disturb us while waiting */
 	spin_lock_irqsave(&exi_channel->io_lock, flags);
@@ -383,8 +385,15 @@ static void exi_wait_for_transfer_raw(struct exi_channel *exi_channel)
 	spin_unlock_irqrestore(&exi_channel->io_lock, flags);
 
 	/* busy-wait for transfer complete */
-	while(in_be32(cr_reg) & EXI_CR_TSTART)
+	while((in_be32(cr_reg)&EXI_CR_TSTART) && !borked) {
 		cpu_relax();
+		borked = time_after(jiffies, deadline);
+	}
+
+	if (borked) {
+		exi_printk(KERN_ERR, "exi transfer took too long, "
+			   "is your hardware ok?");
+	}
 
 	/* ack the Transfer Complete interrupt */
 	spin_lock_irqsave(&exi_channel->io_lock, flags);
@@ -805,6 +814,7 @@ static int exi_run_command(struct exi_command *cmd)
 		exi_deselect_raw(exi_channel);
 		break;
 	case EXI_OP_READ:
+	case EXI_OP_READWRITE:
 	case EXI_OP_WRITE:
 		spin_lock_irqsave(&exi_channel->lock, flags);
 		result = exi_cmd_transfer(cmd);
@@ -918,7 +928,7 @@ void exi_deselect(struct exi_channel *exi_channel)
  *	@exi_channel:	channel
  *	@data:		pointer to data being read/written
  *	@len:		length of data
- *	@opcode:	operation code (EXI_OP_READ or EXI_OP_WRITE)
+ *	@opcode:	operation code (EXI_OP_{READ,READWRITE,WRITE})
  *
  *	Read or write data on a given EXI channel.
  */

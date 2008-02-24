@@ -2,9 +2,9 @@
  * drivers/misc/gcn-gqr.c
  *
  * Nintendo GameCube GQR driver
- * Copyright (C) 2004-2007 The GameCube Linux Team
+ * Copyright (C) 2004-2008 The GameCube Linux Team
  * Copyright (C) 2004 Todd Jeffreys <todd@voidpointer.org>
- * Copyright (C) 2007 Albert Herranz
+ * Copyright (C) 2007,2008 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -25,18 +25,6 @@
 static u32 gqr_values[8];
 static struct ctl_table_header *gqr_table_header = NULL;
 
-enum {
-        CTL_GQRDIR = 1,
-        CTL_GQR0,
-        CTL_GQR1,
-        CTL_GQR2,
-        CTL_GQR3,
-        CTL_GQR4,
-        CTL_GQR5,
-        CTL_GQR6,
-        CTL_GQR7,
-};
-
 #define SPR_GQR0 912
 #define SPR_GQR1 913
 #define SPR_GQR2 914
@@ -46,8 +34,8 @@ enum {
 #define SPR_GQR6 918
 #define SPR_GQR7 919
 
-#define MFSPR_CASE(i) case CTL_GQR##i: *((u32*)table->data) = mfspr(SPR_GQR##i)
-#define MTSPR_CASE(i) case CTL_GQR##i: mtspr(SPR_GQR##i,*((u32*)table->data))
+#define MFSPR_CASE(i) case (i): *((u32*)table->data) = mfspr(SPR_GQR##i)
+#define MTSPR_CASE(i) case (i): mtspr(SPR_GQR##i,*((u32*)table->data))
 
 static int proc_dogqr(ctl_table *table,int write,struct file *file,
 		      void __user *buffer,size_t *lenp,loff_t *ppos)
@@ -55,7 +43,7 @@ static int proc_dogqr(ctl_table *table,int write,struct file *file,
 	int r;
 	
 	if (!write) {		/* if they are reading, update the variable */
-		switch (table->ctl_name) {
+		switch (table->data - (void *)gqr_values) {
 			MFSPR_CASE(0); break;
 			MFSPR_CASE(1); break;
 			MFSPR_CASE(2); break;
@@ -72,7 +60,7 @@ static int proc_dogqr(ctl_table *table,int write,struct file *file,
 	r = proc_dointvec(table,write,file,buffer,lenp,ppos);
 	
 	if ((r == 0) && write) {  /* if they are writing, update the reg */
-		switch (table->ctl_name) {
+		switch (table->data - (void *)gqr_values) {
 			MTSPR_CASE(0); break;
 			MTSPR_CASE(1); break;
 			MTSPR_CASE(2); break;
@@ -90,7 +78,7 @@ static int proc_dogqr(ctl_table *table,int write,struct file *file,
 }
 
 #define DECLARE_GQR(i) {  \
-		.ctl_name     = CTL_GQR##i,       \
+		.ctl_name     = CTL_UNNUMBERED,       \
 		.procname     = "gqr" #i,         \
 		.data         = gqr_values + i,   \
 		.maxlen       = sizeof(int),      \
@@ -112,7 +100,7 @@ static ctl_table gqr_members[] = {
 
 static ctl_table gqr_table[] = {
 	{
-		.ctl_name = CTL_GQRDIR,
+		.ctl_name = CTL_UNNUMBERED,
 		.procname = "gqr",
 		.mode     = 0555,
 		.child    = gqr_members		

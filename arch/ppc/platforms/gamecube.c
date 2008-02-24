@@ -2,7 +2,7 @@
  * arch/ppc/platforms/gamecube.c
  *
  * Nintendo GameCube board-specific support
- * Copyright (C) 2004-2005 The GameCube Linux Team
+ * Copyright (C) 2004-2008 The GameCube Linux Team
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -40,7 +40,7 @@ unsigned long pci_dram_offset = 0;
 /*
  * These are used in setup_arch. *
  */
-#define CSR_REG			((void __iomem *)0xCC00500A)
+#define CSR_REG			((void __iomem *)(GCN_IO1_BASE+0x500A))
 #define  DSP_CSR_RES		(1<<0)
 #define  DSP_CSR_PIINT		(1<<1)
 #define  DSP_CSR_HALT		(1<<2)
@@ -53,7 +53,7 @@ unsigned long pci_dram_offset = 0;
 #define  DSP_CSR_DSPDMA		(1<<9)
 #define  DSP_CSR_RESETXXX	(1<<11)
 
-#define AUDIO_DMA_LENGTH	((void __iomem *)0xCC005036)
+#define AUDIO_DMA_LENGTH	((void __iomem *)(GCN_IO1_BASE+0x5036))
 #define  AI_DCL_PLAY		(1<<15)
 
 static unsigned long __init gamecube_find_end_of_memory(void)
@@ -68,7 +68,10 @@ static void __init gamecube_map_io(void)
 #endif
 
 	/* access to hardware registers */
-	io_block_mapping(0xcc000000, 0x0c000000, 0x00100000, _PAGE_IO);
+	io_block_mapping(GCN_IO1_BASE, GCN_IO1_PHYS_BASE, 0x00100000, _PAGE_IO);
+#if GCN_IO1_BASE != GCN_IO2_BASE
+	io_block_mapping(GCN_IO2_BASE, GCN_IO2_PHYS_BASE, 0x00100000, _PAGE_IO);
+#endif
 }
 
 static void __init gamecube_calibrate_decr(void)
@@ -177,13 +180,11 @@ static void __init gamecube_init_IRQ(void)
 static int gamecube_show_cpuinfo(struct seq_file *m)
 {
 	seq_printf(m, "vendor\t\t: IBM\n");
+#ifdef CONFIG_GAMECUBE_WII
+	seq_printf(m, "machine\t\t: Nintendo Wii\n");
+#else
 	seq_printf(m, "machine\t\t: Nintendo GameCube\n");
-	seq_printf(m, "cpu MHz\t\t: 486\n");
-	seq_printf(m, "clock\t\t: 486MHz\n");
-	seq_printf(m, "cache size\t: 256 KB\n");
-	seq_printf(m, "bus speed\t: 162 MHz\n");
-	seq_printf(m, "mem bus speed\t: 200 MHz\n");
-	seq_printf(m, "bus width\t: 64 bit\n");
+#endif
 
 	return 0;
 }

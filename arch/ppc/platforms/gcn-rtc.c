@@ -2,8 +2,8 @@
  * arch/ppc/platforms/gcn-rtc.c
  *
  * Nintendo GameCube RTC/SRAM functions
- * Copyright (C) 2004-2005 The GameCube Linux Team
- * Copyright (C) 2005 Albert Herranz
+ * Copyright (C) 2004-2008 The GameCube Linux Team
+ * Copyright (C) 2005,2008 Albert Herranz
  *
  * Based on gamecube_time.c from Torben Nielsen.
  *
@@ -157,7 +157,7 @@ static int rtc_set_time(struct exi_device *dev, unsigned long aval)
 /**
  * Platform specific function to return the current date and time.
  */
-static unsigned long gcn_get_rtc_time(void)
+unsigned long gcn_get_rtc_time(void)
 {
 	struct rtc_private *priv = &rtc_private;
 
@@ -168,7 +168,7 @@ static unsigned long gcn_get_rtc_time(void)
  * Platform specific function to set the current date and time.
  *
  */
-static int gcn_set_rtc_time(unsigned long nowtime)
+int gcn_set_rtc_time(unsigned long nowtime)
 {
 	struct rtc_private *priv = &rtc_private;
 

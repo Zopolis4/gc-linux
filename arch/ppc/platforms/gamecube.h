@@ -2,7 +2,7 @@
  * arch/ppc/platforms/gamecube.h
  *
  * Nintendo GameCube board-specific definitions
- * Copyright (C) 2004-2005 The GameCube Linux Team
+ * Copyright (C) 2004-2008 The GameCube Linux Team
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -16,6 +16,15 @@
 
 #include <asm/ppcboot.h>
 
+#define GCN_IO1_PHYS_BASE	0x0c000000
+#ifdef CONFIG_GAMECUBE_WII
+#define GCN_IO2_PHYS_BASE	0x0d000000
+#else
+#define GCN_IO2_PHYS_BASE	0x0c000000
+#endif
+#define GCN_IO1_BASE	(0xc0000000 | GCN_IO1_PHYS_BASE)
+#define GCN_IO2_BASE	(0xc0000000 | GCN_IO2_PHYS_BASE)
+
 /*
  * There are 14 IRQs in total. Each has a corresponding bit in both
  * the Interrupt Cause (ICR) and Interrupt Mask (IMR) registers.
@@ -25,13 +34,13 @@
  * asserting the corresponding bit in ICR.
  */
 #define FLIPPER_NR_IRQS		(14)
-#define FLIPPER_ICR		((void __iomem *)0xcc003000)
-#define FLIPPER_IMR		((void __iomem *)0xcc003004)
+#define FLIPPER_ICR		((void __iomem *)(GCN_IO1_BASE+0x3000))
+#define FLIPPER_IMR		((void __iomem *)(GCN_IO1_BASE+0x3004))
 
 /*
  * Anything written here automagically puts us through reset.
  */
-#define FLIPPER_RESET		((void __iomem *)0xcc003024)
+#define FLIPPER_RESET		((void __iomem *)(GCN_IO1_BASE+0x3024))
 
 /*
  * This is the current memory layout for the GameCube Linux port.
@@ -132,8 +141,8 @@
 /*
  * These registers control where the visible framebuffer is located.
  */
-#define GCN_VI_TFBL		((void __iomem *)0xcc00201c)
-#define GCN_VI_BFBL		((void __iomem *)0xcc002024)
+#define GCN_VI_TFBL		((void __iomem *)(GCN_IO1_BASE+0x201c))
+#define GCN_VI_BFBL		((void __iomem *)(GCN_IO1_BASE+0x2024))
 
 
 /* arch/ppc/platforms/gcn-time.c */

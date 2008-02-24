@@ -2,10 +2,10 @@
  * drivers/exi/exi-driver.c
  *
  * Nintendo GameCube Expansion Interface support. Driver model routines.
- * Copyright (C) 2004-2006 The GameCube Linux Team
+ * Copyright (C) 2004-2008 The GameCube Linux Team
  * Copyright (C) 2004 Arthur Othieno <a.othieno@bluewin.ch>
  * Copyright (C) 2004,2005 Todd Jeffreys <todd@voidpointer.org>
- * Copyright (C) 2005,2006 Albert Herranz
+ * Copyright (C) 2005,2006,2007,2008 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -36,7 +36,7 @@ struct exi_map_id_to_name {
 };
 
 
-static void exi_device_release(struct device *dev);
+static void exi_bus_device_release(struct device *dev);
 static int exi_bus_match(struct device *dev, struct device_driver *drv);
 
 
@@ -48,17 +48,17 @@ static struct bus_type exi_bus_type = {
 static struct device exi_bus_devices[EXI_MAX_CHANNELS] = {
 	[0] = {
 		.bus_id = "exi0",
-		.release = exi_device_release,
+		.release = exi_bus_device_release,
 		.parent = NULL
 	},
 	[1] = {
 		.bus_id = "exi1",
-		.release = exi_device_release,
+		.release = exi_bus_device_release,
 		 .parent = NULL
 	},
 	[2] = {
 		.bus_id = "exi2",
-		.release = exi_device_release,
+		.release = exi_bus_device_release,
 		.parent = NULL
 	},
 };
@@ -152,11 +152,14 @@ static int exi_bus_match(struct device *dev, struct device_driver *drv)
 }
 
 /*
- * Internal. Device release.
+ * Internal. Bus device release.
  */
-static void exi_device_release(struct device *dev)
+static void exi_bus_device_release(struct device *dev)
 {
+	exi_printk(KERN_WARNING, "exi_bus_device_release called!\n");
 }
+
+static void exi_device_release(struct device *dev);
 
 /*
  * Internal. Initialize an exi_device structure.
@@ -175,9 +178,23 @@ static void exi_device_init(struct exi_device *exi_device,
 
 	exi_device->dev.parent = &exi_bus_devices[channel];
 	exi_device->dev.bus = &exi_bus_type;
-	sprintf(exi_device->dev.bus_id, "%01x:%01x", channel, device);
+	sprintf(exi_device->dev.bus_id, "exi%01x:%01x", channel, device);
 	exi_device->dev.platform_data = to_exi_channel(channel);
 	exi_device->dev.release = exi_device_release;
+}
+
+/*
+ * Internal. Device release.
+ */
+static void exi_device_release(struct device *dev)
+{
+	struct exi_device *exi_device = to_exi_device(dev);
+	unsigned int channel, device;
+
+	channel = exi_device->eid.channel;
+	device = exi_device->eid.device;
+
+	exi_device_init(exi_device, channel, device);
 }
 
 /**
@@ -258,9 +275,6 @@ static int exi_device_remove(struct device *dev)
 	if (exi_driver->remove)
 		exi_driver->remove(exi_device);
 
-	if (!exi_is_dying(exi_device))
-		exi_device->eid.id = EXI_ID_INVALID;
-
 	return 0;
 }
 
@@ -302,30 +316,28 @@ static void exi_device_rescan(struct exi_device *exi_device)
 {
 	unsigned int id;
 
-	/* do nothing if the device is marked to die */
-	if (exi_is_dying(exi_device))
-		return;
-
 	/* now ID the device */
 	id = exi_get_id(exi_device);
 
 	if (exi_device->eid.id != EXI_ID_INVALID) {
 		/* device removed or changed */
-		exi_printk(KERN_INFO, "removed [%s] id=0x%08x %s\n",
+		exi_printk(KERN_INFO, "about to remove [%s] id=0x%08x %s\n",
 			   exi_device->dev.bus_id,
 			   exi_device->eid.id,
 			   exi_name_id(exi_device->eid.id));
 		device_unregister(&exi_device->dev);
+		exi_printk(KERN_INFO, "remove completed\n");
 		exi_device->eid.id = EXI_ID_INVALID;
 	}
 
 	if (id != EXI_ID_INVALID) {
 		/* a new device has been found */
-		exi_printk(KERN_INFO, "added [%s] id=0x%08x %s\n",
+		exi_printk(KERN_INFO, "about to add [%s] id=0x%08x %s\n",
 			   exi_device->dev.bus_id,
 			   id, exi_name_id(id));
 		exi_device->eid.id = id;
 		device_register(&exi_device->dev);
+		exi_printk(KERN_INFO, "add completed\n");
 	}
 
 	exi_update_ext_status(exi_get_exi_channel(exi_device));

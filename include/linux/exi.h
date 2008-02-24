@@ -2,10 +2,10 @@
  * include/linux/exi.h
  *
  * Nintendo GameCube EXpansion Interface definitions
- * Copyright (C) 2004-2005 The GameCube Linux Team
+ * Copyright (C) 2004-2008 The GameCube Linux Team
  * Copyright (C) 2004 Arthur Othieno <a.othieno@bluewin.ch>
  * Copyright (C) 2004,2005 Todd Jeffreys <todd@voidpointer.org>
- * Copyright (C) 2005 Albert Herranz
+ * Copyright (C) 2005,2007,2008 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -307,6 +307,12 @@ static inline void exi_dev_read(struct exi_device *dev, void *data, size_t len)
 static inline void exi_dev_write(struct exi_device *dev, void *data, size_t len)
 {
 	exi_dev_transfer(dev, data, len, EXI_OP_WRITE, 0);
+}
+
+static inline void exi_dev_readwrite(struct exi_device *dev, void *data,
+				     size_t len)
+{
+	exi_dev_transfer(dev, data, len, EXI_OP_READWRITE, 0);
 }
 
 static inline int exi_dev_set_freq(struct exi_device *dev, unsigned int freq)

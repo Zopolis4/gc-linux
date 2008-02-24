@@ -2,8 +2,8 @@
  * sound/ppc/gcn-mic.c
  *
  * Nintendo Microphone (DOL-022) driver
- * Copyright (C) 2006-2007 The GameCube Linux Team
- * Copyright (C) 2006,2007 Albert Herranz
+ * Copyright (C) 2006-2008 The GameCube Linux Team
+ * Copyright (C) 2006,2007,2008 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -280,12 +280,14 @@ static struct snd_pcm_hardware mic_snd_capture = {
         .periods_max = 1024,
 };
 
+#if 0
 static unsigned int period_bytes[] = { 32, 64, 128 };
 static struct snd_pcm_hw_constraint_list constraints_period_bytes = {
 	.count = ARRAY_SIZE(period_bytes),
 	.list = period_bytes,
 	.mask = 0,
 };
+#endif
 
 /*
  *

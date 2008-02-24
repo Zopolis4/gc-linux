@@ -2,9 +2,9 @@
  * drivers/net/gcn-bba.c
  *
  * Nintendo GameCube Broadband Adapter driver
- * Copyright (C) 2004-2005 The GameCube Linux Team
+ * Copyright (C) 2004-2008 The GameCube Linux Team
  * Copyright (C) 2005 Todd Jeffreys
- * Copyright (C) 2004,2005 Albert Herranz
+ * Copyright (C) 2004,2005,2006,2007,2008 Albert Herranz
  *
  * Based on previous work by Stefan Esser, Franz Lehner, Costis and tmbinc.
  *
@@ -379,7 +379,7 @@ struct bba_private {
 
 static int bba_event_handler(struct exi_channel *exi_channel,
 			     unsigned int event, void *dev0);
-static int bba_reset(struct net_device *dev);
+static int bba_setup_hardware(struct net_device *dev);
 
 /*
  * Opens the network device.
@@ -403,7 +403,7 @@ static int bba_open(struct net_device *dev)
 
 	/* reset the hardware to a known state */
 	exi_dev_take(priv->exi_device);
-	retval = bba_reset(dev);
+	retval = bba_setup_hardware(dev);
 	exi_dev_give(priv->exi_device);
 
 	/* inform the network layer that we are ready */
@@ -737,9 +737,13 @@ static int bba_rx(struct net_device *dev, int budget)
 /*
  * Input/Output thread. Sends and receives packets.
  */
-static int bba_io_thread(void *param)
+static int bba_io_thread(void *bba_priv)
 {
-	struct bba_private *priv = param;
+	struct bba_private *priv = bba_priv;
+//	struct task_struct *me = current;
+//	struct sched_param param = { .sched_priority = MAX_RT_PRIO-1 };
+
+//	sched_setscheduler(me, SCHED_FIFO, &param);
 
 	set_user_nice(current, -20);
 	current->flags |= PF_NOFREEZE;
@@ -840,10 +844,22 @@ out:
 }
 
 /*
+ * Retrieves the MAC address of the adapter.
+ * Caller has already taken the exi channel.
+ */
+static void bba_retrieve_ether_addr(struct net_device *dev)
+{
+	bba_ins(BBA_NAFR_PAR0, dev->dev_addr, ETH_ALEN);
+	if (!is_valid_ether_addr(dev->dev_addr)) {
+		random_ether_addr(dev->dev_addr);
+	}
+}
+
+/*
  * Resets the hardware to a known state.
  * Caller has already taken the exi channel.
  */
-static int bba_reset(struct net_device *dev)
+static void bba_reset_hardware(struct net_device *dev)
 {
 	struct bba_private *priv = (struct bba_private *)dev->priv;
 
@@ -881,7 +897,7 @@ static int bba_reset(struct net_device *dev)
 	bba_out8(0x5c, bba_in8(0x5c) | 4);
 	udelay(1000);
 
-	/* accept broadcast, assert int for every two packets received */
+	/* accept broadcast, assert int for every packet received */
 	bba_out8(BBA_NCRB, BBA_NCRB_AB | BBA_NCRB_1_PACKET_PER_INT);
 
 	/* setup receive interrupt time out, in 40ns units */
@@ -900,20 +916,21 @@ static int bba_reset(struct net_device *dev)
 	bba_out12(BBA_RWP, BBA_INIT_RWP);
 	bba_out12(BBA_RRP, BBA_INIT_RRP);
 
-	/* start receiver */
-	bba_out8(BBA_NCRA, BBA_NCRA_SR);
-
 	/* packet memory won't contain packets with RW, FO, CRC errors */
 	bba_out8(BBA_GCA, BBA_GCA_ARXERRB);
+}
 
-	/* retrieve MAC address */
-	bba_ins(BBA_NAFR_PAR0, dev->dev_addr, ETH_ALEN);
-	if (!is_valid_ether_addr(dev->dev_addr)) {
-		random_ether_addr(dev->dev_addr);
-	}
+/*
+ * Prepares the hardware for operation.
+ * Caller has already taken the exi channel.
+ */
+static int bba_setup_hardware(struct net_device *dev)
+{
+	/* reset hardware to a sane state */
+	bba_reset_hardware(dev);
 
-	/* setup broadcast address */
-	memset(dev->broadcast, 0xff, ETH_ALEN);
+	/* start receiver */
+	bba_out8(BBA_NCRA, BBA_NCRA_SR);
 
 	/* clear all interrupts */
 	bba_out8(BBA_IR, 0xFF);
@@ -992,7 +1009,7 @@ static int bba_event_handler(struct exi_channel *exi_channel,
 	if (status & mask) {
 		DBG("bba: killing interrupt!\n");
 		/* reset the adapter so that we can continue working */
-		bba_reset(dev);
+		bba_setup_hardware(dev);
 		goto out;
 	}
 
@@ -1074,17 +1091,18 @@ static inline void bba_write(void *data, size_t len)
  */
 static int __devinit bba_init_device(struct exi_device *exi_device)
 {
-	struct net_device *dev = NULL;
+	struct net_device *dev;
 	struct bba_private *priv;
 	int err;
 
 	/* allocate a network device */
 	dev = alloc_etherdev(sizeof(*priv));
 	if (!dev) {
-		printk(KERN_ERR "unable to allocate net device\n");
+		bba_printk(KERN_ERR, "unable to allocate net device\n");
 		err = -ENOMEM;
 		goto err_out;
 	}
+	SET_NETDEV_DEV(dev, &exi_device->dev);
 
 	/* we use the event system from the EXI driver, so no irq here */
 	dev->irq = 0;
@@ -1094,8 +1112,6 @@ static int __devinit bba_init_device(struct exi_device *exi_device)
 	dev->stop = bba_close;
 	dev->hard_start_xmit = bba_start_xmit;
 	dev->get_stats = bba_get_stats;
-
-	SET_MODULE_OWNER(dev);
 
 	priv = netdev_priv(dev);
 	priv->dev = dev;
@@ -1115,25 +1131,33 @@ static int __devinit bba_init_device(struct exi_device *exi_device)
 	init_waitqueue_head(&priv->io_waitq);
 	priv->io_thread = kthread_run(bba_io_thread, priv, "kbbaiod");
 
-	ether_setup(dev);
+	/* the hardware can't do multicast */
 	dev->flags &= ~IFF_MULTICAST;
 
-	err = register_netdev(dev);
-	if (err) {
-		bba_printk(KERN_ERR, "Cannot register net device, aborting.\n");
-		goto err_out_free_dev;
-	}
-
+	exi_set_drvdata(exi_device, dev);
 	if (bba_dev)
 		free_netdev(bba_dev);
 	bba_dev = dev;
 
-	exi_set_drvdata(exi_device,dev);
+	/* we need to retrieve the MAC address before registration */
+	exi_dev_take(priv->exi_device);
+	bba_reset_hardware(dev);
+	bba_retrieve_ether_addr(dev);
+	exi_dev_give(priv->exi_device);
+
+	/* this makes our device available to the kernel */
+	err = register_netdev(dev);
+	if (err) {
+		bba_printk(KERN_ERR, "cannot register net device, aborting.\n");
+		goto err_out_free_dev;
+	}
 
 	return 0;
 
 err_out_free_dev:
+	exi_set_drvdata(exi_device, NULL);
 	free_netdev(dev);
+	bba_dev = NULL;
 
 err_out:
 	return err;

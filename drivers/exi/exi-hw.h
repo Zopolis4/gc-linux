@@ -2,9 +2,9 @@
  * drivers/exi/exi-hw.h
  *
  * Nintendo GameCube EXpansion Interface support. Hardware routines.
- * Copyright (C) 2004-2007 The GameCube Linux Team
+ * Copyright (C) 2004-2008 The GameCube Linux Team
  * Copyright (C) 2004,2005 Todd Jeffreys <todd@voidpointer.org>
- * Copyright (C) 2005,2006,2007 Albert Herranz
+ * Copyright (C) 2005,2006,2007,2008 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -20,6 +20,7 @@
 #include <asm/atomic.h>
 
 #include <linux/exi.h>
+#include <platforms/gamecube.h>
 
 #define exi_printk(level, format, arg...) \
 	printk(level "exi: " format , ## arg)
@@ -49,7 +50,7 @@
 
 #define EXI_DMA_ALIGN		0x1f /* 32 bytes */
 
-#define EXI_BASE		0xcc006800
+#define EXI_BASE		(GCN_IO2_BASE+0x6800)
 #define EXI_SIZE		0x40
 
 #define EXI_CHANNEL_SPACING	0x14
@@ -161,7 +162,7 @@ static inline void __exi_transfer_raw_##_type(struct exi_channel *exi_channel,\
 	 * information currently stored there is leaked to the		\
 	 * MOSI line, confusing some hardware.				\
 	 */								\
-	if ((mode & EXI_OP_WRITE))					\
+	if (((mode&0xf) != EXI_OP_READ)) /* write or read-write */	\
 		_on_write;						\
 	out_be32(data_reg, _val);					\
 									\
