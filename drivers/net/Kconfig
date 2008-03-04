@@ -275,7 +275,7 @@ config BMAC
 
 config GAMECUBE_BBA
 	tristate "Nintendo GameCube BroadBand Adapter (ethernet) support"
-	depends on GAMECUBE && GAMECUBE_EXI
+	depends on GAMECUBE && GAMECUBE_EXI && !GAMECUBE_WII
 	help
 	  Say Y here to add ethernet support for the Broadband Adapter (BBA).
 
