@@ -30,7 +30,13 @@
 #include <asm/pgtable.h>
 #include <asm/atomic.h>
 #include <asm/cacheflush.h>
+
+#ifdef CONFIG_PPC_MERGE
+#include <platforms/embedded6xx/gamecube.h>
+#else
 #include <platforms/gamecube.h>
+#endif
+
 #include "gcngx.h"
 
 /* Function definitions */

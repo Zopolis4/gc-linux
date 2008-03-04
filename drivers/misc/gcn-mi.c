@@ -24,7 +24,11 @@
 #include <asm/io.h>
 
 #include "gcn-mi.h"
-#include "../../arch/ppc/platforms/gamecube.h"
+#ifdef CONFIG_PPC_MERGE
+#include <platforms/embedded6xx/gamecube.h>
+#else
+#include <platforms/gamecube.h>
+#endif
 
 
 #define MI_IRQ	7

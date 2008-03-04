@@ -31,7 +31,13 @@
 #include <linux/wait.h>
 #include <linux/platform_device.h>
 #include <asm/io.h>
+
+#ifdef CONFIG_PPC_MERGE
+#include <platforms/embedded6xx/gamecube.h>
+#else
 #include <platforms/gamecube.h>
+#endif
+
 #include "gcngx.h"
 
 #define DRV_MODULE_NAME   "gcnfb"
@@ -47,7 +53,7 @@
 
 #define VI_IRQ	8
 
-#define VI_BASE			0xcc002000
+#define VI_BASE			(GCN_IO1_BASE+0x2000)
 #define VI_SIZE			0x100
 
 #define VI_IO_BASE		((void __iomem *)VI_BASE)

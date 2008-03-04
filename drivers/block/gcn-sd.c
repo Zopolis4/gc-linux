@@ -182,7 +182,6 @@ unsigned long unclean_slots = 0;
 enum {
 	__SD_MEDIA_CHANGED = 0,
 	__SD_BAD_CARD,
-	__SD_QUEUE_SUSPENDED,
 };
 
 
@@ -208,7 +207,6 @@ struct sd_host {
 	unsigned long flags;
 #define SD_MEDIA_CHANGED	(1<<__SD_MEDIA_CHANGED)
 #define SD_BAD_CARD		(1<<__SD_BAD_CARD)
-#define SD_QUEUE_SUSPENDED	(1<<__SD_QUEUE_SUSPENDED)
 
 	/* card related info */
 	struct mmc_card card;
@@ -250,7 +248,7 @@ static void sd_card_set_bad(struct sd_host *host)
 	set_bit(__SD_BAD_CARD, &host->flags);
 }
 
-static int sd_card_bad(struct sd_host *host)
+static int sd_card_is_bad(struct sd_host *host)
 {
 	return test_bit(__SD_BAD_CARD, &host->flags);
 }
@@ -503,6 +501,9 @@ static inline void spi_write(struct sd_host *host, void *data, size_t len)
 /* */
 static inline void spi_read(struct sd_host *host, void *data, size_t len)
 {
+#ifdef CONFIG_GAMECUBE_WII
+	exi_dev_read(host->exi_device, data, len);
+#else
 	/*
 	 * Houston, we have a problem.
 	 *
@@ -533,6 +534,7 @@ static inline void spi_read(struct sd_host *host, void *data, size_t len)
 	 *
 	 */
 	exi_dev_transfer(host->exi_device, data, len, EXI_OP_READ, EXI_CMD_IDI);
+#endif
 }
 
 /* cycles are expressed in 8 clock cycles */
@@ -1014,7 +1016,7 @@ out:
 }
 
 /*
- *
+ * 
  */
 static int sd_welcome_card(struct sd_host *host)
 {
@@ -1022,7 +1024,7 @@ static int sd_welcome_card(struct sd_host *host)
 
 	/* soft reset the card */
 	retval = sd_reset_sequence(host);
-	if (retval < 0 || sd_card_bad(host))
+	if (retval < 0 || sd_card_is_bad(host))
 		goto out;
 
 	/* read Operating Conditions Register */
@@ -1054,11 +1056,13 @@ static int sd_welcome_card(struct sd_host *host)
 		goto err_bad_card;
 	mmc_decode_cid(&host->card);
 
-	sd_printk(KERN_INFO, "slot%d: descr \"%s\", size %luk, serial %08x\n",
+	sd_printk(KERN_INFO, "slot%d: descr \"%s\", size %luk, block %ub,"
+		  " serial %08x\n",
 		  to_channel(exi_get_exi_channel(host->exi_device)),
 		  host->card.cid.prod_name,
 		  (unsigned long)((host->card.csd.capacity *
 			  (1 << host->card.csd.read_blkbits)) / 1024),
+	          1 << host->card.csd.read_blkbits,
 		  host->card.cid.serial);
 
 	retval = 0;
@@ -1076,7 +1080,7 @@ out:
  */
 
 /*
- *
+ * Performs a read request.
  */
 static int sd_read_request(struct sd_host *host, struct request *req)
 {
@@ -1087,10 +1091,21 @@ static int sd_read_request(struct sd_host *host, struct request *req)
 	void *buf = req->buffer;
 	int retval;
 
+	/*
+	 * It seems that some cards do not accept single block reads for the
+	 * read block length reported by the card.
+	 * For now, we perform only 512 byte single block reads.
+	 */
+
 	start = req->sector << KERNEL_SECTOR_SHIFT;
+#if 0
 	nr_blocks = req->current_nr_sectors >>
 			 (host->card.csd.read_blkbits - KERNEL_SECTOR_SHIFT);
 	block_len = 1 << host->card.csd.read_blkbits;
+#else
+	nr_blocks = req->current_nr_sectors;
+	block_len = 1 << KERNEL_SECTOR_SHIFT;
+#endif
 
 	for (i = 0; i < nr_blocks; i++) {
 		retval = sd_read_single_block(host, start, buf, block_len);
@@ -1102,13 +1117,17 @@ static int sd_read_request(struct sd_host *host, struct request *req)
 	}
 
 	/* number of kernel sectors transferred */
+#if 0
 	retval = i << (host->card.csd.read_blkbits - KERNEL_SECTOR_SHIFT);
+#else
+	retval = i;
+#endif
 
 	return retval;
 }
 
 /*
- *
+ * Performs a write request.
  */
 static int sd_write_request(struct sd_host *host, struct request *req)
 {
@@ -1119,7 +1138,7 @@ static int sd_write_request(struct sd_host *host, struct request *req)
 	void *buf = req->buffer;
 	int retval;
 
-	/* FIXME, should use 2^WRITE_BL_LEN blocks */
+	/* FIXME?, maybe should use 2^WRITE_BL_LEN blocks */
 
 	/* kernel sectors and card write blocks are both 512 bytes long */
 	start = req->sector << KERNEL_SECTOR_SHIFT;
@@ -1142,6 +1161,8 @@ static int sd_write_request(struct sd_host *host, struct request *req)
 }
 
 /*
+ * Verifies if a request should be dispatched or not.
+ * 
  * Returns:
  *  <0 in case of error.
  *  0  if request passes the checks
@@ -1174,7 +1195,7 @@ static int sd_check_request(struct sd_host *host, struct request *req)
 }
 
 /*
- *
+ * Request dispatcher.
  */
 static int sd_do_request(struct sd_host *host, struct request *req)
 {
@@ -1207,12 +1228,14 @@ static int sd_io_thread(void *param)
 	unsigned long flags;
 	int retval;
 
+#if 0
 	/*
 	 * We are going to perfom badly due to the read problem explained
 	 * above. At least, be nice with other processes trying to use the
 	 * cpu.
 	 */
-//        set_user_nice(current, 0);
+        set_user_nice(current, 0);
+#endif
 
         current->flags |= PF_NOFREEZE|PF_MEMALLOC;
 
@@ -1250,7 +1273,8 @@ static int sd_io_thread(void *param)
 }
 
 /*
- *
+ * Block layer request function.
+ * Wakes up the IO thread.
  */
 static void sd_request_func(struct request_queue *q)
 {
@@ -1380,14 +1404,15 @@ static int sd_revalidate_disk(struct gendisk *disk)
 
 	/* get the card into a known status */
 	retval = sd_welcome_card(host);
-	if (retval < 0 || sd_card_bad(host)) {
+	if (retval < 0 || sd_card_is_bad(host)) {
 		retval = -ENOMEDIUM;
 		goto out;
 	}
 
 	/* inform the block layer about various sizes */
-	blk_queue_hardsect_size(host->queue, 1 << host->card.csd.read_blkbits);
-	set_capacity(host->disk, host->card.csd.capacity);
+	blk_queue_hardsect_size(host->queue, 1 << KERNEL_SECTOR_SHIFT);
+	set_capacity(host->disk, host->card.csd.capacity <<
+			 (host->card.csd.read_blkbits - KERNEL_SECTOR_SHIFT));
 
 	clear_bit(__SD_MEDIA_CHANGED, &host->flags);
 
@@ -1602,6 +1627,12 @@ static void sd_kill(struct sd_host *host)
 		kfree(host);
 }
 
+
+/*
+ * EXI layer interface.
+ *
+ */
+
 /*
  * Checks if the given EXI device is a MMC/SD card and makes it available
  * if true.
@@ -1670,6 +1701,15 @@ static struct exi_driver sd_driver = {
 	.remove = sd_remove,
 };
 
+
+/*
+ * Kernel module interface.
+ *
+ */
+
+/*
+ *
+ */
 static int __init sd_init_module(void)
 {
 	int retval = 0;
@@ -1689,6 +1729,9 @@ out:
 	return retval;
 }
 
+/*
+ *
+ */
 static void __exit sd_exit_module(void)
 {
 	unregister_blkdev(SD_MAJOR, DRV_MODULE_NAME);

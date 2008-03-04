@@ -28,6 +28,12 @@
 #define SNDRV_GET_ID
 #include <sound/initval.h>
 
+#ifdef CONFIG_PPC_MERGE
+#include <platforms/embedded6xx/gamecube.h>
+#else
+#include <platforms/gamecube.h>
+#endif
+
 #ifdef AI_DEBUG
 #  define DPRINTK(fmt, args...) \
           printk(KERN_ERR "%s: " fmt, __FUNCTION__ , ## args)
@@ -47,6 +53,8 @@ MODULE_LICENSE("GPL");
 #define ai_printk(level, format, arg...) \
         printk(level PFX format , ## arg)
 
+#define DSP_BASE		(GCN_IO1_BASE + 0x5000)
+#define AI_BASE			(GCN_IO2_BASE + 0x6c00)
 
 #define DSP_IRQ 6
 
@@ -71,7 +79,8 @@ MODULE_LICENSE("GPL");
 #define  AI_DCL_PLAY        (1<<15)
 
 #define AUDIO_DMA_LEFT      *(volatile u_int16_t *)(0xCC00503A)
-#define AUDIO_STREAM_STATUS *(volatile u_int32_t *)(0xCC006C00)
+
+#define AUDIO_STREAM_STATUS *(volatile u_int32_t *)(GCN_IO2_BASE+0x6C00)
 #define  AI_AICR_RATE       (1<<6)
 
 #define LoadSample(addr, len) \

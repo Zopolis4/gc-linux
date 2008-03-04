@@ -1,0 +1,44 @@
+/*
+ *
+ *
+ */
+
+/* /memreserve/ 01654000-017fffff; */
+
+/ {
+	model = "NintendoWii";
+	compatible = "nintendo,gamecube";
+	#address-cells = <1>;
+	#size-cells = <1>;
+
+	chosen {
+		bootargs = "root=/dev/ram0 video=gcnfb:tv=auto ip=192.168.001.047:192.168.001.253:192.168.001.251 force_keyboard_port=4"; 
+	};
+
+	memory {
+		device_type = "memory";
+		/* 24M - framebuffer - fifo - kexec,	00000000-01653fff */
+		reg = <00000000 01654000>;
+	};
+
+	cpus {
+		#cpus = <1>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		PowerPC,gekko@0 {
+			device_type = "cpu";
+			reg = <0>;
+			clock-frequency = <2b73a840>; /* 729MHz */
+			bus-frequency = <e7be2c0>; /* 243MHz core-to-bus 3x */
+			timebase-frequency = <39ef8b0>; /* 243MHz / 4 */
+			/* Following required by dtc but not used */
+			i-cache-line-size = <20>;
+			d-cache-line-size = <20>;
+			i-cache-size = <8000>;
+			d-cache-size = <8000>;
+		};
+	};
+
+};
+

@@ -1190,8 +1190,6 @@ config RAPIDIO
 
 source "drivers/rapidio/Kconfig"
 
-source "drivers/exi/Kconfig"
-
 endmenu
 
 menu "Advanced setup"
