@@ -261,8 +261,11 @@ static void ug_console_write(struct console *co, const char *buf,
 	struct ug_adapter *adapter = co->data;
 	char *b = (char *)buf;
 
-	while(count--)
+	while(count--) {
+		if (*b == '\n')
+			ug_safe_putc(adapter, '\r');
 		ug_safe_putc(adapter, *b++);
+	}
 }
 
 /*
@@ -320,9 +323,9 @@ static struct console ug_consoles[]= {
 
 static int ug_tty_poller(void *tty_)
 {
-	struct tty_struct *tty = tty_;
-	struct ug_adapter *adapter = tty->driver_data;
 	struct sched_param param = { .sched_priority = 1 };
+	struct tty_struct *tty = tty_;
+	struct ug_adapter *adapter;
 	int count;
 	char ch;
 
@@ -330,13 +333,15 @@ static int ug_tty_poller(void *tty_)
 	set_task_state(current, TASK_RUNNING);
 
 	while(!kthread_should_stop()) {
-		count = ug_safe_getc(adapter, &ch);
+		count = 0;
+		adapter = tty->driver_data;
+		if (adapter)
+			count = ug_safe_getc(adapter, &ch);
 		set_task_state(current, TASK_INTERRUPTIBLE);
 		if (count) {
 			tty_insert_flip_char(tty, ch, TTY_NORMAL);
 			tty_flip_buffer_push(tty);
 		}
-		
 		schedule_timeout(1);
 		set_task_state(current, TASK_RUNNING);
 	}
@@ -526,6 +531,10 @@ static void ug_remove(struct exi_device *exi_device)
 	slot = to_channel(exi_get_exi_channel(exi_device));
 	console = &ug_consoles[slot];
 	adapter = console->data;
+
+	if (adapter->refcnt) {
+		ug_printk(KERN_ERR, "adapter removed while in use!\n");
+	}
 
 	ug_tty_exit();
 
