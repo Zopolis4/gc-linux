@@ -2,7 +2,7 @@
  * drivers/input/gcn-si.c
  *
  * Nintendo GameCube Serial Interface driver
- * Copyright (C) 2004 The GameCube Linux Team
+ * Copyright (C) 2004-2008 The GameCube Linux Team
  * Copyright (C) 2004 Steven Looman
  * Copyright (C) 2005 Albert Herranz
  *
@@ -23,6 +23,12 @@
 #include <linux/delay.h>
 
 #include <asm/io.h>
+
+#ifdef CONFIG_PPC_MERGE
+#include <platforms/embedded6xx/gamecube.h>
+#else
+#include <platforms/gamecube.h>
+#endif
 
 #ifdef SI_DEBUG
 #  define DPRINTK(fmt, args...) \
@@ -61,14 +67,16 @@ MODULE_LICENSE("GPL");
 
 #define REFRESH_TIME HZ/100
 
-#define SICOUTBUF(x)	((void __iomem *)(0xcc006400 + (x)*12))
-#define SICINBUFH(x)	((void __iomem *)(0xcc006404 + (x)*12))
-#define SICINBUFL(x)	((void __iomem *)(0xcc006408 + (x)*12))
+#define SI_BASE (GCN_IO2_BASE | 0x00006400)
 
-#define SIPOLL		((void __iomem *)0xcc006430)
-#define SICOMCSR	((void __iomem *)0xcc006434)
-#define SISR		((void __iomem *)0xcc006438)
-#define SIEXILK		((void __iomem *)0xcc00643c)
+#define SICOUTBUF(x)	((void __iomem *)(SI_BASE + 0 + (x)*12))
+#define SICINBUFH(x)	((void __iomem *)(SI_BASE + 4 + (x)*12))
+#define SICINBUFL(x)	((void __iomem *)(SI_BASE + 8 + (x)*12))
+
+#define SIPOLL		((void __iomem *)(SI_BASE + 0x30))
+#define SICOMCSR	((void __iomem *)(SI_BASE + 0x34))
+#define SISR		((void __iomem *)(SI_BASE + 0x38))
+#define SIEXILK		((void __iomem *)(SI_BASE + 0x3c))
 
 #define ID_PAD		0x0900
 #define ID_KEYBOARD	0x0820
@@ -90,8 +98,8 @@ MODULE_LICENSE("GPL");
 
 
 static struct resource gcn_si_resources = {
-	.start = 0xcc006400,
-	.end = 0xcc006500,
+	.start = SI_BASE,
+	.end = SI_BASE + 0x0100,
 	.name = DRV_MODULE_NAME,
 	.flags = IORESOURCE_MEM | IORESOURCE_BUSY
 };
@@ -166,20 +174,20 @@ static void gcn_si_reset(void)
 	out_be32(SICOMCSR, 0);
 	out_be32(SISR, 0);
 
-	out_be32((void __iomem *)0xcc006480, 0);
-	out_be32((void __iomem *)0xcc006484, 0);
-	out_be32((void __iomem *)0xcc006488, 0);
-	out_be32((void __iomem *)0xcc00648c, 0);
+	out_be32((void __iomem *)(SI_BASE + 0x80), 0);
+	out_be32((void __iomem *)(SI_BASE + 0x84), 0);
+	out_be32((void __iomem *)(SI_BASE + 0x88), 0);
+	out_be32((void __iomem *)(SI_BASE + 0x8c), 0);
 
-	out_be32((void __iomem *)0xcc006490, 0);
-	out_be32((void __iomem *)0xcc006494, 0);
-	out_be32((void __iomem *)0xcc006498, 0);
-	out_be32((void __iomem *)0xcc00649c, 0);
+	out_be32((void __iomem *)(SI_BASE + 0x90), 0);
+	out_be32((void __iomem *)(SI_BASE + 0x94), 0);
+	out_be32((void __iomem *)(SI_BASE + 0x98), 0);
+	out_be32((void __iomem *)(SI_BASE + 0x9c), 0);
 
-	out_be32((void __iomem *)0xcc0064a0, 0);
-	out_be32((void __iomem *)0xcc0064a4, 0);
-	out_be32((void __iomem *)0xcc0064a8, 0);
-	out_be32((void __iomem *)0xcc0064ac, 0);
+	out_be32((void __iomem *)(SI_BASE + 0xa0), 0);
+	out_be32((void __iomem *)(SI_BASE + 0xa4), 0);
+	out_be32((void __iomem *)(SI_BASE + 0xa8), 0);
+	out_be32((void __iomem *)(SI_BASE + 0xac), 0);
 }
 
 /**
@@ -210,7 +218,7 @@ static unsigned long gcn_si_get_controller_id(int port)
 
 	gcn_si_wait_transfer_done();
 
-	return in_be32((void __iomem *)0xcc006480);
+	return in_be32((void __iomem *)(SI_BASE + 0x80));
 }
 
 /**
