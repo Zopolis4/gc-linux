@@ -16,6 +16,7 @@ obj-$(CONFIG_GAMECUBE_DVD)	+= gcn-dvd/
 obj-$(CONFIG_GAMECUBE_ARAM)	+= gcn-aram.o
 obj-$(CONFIG_GAMECUBE_MEMCARD)	+= gcn-memcard.o
 obj-$(CONFIG_GAMECUBE_SD)	+= gcn-sd.o
+obj-$(CONFIG_WII_MEM2)		+= rvl-mem2.o
 obj-$(CONFIG_BLK_DEV_RAM)	+= rd.o
 obj-$(CONFIG_BLK_DEV_LOOP)	+= loop.o
 obj-$(CONFIG_BLK_DEV_PS2)	+= ps2esdi.o

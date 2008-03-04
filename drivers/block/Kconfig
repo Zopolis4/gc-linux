@@ -67,7 +67,7 @@ config AMIGA_Z2RAM
 
 config GAMECUBE_DI
 	tristate "Nintendo Gamecube (alternate) DVD support"
-	depends on GAMECUBE && EXPERIMENTAL
+	depends on GAMECUBE && !GAMECUBE_WII
 	help
 	  This enables support for using DVD-R media on
 	  the Nintendo GameCube DVD drive.
@@ -89,7 +89,7 @@ config GAMECUBE_DVD
 
 config GAMECUBE_ARAM
 	tristate "Nintendo GameCube ARAM"
-	depends on GAMECUBE
+	depends on GAMECUBE && !GAMECUBE_WII
 	help
 	  This enables support for using the 16MB of ARAM found in the
 	  Nintendo GameCube as a ramdisk or as a swap partition.
@@ -126,6 +126,17 @@ config GAMECUBE_SD
 	  
 	  To compile this driver as a module, choose M here: the
 	  module will be called gcn-sd.
+
+config WII_MEM2
+	tristate "Nintendo Wii MEM2"
+	depends on GAMECUBE_WII
+	help
+	  This enables support for using the MEM2 found in the
+	  Nintendo Wii as a ramdisk or as a swap partition.
+	  Say Y if you want to include this driver in the kernel.
+	  
+	  To compile this driver as a module, choose M here: the
+	  module will be called rvl-mem2.
 
 config BLK_DEV_XD
 	tristate "XT hard disk support"
