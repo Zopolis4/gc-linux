@@ -24,14 +24,18 @@
 #define GCN_IO2_BASE	(0xc0000000 | GCN_IO2_PHYS_BASE)
 
 /*
- * There are 14 IRQs in total. Each has a corresponding bit in both
+ * Each interrupt has a corresponding bit in both
  * the Interrupt Cause (ICR) and Interrupt Mask (IMR) registers.
  *
  * Enabling/disabling an interrupt line involves asserting/clearing
  * the corresponding bit in IMR. ACK'ing a request simply involves
  * asserting the corresponding bit in ICR.
  */
+#ifdef CONFIG_GAMECUBE_WII
+#define FLIPPER_NR_IRQS		(15)
+#else
 #define FLIPPER_NR_IRQS		(14)
+#endif
 #define FLIPPER_ICR		((void __iomem *)(GCN_IO1_BASE+0x3000))
 #define FLIPPER_IMR		((void __iomem *)(GCN_IO1_BASE+0x3004))
 

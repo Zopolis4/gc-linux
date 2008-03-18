@@ -50,7 +50,7 @@ static char mem2_driver_version[] = "0.1";
 /*
  * Driver settings
  */
-#define MEM2_NAME		"rvlmem2"
+#define MEM2_NAME		DRV_MODULE_NAME
 #define MEM2_MAJOR		Z2RAM_MAJOR
 
 #define MEM2_SECTOR_SIZE	PAGE_SIZE

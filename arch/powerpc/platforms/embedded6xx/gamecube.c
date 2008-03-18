@@ -27,6 +27,8 @@
 #include <asm/prom.h>
 #include <asm/lmb.h>
 
+#include <asm/starlet.h>
+
 #include "gamecube.h"
 #include "ugecon.h"
 
@@ -86,12 +88,20 @@ static void gamecube_setup_io_mappings(void)
 
 static void gamecube_restart(char *cmd)
 {
+#ifdef CONFIG_GAMECUBE_WII
+	starlet_stm_restart();
+#else
 	local_irq_disable();
 	out_8(FLIPPER_RESET, 0x00);
+#endif
 }
 
 static void gamecube_power_off(void)
 {
+#ifdef CONFIG_GAMECUBE_WII
+	starlet_stm_power_off();
+	/* falldown */
+#endif
 	local_irq_disable();
 	for (;;); /* spin until power button pressed */
 }
