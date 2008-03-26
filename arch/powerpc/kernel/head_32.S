@@ -152,13 +152,8 @@ __after_mmu_off:
 #ifdef CONFIG_PPC_EARLY_DEBUG_CPM
 	bl	setup_cpm_bat
 #endif
-#ifdef CONFIG_GAMECUBE
-	/* setup a block address translation register for early i/o */
-	bl	setup_gcn_bat
-	/* flush cache before relocation, first 24MB */
-	li	r3,0
-	lis	r4,0x0180
-	bl	flush_dcache_range
+#ifdef CONFIG_PPC_EARLY_DEBUG_USBGECKO
+	bl	setup_usbgecko_bat
 #endif
 
 /*
@@ -1269,19 +1264,19 @@ setup_cpm_bat:
 	blr
 #endif
 
-#ifdef CONFIG_GAMECUBE
-setup_gcn_bat:
+#ifdef CONFIG_PPC_EARLY_DEBUG_USBGECKO
+setup_usbgecko_bat:
 	/* prepare a BAT for early io */
 	lis	r8, 0x0c00	/* DBAT3 for IO mem */
 	ori	r8, r8, 0x002a	/* uncached, guarded ,rw */
 	lis	r11, 0xcc00	/* DBAT3 for IO mem */
 	ori	r11, r11, 0x3	/* 128K */
-#ifdef CONFIG_GAMECUBE_WII
+#ifdef CONFIG_WII
 	oris	r8, r8, 0x0100
 	oris	r11, r11, 0x0100
 #endif
-	mtspr	SPRN_DBAT3L, r8
-	mtspr	SPRN_DBAT3U, r11
+	mtspr	SPRN_DBAT1L, r8
+	mtspr	SPRN_DBAT1U, r11
 	sync
 	isync
 	blr
