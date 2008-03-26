@@ -35,13 +35,6 @@ endif
 
 BOOTCFLAGS	+= -I$(obj) -I$(srctree)/$(obj)
 
-extra-defs-$(CONFIG_GAMECUBE) += -DCONFIG_GAMECUBE
-extra-defs-$(CONFIG_GAMECUBE_WII) += -DCONFIG_GAMECUBE_WII
-extra-defs-$(CONFIG_USBGECKO_EARLY_CONSOLE) += -DCONFIG_USBGECKO_EARLY_CONSOLE
-
-BOOTCFLAGS += $(extra-defs-y)
-BOOTAFLAGS += $(extra-defs-y)
-
 $(obj)/4xx.o: BOOTCFLAGS += -mcpu=440
 $(obj)/ebony.o: BOOTCFLAGS += -mcpu=440
 $(obj)/treeboot-walnut.o: BOOTCFLAGS += -mcpu=405
@@ -58,15 +51,12 @@ src-wlib := string.S crt0.S stdio.c main.c flatdevtree.c flatdevtree_misc.c \
 		gunzip_util.c elf_util.c $(zlib) devtree.c oflib.c ofconsole.c \
 		mv64x60.c mpsc.c mv64x60_i2c.c cuboot.c bamboo.c \
 		cpm-serial.c stdlib.c mpc52xx-psc.c planetcore.c uartlite.c \
-		fsl-soc.c mpc8xx.c pq2.c
+		fsl-soc.c mpc8xx.c pq2.c ugecon.c
 src-plat := of.c cuboot-52xx.c cuboot-83xx.c cuboot-85xx.c holly.c \
 		cuboot-ebony.c treeboot-ebony.c prpmc2800.c \
 		treeboot-bamboo.c cuboot-8xx.c \
 		cuboot-pq2.c cuboot-sequoia.c cuboot-bamboo.c \
-		fixed-head.S ep88xc.c cuboot-hpc2.c
-
-src-plat-$(CONFIG_GAMECUBE) += gamecube.c
-src-plat += $(src-plat-y)
+		fixed-head.S ep88xc.c cuboot-hpc2.c gamecube.c
 
 src-boot := $(src-wlib) $(src-plat) empty.c
 
@@ -157,6 +147,7 @@ image-$(CONFIG_PPC_HOLLY)		+= zImage.holly
 image-$(CONFIG_PPC_PRPMC2800)		+= zImage.prpmc2800
 image-$(CONFIG_PPC_ISERIES)		+= zImage.iseries
 image-$(CONFIG_GAMECUBE)		+= zImage.gamecube
+image-$(CONFIG_WII)			+= zImage.gamecube
 image-$(CONFIG_DEFAULT_UIMAGE)		+= uImage
 
 ifneq ($(CONFIG_DEVICE_TREE),"")
