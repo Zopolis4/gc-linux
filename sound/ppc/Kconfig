@@ -54,18 +54,17 @@ config SND_PS3_DEFAULT_START_DELAY
 	default "2000"
 
 config SND_GAMECUBE
-	tristate "Nintendo GameCube (Flipper)"
-	depends on SND && GAMECUBE
+	tristate "Nintendo GameCube/Wii"
+	depends on SND && GAMECUBE_COMMON
 	help
-	  Say Y here to add audio support for the "Flipper" Graphics
-	  and Sound processor as found in the GameCube from Nintendo.
+	  Say Y here to include support for audio on the Nintendo GameCube/Wii.
 
 	  To compile this driver as a module, choose M here: the module
 	  will be called snd-gcn.
 
 config SND_GAMECUBE_MIC
 	tristate "Nintendo GameCube Microphone (DOL-022)"
-	depends on SND && GAMECUBE && GAMECUBE_EXI && EXPERIMENTAL
+	depends on SND && GAMECUBE_EXI && EXPERIMENTAL
 	help
 	  If you say yes to this option, support will be included for the
 	  Nintendo GameCube Microphone (DOL-022).

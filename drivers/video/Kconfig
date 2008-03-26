@@ -1617,8 +1617,8 @@ config FB_PM3
 	  and maybe other boards.
 
 config FB_GAMECUBE
-	bool "Nintendo GameCube frame buffer"
-	depends on FB && GAMECUBE
+	bool "Nintendo GameCube/Wii frame buffer"
+	depends on FB && GAMECUBE_COMMON
 	select FB_CFB_FILLRECT
 	select FB_CFB_COPYAREA
 	select FB_CFB_IMAGEBLIT
@@ -1627,7 +1627,7 @@ config FB_GAMECUBE
 
 config FB_GAMECUBE_GX
 	bool "Nintendo GameCube hardware accelerated graphics support"
-	depends on FB_GAMECUBE
+	depends on FB_GAMECUBE && GAMECUBE && BROKEN
 	help
 	  Say Y here to support the 3D hardware found in the Nintendo GameCube.
 
