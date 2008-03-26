@@ -66,8 +66,8 @@ config AMIGA_Z2RAM
 	  module will be called z2ram.
 
 config GAMECUBE_DI
-	tristate "Nintendo Gamecube (alternate) DVD support"
-	depends on GAMECUBE && !GAMECUBE_WII
+	tristate "Nintendo GameCube Drive Interface (DI)"
+	depends on GAMECUBE
 	help
 	  This enables support for using DVD-R media on
 	  the Nintendo GameCube DVD drive.
@@ -88,8 +88,8 @@ config GAMECUBE_DVD
 	  module will be called gcn-dvd
 
 config GAMECUBE_ARAM
-	tristate "Nintendo GameCube ARAM"
-	depends on GAMECUBE && !GAMECUBE_WII
+	tristate "Nintendo GameCube Auxiliary RAM (ARAM)"
+	depends on GAMECUBE
 	help
 	  This enables support for using the 16MB of ARAM found in the
 	  Nintendo GameCube as a ramdisk or as a swap partition.
@@ -99,7 +99,7 @@ config GAMECUBE_ARAM
 	  module will be called gcn-aram.
 
 config GAMECUBE_MEMCARD
-	tristate "Nintendo GameCube memory card (EXPERIMENTAL)"
+	tristate "Nintendo GameCube/Wii memory card (EXPERIMENTAL)"
 	depends on GAMECUBE_EXI && EXPERIMENTAL && BROKEN
 	help
 	  This enables support for using memory cards compatible with the
@@ -110,8 +110,8 @@ config GAMECUBE_MEMCARD
 	  module will be called gcn-memcard.
 
 config GAMECUBE_SD
-	tristate "Nintendo GameCube SD and MMC memory card (EXPERIMENTAL)"
-	depends on GAMECUBE_EXI && EXPERIMENTAL
+	tristate "Nintendo GameCube/Wii MMC/SD card"
+	depends on GAMECUBE_EXI
 	help
 	  This enables support for using SD and MMC cards through
 	  the Nintendo SD Card Adapter (DOL-019) or compatible hardware.
@@ -129,7 +129,7 @@ config GAMECUBE_SD
 
 config WII_MEM2
 	tristate "Nintendo Wii MEM2"
-	depends on GAMECUBE_WII
+	depends on WII
 	help
 	  This enables support for using the MEM2 found in the
 	  Nintendo Wii as a ramdisk or as a swap partition.
