@@ -12,7 +12,12 @@
 	#size-cells = <1>;
 
 	chosen {
-		bootargs = "root=/dev/ram0 video=gcnfb:tv=auto ip=192.168.001.047:192.168.001.253:192.168.001.251 force_keyboard_port=4";
+		//bootargs = "root=/dev/ram0 video=gcn-vifb:tv=auto ip=192.168.001.047:192.168.001.253:192.168.001.251 force_keyboard_port=4";
+		bootargs = "root=/dev/nfs nfsroot=192.168.001.253:/nfsroot/cube video=gcn-vifb:tv=auto ip=192.168.001.047:192.168.001.253:192.168.001.251 force_keyboard_port=4";
+		linux,crashkernel-base = <0>;
+		linux,crashkernel-size = <0>;
+
+		linux,stdout-path = "/exi@0c006800/usbgecko@0c006814";
 	};
 
 	memory {
@@ -40,5 +45,81 @@
 		};
 	};
 
+	flipper_pic: pic@0c003000 {
+		#interrupt-cells = <1>;
+		compatible = "nintendo,flipper-pic";
+		reg = <0c003000 8>;
+		interrupt-controller;
+	};
+
+	exi@0c006800 {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		compatible = "nintendo,exi";
+		reg = <0c006800 40>;
+		interrupts = <04>;
+		interrupt-parent = <&flipper_pic>;
+
+		udbg_console: usbgecko@0c006814 {
+			compatible = "usbgecko,usbgecko";
+			reg = <0c006814 14>;
+			virtual-reg = <cc006814>;
+		};
+	};
+
+        flipper@0c000000 {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		#interrupt-cells = <1>;
+		model = "flipper";
+		compatible = "nintendo,flipper";
+		clock-frequency = <9a7ec80>; /* 162MHz */
+		ranges = <0c000000 0c000000 00010000>;
+
+		vifb@0c002000 {
+			compatible = "nintendo,vifb";
+			reg = <0c002000 100>;
+			interrupts = <08>;
+			interrupt-parent = <&flipper_pic>;
+			xfb-start = <01698000>; /* end-of-ram - xfb-size */
+			xfb-size = <168000>;
+		};
+
+		rsw@0c003000 {
+			compatible = "nintendo,rsw";
+			reg = <0c003000 4>;
+			interrupts = <01>;
+			interrupt-parent = <&flipper_pic>;
+		};
+
+		aram@0c005000 {
+			compatible = "nintendo,aram";
+			reg = <0c005000 200>;	/* DSP */
+			interrupts = <06>;
+			interrupt-parent = <&flipper_pic>;
+		};
+
+		ai@0c005000 {
+			compatible = "nintendo,ai";
+			reg = <0c005000 200	/* DSP */
+			       0c006c00 20>;	/* AI */
+			interrupts = <06>;
+			interrupt-parent = <&flipper_pic>;
+		};
+
+		di@0c006000 {
+			compatible = "nintendo,di";
+			reg = <0c006000 40>;
+			interrupts = <02>;
+			interrupt-parent = <&flipper_pic>;
+		};
+
+		si@0c006400 {
+			compatible = "nintendo,si";
+			reg = <0c006400 100>;
+			interrupts = <03>;
+			interrupt-parent = <&flipper_pic>;
+		};
+        };
 };
 
