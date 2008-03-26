@@ -31,22 +31,10 @@
 #define DRV_DESCRIPTION "Console and TTY driver for the USB Gecko adapter"
 #define DRV_AUTHOR      "Albert Herranz"
 
-MODULE_AUTHOR(DRV_AUTHOR);
-MODULE_DESCRIPTION(DRV_DESCRIPTION);
-MODULE_LICENSE("GPL");
-
 static char ug_driver_version[] = "0.1-isobel";
 
-#define ug_printk(level, format, arg...) \
+#define drv_printk(level, format, arg...) \
 	printk(level DRV_MODULE_NAME ": " format , ## arg)
-
-#ifdef UG_DEBUG
-#  define DBG(fmt, args...) \
-          printk(KERN_ERR "%s: " fmt, __FUNCTION__ , ## args)
-#else
-#  define DBG(fmt, args...)
-#endif
-
 
 /*
  *
@@ -278,7 +266,8 @@ static int ug_console_read(struct console *co, char *buf,
 	int i;
 	char c;
 
-	for (i = 0; i < count; i++) {
+	i = count;
+	while(i--) {
 		ug_safe_getc(adapter, &c);
 		*buf++ = c;
 	}
@@ -326,12 +315,14 @@ static int ug_tty_poller(void *tty_)
 	struct sched_param param = { .sched_priority = 1 };
 	struct tty_struct *tty = tty_;
 	struct ug_adapter *adapter;
-	int count;
+	int count, chunk;
+	const int max_outstanding = 32;
 	char ch;
 
 	sched_setscheduler(current, SCHED_FIFO, &param);
 	set_task_state(current, TASK_RUNNING);
 
+	chunk = 0;
 	while(!kthread_should_stop()) {
 		count = 0;
 		adapter = tty->driver_data;
@@ -340,9 +331,17 @@ static int ug_tty_poller(void *tty_)
 		set_task_state(current, TASK_INTERRUPTIBLE);
 		if (count) {
 			tty_insert_flip_char(tty, ch, TTY_NORMAL);
-			tty_flip_buffer_push(tty);
+			if (chunk++ > max_outstanding) {
+				tty_flip_buffer_push(tty);
+				chunk = 0;
+			}
+		} else {
+			if (chunk) {
+				tty_flip_buffer_push(tty);
+				chunk = 0;
+			}
+			schedule_timeout(1);
 		}
-		schedule_timeout(1);
 		set_task_state(current, TASK_RUNNING);
 	}
 
@@ -368,7 +367,7 @@ static int ug_tty_open(struct tty_struct *tty, struct file *filp)
 	if (!adapter->refcnt) {
 		adapter->poller = kthread_run(ug_tty_poller, tty, "kugtty");
 		if (IS_ERR(adapter->poller)) {
-			ug_printk(KERN_ERR, "error creating poller thread\n");
+			drv_printk(KERN_ERR, "error creating poller thread\n");
 			mutex_unlock(&adapter->mutex);
 			return -ENOMEM;
 		}
@@ -502,8 +501,8 @@ static int ug_probe(struct exi_device *exi_device)
 	console = &ug_consoles[slot];
 	adapter = console->data;
 
-	ug_printk(KERN_INFO, "USB Gecko detected in memcard slot-%c\n",
-		  'A'+slot);
+	drv_printk(KERN_INFO, "USB Gecko detected in memcard slot-%c\n",
+		   'A'+slot);
 
 	adapter->poller = ERR_PTR(-EINVAL);
 	mutex_init(&adapter->mutex);
@@ -533,7 +532,7 @@ static void ug_remove(struct exi_device *exi_device)
 	adapter = console->data;
 
 	if (adapter->refcnt) {
-		ug_printk(KERN_ERR, "adapter removed while in use!\n");
+		drv_printk(KERN_ERR, "adapter removed while in use!\n");
 	}
 
 	ug_tty_exit();
@@ -545,8 +544,8 @@ static void ug_remove(struct exi_device *exi_device)
 
 	mutex_destroy(&adapter->mutex);
 
-	ug_printk(KERN_INFO, "USB Gecko removed from memcard slot-%c\n",
-		  'A'+slot);
+	drv_printk(KERN_INFO, "USB Gecko removed from memcard slot-%c\n",
+		   'A'+slot);
 }
 
 static struct exi_device_id ug_eid_table[] = {
@@ -579,8 +578,8 @@ static struct exi_driver ug_exi_driver = {
 
 static int __init ug_init_module(void)
 {
-	ug_printk(KERN_INFO, "%s - version %s\n", DRV_DESCRIPTION,
-		  ug_driver_version);
+	drv_printk(KERN_INFO, "%s - version %s\n", DRV_DESCRIPTION,
+		   ug_driver_version);
 
 	return exi_driver_register(&ug_exi_driver);
 }
@@ -592,4 +591,8 @@ static void __exit ug_exit_module(void)
 
 module_init(ug_init_module);
 module_exit(ug_exit_module);
+
+MODULE_AUTHOR(DRV_AUTHOR);
+MODULE_DESCRIPTION(DRV_DESCRIPTION);
+MODULE_LICENSE("GPL");
 

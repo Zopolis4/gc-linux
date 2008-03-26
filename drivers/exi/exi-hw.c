@@ -70,6 +70,9 @@
 #include "exi-hw.h"
 
 
+#define drv_printk(level, format, arg...) \
+	printk(level "exi: " format , ## arg)
+
 #ifdef EXI_DEBUG
 #  define DBG(fmt, args...) \
 	  printk(KERN_ERR "%s: " fmt, __FUNCTION__ , ## args)
@@ -77,12 +80,18 @@
 #  define DBG(fmt, args...)
 #endif
 
+
 extern wait_queue_head_t exi_bus_waitq;
 
 static void exi_tasklet(unsigned long param);
 
+
 /* for compatibility with the old exi-lite framework */
 unsigned long exi_running = 0;
+
+/* io memory base for EXI */
+static void __iomem *exi_io_mem;
+
 
 /*
  * These are the available exi channels.
@@ -92,7 +101,6 @@ static struct exi_channel exi_channels[EXI_MAX_CHANNELS] = {
 		.channel = 0,
 		.lock = SPIN_LOCK_UNLOCKED,
 		.io_lock = SPIN_LOCK_UNLOCKED,
-		.io_base = EXI_IO_BASE(0),
 		.wait_queue = __WAIT_QUEUE_HEAD_INITIALIZER(
 				exi_channels[0].wait_queue),
 	},
@@ -100,7 +108,6 @@ static struct exi_channel exi_channels[EXI_MAX_CHANNELS] = {
 		.channel = 1,
 		.lock = SPIN_LOCK_UNLOCKED,
 		.io_lock = SPIN_LOCK_UNLOCKED,
-		.io_base = EXI_IO_BASE(1),
 		.wait_queue = __WAIT_QUEUE_HEAD_INITIALIZER(
 				exi_channels[1].wait_queue),
 	},
@@ -108,7 +115,6 @@ static struct exi_channel exi_channels[EXI_MAX_CHANNELS] = {
 		.channel = 2,
 		.lock = SPIN_LOCK_UNLOCKED,
 		.io_lock = SPIN_LOCK_UNLOCKED,
-		.io_base = EXI_IO_BASE(2),
 		.wait_queue = __WAIT_QUEUE_HEAD_INITIALIZER(
 				exi_channels[2].wait_queue),
 	},
@@ -402,7 +408,7 @@ static void exi_wait_for_transfer_raw(struct exi_channel *exi_channel)
 	}
 
 	if (borked) {
-		exi_printk(KERN_ERR, "exi transfer took too long, "
+		drv_printk(KERN_ERR, "exi transfer took too long, "
 			   "is your hardware ok?");
 	}
 
@@ -435,7 +441,7 @@ void exi_channel_init(struct exi_channel *exi_channel, unsigned int channel)
 	init_waitqueue_head(&exi_channel->wait_queue);
 
 	exi_channel->channel = channel;
-	exi_channel->io_base = EXI_IO_BASE(channel);
+	exi_channel->io_base = exi_io_mem + channel * EXI_CHANNEL_SPACING;
 
 	tasklet_init(&exi_channel->tasklet,
 		     exi_tasklet, (unsigned long)exi_channel);
@@ -1357,11 +1363,17 @@ void exi_update_ext_status(struct exi_channel *exi_channel)
 /*
  * Pseudo-Internal. Initialize basic channel structures and hardware.
  */
-int exi_hw_init(char *module_name)
+int exi_hw_init(char *module_name, struct resource *mem, unsigned int irq)
 {
 	struct exi_channel *exi_channel;
 	int channel;
 	int result;
+
+	exi_io_mem = ioremap(mem->start, mem->end - mem->start + 1);
+	if (!exi_io_mem) {
+		drv_printk(KERN_ERR, "ioremap failed\n");
+		return -ENOMEM;
+	}
 
 	for(channel = 0; channel < EXI_MAX_CHANNELS; channel++) {
 		exi_channel = __to_exi_channel(channel);
@@ -1374,9 +1386,9 @@ int exi_hw_init(char *module_name)
 	exi_quiesce_all_channels(EXI_CSR_EXTINMASK);
 
 	/* register the exi interrupt handler */
-        result = request_irq(EXI_IRQ, exi_irq_handler, 0, module_name, NULL);
+        result = request_irq(irq, exi_irq_handler, 0, module_name, NULL);
         if (result) {
-		exi_printk(KERN_ERR, "unable to register irq%d\n", EXI_IRQ);
+		drv_printk(KERN_ERR, "failed to register IRQ %d\n", irq);
         }
 
 	return result;
@@ -1385,10 +1397,11 @@ int exi_hw_init(char *module_name)
 /*
  * Pseudo-Internal. 
  */
-void exi_hw_exit(void)
+void exi_hw_exit(struct resource *mem, unsigned int irq)
 {
 	exi_quiesce_all_channels(0);
-	free_irq(EXI_IRQ, NULL);
+	iounmap(exi_io_mem);
+	free_irq(irq, NULL);
 }
 
 

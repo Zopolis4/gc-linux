@@ -1,7 +1,7 @@
 /**
  * drivers/net/gcn-bba.c
  *
- * Nintendo GameCube Broadband Adapter driver
+ * Nintendo GameCube Broadband Adapter (BBA) driver
  * Copyright (C) 2004-2008 The GameCube Linux Team
  * Copyright (C) 2005 Todd Jeffreys
  * Copyright (C) 2004,2005,2006,2007,2008 Albert Herranz
@@ -40,7 +40,7 @@
 
 
 #define DRV_MODULE_NAME	"gcn-bba"
-#define DRV_DESCRIPTION	"Nintendo GameCube Broadband Adapter driver"
+#define DRV_DESCRIPTION	"Nintendo GameCube Broadband Adapter (BBA) driver"
 #define DRV_AUTHOR	"Albert Herranz, " \
 			"Todd Jeffreys"
 

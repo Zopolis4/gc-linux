@@ -1,9 +1,9 @@
 /*
  * sound/ppc/gcn-ai.c
  *
- * Nintendo GameCube audio interface driver
- * Copyright (C) 2004-2007 The GameCube Linux Team
- * Copyright (C) 2007 Albert Herranz
+ * Nintendo GameCube/Wii Audio Interface (AI) driver
+ * Copyright (C) 2004-2008 The GameCube Linux Team
+ * Copyright (C) 2007,2008 Albert Herranz
  *
  * Based on work from mist, kirin, groepaz, Steve_-, isobel and others.
  *
@@ -14,100 +14,167 @@
  *
  */
 
-/* #define AI_DEBUG */
-
-#include <sound/driver.h>
-#include <linux/init.h>
-#include <linux/interrupt.h>
-#include <linux/module.h>
 #include <linux/kernel.h>
+#include <linux/module.h>
+#include <linux/init.h>
+#include <linux/of_platform.h>
+#include <linux/interrupt.h>
+#include <linux/dma-mapping.h>
 #include <asm/io.h>
-#include <asm/cacheflush.h>
+#include <sound/driver.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
 #define SNDRV_GET_ID
 #include <sound/initval.h>
 
-#ifdef CONFIG_PPC_MERGE
-#include <platforms/embedded6xx/gamecube.h>
-#else
-#include <platforms/gamecube.h>
-#endif
-
-#ifdef AI_DEBUG
-#  define DPRINTK(fmt, args...) \
-          printk(KERN_ERR "%s: " fmt, __FUNCTION__ , ## args)
-#else
-#  define DPRINTK(fmt, args...)
-#endif
 
 #define DRV_MODULE_NAME  "gcn-ai"
-#define DRV_DESCRIPTION  "Nintendo GameCube Audio Interface driver"
-#define DRV_AUTHOR       "me!"
+#define DRV_DESCRIPTION  "Nintendo GameCube/Wii Audio Interface (AI) driver"
+#define DRV_AUTHOR       "Michael Steil, " \
+			 "(kirin), " \
+			 "(groepaz), " \
+			 "Steven Looman, " \
+			 "Albert Herranz"
 
-MODULE_DESCRIPTION(DRV_DESCRIPTION);
-MODULE_AUTHOR(DRV_AUTHOR);
-MODULE_LICENSE("GPL");
+static char ai_driver_version[] = "1.0-isobel";
 
-#define PFX DRV_MODULE_NAME ": "
-#define ai_printk(level, format, arg...) \
-        printk(level PFX format , ## arg)
+#define drv_printk(level, format, arg...) \
+        printk(level DRV_MODULE_NAME ": " format , ## arg)
 
-#define DSP_BASE		(GCN_IO1_BASE + 0x5000)
-#define AI_BASE			(GCN_IO2_BASE + 0x6c00)
 
-#define DSP_IRQ 6
+/*
+ * Hardware.
+ *
+ */
 
-#define AI_DSP_CSR          (void __iomem*)0xCC00500A
-#define  AI_CSR_RES         (1<<0)
-#define  AI_CSR_PIINT       (1<<1)
-#define  AI_CSR_HALT        (1<<2)
-#define  AI_CSR_AIDINT      (1<<3)
-#define  AI_CSR_AIDINTMASK  (1<<4)
-#define  AI_CSR_ARINT       (1<<5)
-#define  AI_CSR_ARINTMASK   (1<<6)
-#define  AI_CSR_DSPINT      (1<<7)
-#define  AI_CSR_DSPINTMASK  (1<<8)
-#define  AI_CSR_DSPDMA      (1<<9)
-#define  AI_CSR_RESETXXX    (1<<11)
-#define AUDIO_IRQ_CAUSE     *(volatile u_int16_t *)(0xCC005010)
+/*
+ * DSP registers.
+ */
+#define AI_DSP_CSR		0x0a	/* 16 bits */
+#define  AI_CSR_RES		(1<<0)
+#define  AI_CSR_PIINT		(1<<1)
+#define  AI_CSR_HALT		(1<<2)
+#define  AI_CSR_AIDINT		(1<<3)
+#define  AI_CSR_AIDINTMASK	(1<<4)
+#define  AI_CSR_ARINT		(1<<5)
+#define  AI_CSR_ARINTMASK	(1<<6)
+#define  AI_CSR_DSPINT		(1<<7)
+#define  AI_CSR_DSPINTMASK	(1<<8)
+#define  AI_CSR_DSPDMA		(1<<9)
+#define  AI_CSR_RESETXXX	(1<<11)
 
-#define AUDIO_DMA_STARTH    *(volatile u_int16_t *)(0xCC005030)
-#define AUDIO_DMA_STARTL    *(volatile u_int16_t *)(0xCC005032)
+#define AI_DSP_DMA_ADDRH	0x30	/* 16 bits */
 
-#define AUDIO_DMA_LENGTH    *(volatile u_int16_t *)(0xCC005036)
-#define  AI_DCL_PLAY        (1<<15)
+#define AI_DSP_DMA_ADDRL	0x32	/* 16 bits */
 
-#define AUDIO_DMA_LEFT      *(volatile u_int16_t *)(0xCC00503A)
+#define AI_DSP_DMA_CTLLEN	0x36	/* 16 bits */
+#define  AI_CTLLEN_PLAY		(1<<15)
 
-#define AUDIO_STREAM_STATUS *(volatile u_int32_t *)(GCN_IO2_BASE+0x6C00)
+#define AI_DSP_DMA_LEFT		0x3a	/* 16 bits */
+
+/*
+ * AI registers.
+ */
+#define AI_AICR			0x00	/* 32 bits */
 #define  AI_AICR_RATE       (1<<6)
 
-#define LoadSample(addr, len) \
-	  AUDIO_DMA_STARTH = (addr >> 16) & 0xffff; \
-	  AUDIO_DMA_STARTL = addr & 0xffff; \
-	  AUDIO_DMA_LENGTH = (AUDIO_DMA_LENGTH & AI_DCL_PLAY) | (len >> 5)
-#define StartSample()  AUDIO_DMA_LENGTH |= AI_DCL_PLAY
-#define StopSample()   AUDIO_DMA_LENGTH &= ~AI_DCL_PLAY
-#define SetFreq32KHz() AUDIO_STREAM_STATUS |= AI_AICR_RATE
-#define SetFreq48KHz() AUDIO_STREAM_STATUS &= ~AI_AICR_RATE
 
-static int index = SNDRV_DEFAULT_IDX1;	/* Index 0-MAX */
-static char *id = SNDRV_DEFAULT_STR1;	/* ID for this card */
-
+/*
+ * Sound chip.
+ */
 struct snd_gcn {
-	struct snd_card *card;
-	struct snd_pcm *pcm;
-	struct snd_pcm_substream *playback_substream;
-	struct snd_pcm_substream *capture_substream;
-	spinlock_t reg_lock;
-	int dma_size;
-	int period_size;
-	int nperiods;
-	volatile int cur_period;
-	volatile int start_play;
-	volatile int stop_play;
+	struct snd_card			*card;
+	struct snd_pcm			*pcm;
+	struct snd_pcm_substream	*playback_substream;
+	struct snd_pcm_substream	*capture_substream;
+
+	volatile int	start_play;
+	volatile int	stop_play;
+
+	dma_addr_t	dma_addr;
+	size_t		period_size;
+	int		nperiods;
+	volatile int	cur_period;
+
+	void __iomem	*dsp_base;
+	void __iomem	*ai_base;
+	unsigned int	irq;
+
+	struct device	*dev;
 };
+
+
+/*
+ * Hardware functions.
+ *
+ */
+
+static void ai_dsp_load_sample(void __iomem *dsp_base,
+			       void *addr, size_t size)
+{
+	u32 daddr = (unsigned long)addr;
+
+	out_be16(dsp_base + AI_DSP_DMA_ADDRH, daddr >> 16);
+	out_be16(dsp_base + AI_DSP_DMA_ADDRL, daddr & 0xffff);
+	out_be16(dsp_base + AI_DSP_DMA_CTLLEN,
+		 (in_be16(dsp_base + AI_DSP_DMA_CTLLEN) & AI_CTLLEN_PLAY) |
+		 size >> 5);
+}
+
+static void ai_dsp_start_sample(void __iomem *dsp_base)
+{
+	out_be16(dsp_base + AI_DSP_DMA_CTLLEN,
+		 in_be16(dsp_base + AI_DSP_DMA_CTLLEN) | AI_CTLLEN_PLAY);
+}
+
+static void ai_dsp_stop_sample(void __iomem *dsp_base)
+{
+	out_be16(dsp_base + AI_DSP_DMA_CTLLEN,
+		 in_be16(dsp_base + AI_DSP_DMA_CTLLEN) & ~AI_CTLLEN_PLAY);
+}
+
+static int ai_dsp_get_remaining_byte_count(void __iomem *dsp_base)
+{
+	return in_be16(dsp_base + AI_DSP_DMA_LEFT) << 5;
+}
+
+static void ai_enable_interrupts(void __iomem *dsp_base)
+{
+	unsigned long flags;
+
+	/* enable AI DMA and DSP interrupts */
+	local_irq_save(flags);
+	out_be16(dsp_base + AI_DSP_CSR,
+		 in_be16(dsp_base + AI_DSP_CSR) |
+		 AI_CSR_AIDINTMASK | AI_CSR_PIINT);
+	local_irq_restore(flags);
+}
+
+static void ai_disable_interrupts(void __iomem *dsp_base)
+{
+	unsigned long flags;
+
+	/* disable AI interrupts */
+	local_irq_save(flags);
+	out_be16(dsp_base + AI_DSP_CSR,
+		 in_be16(dsp_base + AI_DSP_CSR) & ~AI_CSR_AIDINTMASK);
+	local_irq_restore(flags);
+}
+
+static void ai_set_rate(void __iomem *ai_base, int fortyeight)
+{
+	/* set rate to 48KHz or 32KHz */
+	if (fortyeight)
+		out_be32(ai_base + AI_AICR,
+			 in_be32(ai_base + AI_AICR) & ~AI_AICR_RATE);
+	else
+		out_be32(ai_base + AI_AICR,
+			 in_be32(ai_base + AI_AICR) | AI_AICR_RATE);
+}
+
+
+static int index = SNDRV_DEFAULT_IDX1;	/* index 0-MAX */
+static char *id = SNDRV_DEFAULT_STR1;	/* ID for this card */
 
 static struct snd_gcn *gcn_audio = NULL;
 
@@ -127,12 +194,11 @@ static struct snd_pcm_hardware snd_gcn_playback = {
 	.periods_max = 1024,
 };
 
-static int snd_gcn_open(struct snd_pcm_substream * substream)
+static int snd_gcn_open(struct snd_pcm_substream *substream)
 {
 	struct snd_gcn *chip = snd_pcm_substream_chip(substream);
 	struct snd_pcm_runtime *runtime = substream->runtime;
 
-	DPRINTK("pcm open\n");
 	chip->playback_substream = substream;
 	runtime->hw = snd_gcn_playback;
 
@@ -145,94 +211,74 @@ static int snd_gcn_open(struct snd_pcm_substream * substream)
 	return 0;
 }
 
-static int snd_gcn_close(struct snd_pcm_substream * substream)
+static int snd_gcn_close(struct snd_pcm_substream *substream)
 {
 	struct snd_gcn *chip = snd_pcm_substream_chip(substream);
 
-	DPRINTK("pcm close\n");
 	chip->playback_substream = NULL;
 	return 0;
 }
 
-static int snd_gcn_hw_params(struct snd_pcm_substream * substream,
+static int snd_gcn_hw_params(struct snd_pcm_substream *substream,
 				  struct snd_pcm_hw_params * hw_params)
 {
-	DPRINTK("snd_gcn_hw_params\n");
 	return snd_pcm_lib_malloc_pages(substream,
 					params_buffer_bytes(hw_params));
 }
 
-static int snd_gcn_hw_free(struct snd_pcm_substream * substream)
+static int snd_gcn_hw_free(struct snd_pcm_substream *substream)
 {
-	DPRINTK("snd_gcn_hw_free\n");
 	return snd_pcm_lib_free_pages(substream);
 }
 
-static int snd_gcn_prepare(struct snd_pcm_substream * substream)
-{
-	/* struct snd_gcn *chip = snd_pcm_substream_chip(substream); */
-	struct snd_pcm_runtime *runtime = substream->runtime;
-
-	DPRINTK("snd_gcn_prepare\n");
-	DPRINTK("prepare: rate=%i, channels=%i, sample_bits=%i\n",
-		runtime->rate, runtime->channels, runtime->sample_bits);
-	DPRINTK("prepare: format=%i, access=%i\n",
-		runtime->format, runtime->access);
-
-	/* set requested samplerate */
-	switch (runtime->rate) {
-	case 32000:
-		SetFreq32KHz();
-		break;
-	case 48000:
-		SetFreq48KHz();
-		break;
-	default:
-		DPRINTK("unsupported rate: %i!\n", runtime->rate);
-		return -EINVAL;
-	}
-
-	return 0;
-}
-
-static int snd_gcn_trigger(struct snd_pcm_substream * substream, int cmd)
+static int snd_gcn_prepare(struct snd_pcm_substream *substream)
 {
 	struct snd_gcn *chip = snd_pcm_substream_chip(substream);
 	struct snd_pcm_runtime *runtime = substream->runtime;
 
-	DPRINTK("snd_gcn_trigger\n");
+	/* set requested sample rate */
+	switch (runtime->rate) {
+	case 32000:
+		ai_set_rate(chip->ai_base, 0);
+		break;
+	case 48000:
+		ai_set_rate(chip->ai_base, 1);
+		break;
+	default:
+		drv_printk(KERN_ERR, "unsupported rate %i\n", runtime->rate);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static int snd_gcn_trigger(struct snd_pcm_substream *substream, int cmd)
+{
+	struct snd_gcn *chip = snd_pcm_substream_chip(substream);
+	struct snd_pcm_runtime *runtime = substream->runtime;
+
 	switch (cmd) {
 	case SNDRV_PCM_TRIGGER_START:
 		/* do something to start the PCM engine */
-		DPRINTK("PCM_TRIGGER_START\n");
 		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
-			chip->dma_size = snd_pcm_lib_buffer_bytes(substream);
 			chip->period_size = snd_pcm_lib_period_bytes(substream);
-			chip->nperiods = chip->dma_size / chip->period_size;
+			chip->nperiods = snd_pcm_lib_buffer_bytes(substream) /
+					 chip->period_size;
 			chip->cur_period = 0;
 			chip->stop_play = 0;
 			chip->start_play = 1;
 
-			DPRINTK("stream is PCM_PLAYBACK,"
-				" dma_area=0x%p dma_size=%i\n",
-				runtime->dma_area, chip->dma_size);
-			DPRINTK("%i periods of %i bytes\n", chip->nperiods,
-				chip->period_size);
-
-			flush_dcache_range((unsigned long)runtime->dma_area,
-					   (unsigned long)(runtime->dma_area +
-							   chip->period_size));
-			LoadSample((u_int32_t) runtime->dma_area,
-				   chip->period_size);
-			StartSample();
+			chip->dma_addr = dma_map_single(chip->dev,
+							runtime->dma_area,
+							chip->period_size,
+							DMA_TO_DEVICE);
+			ai_dsp_load_sample(chip->dsp_base, runtime->dma_area,
+					   chip->period_size);
+			ai_dsp_start_sample(chip->dsp_base);
 		}
 		break;
 	case SNDRV_PCM_TRIGGER_STOP:
-		/* do something to stop the PCM engine */
-		DPRINTK("PCM_TRIGGER_STOP\n");
-
 		chip->stop_play = 1;
-		/* StopSample(); */
 		break;
 	default:
 		return -EINVAL;
@@ -241,19 +287,14 @@ static int snd_gcn_trigger(struct snd_pcm_substream * substream, int cmd)
 	return 0;
 }
 
-static snd_pcm_uframes_t snd_gcn_pointer(struct snd_pcm_substream * substream)
+static snd_pcm_uframes_t snd_gcn_pointer(struct snd_pcm_substream *substream)
 {
 	struct snd_gcn *chip = snd_pcm_substream_chip(substream);
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	int left, bytes;
 
-	DPRINTK("snd_gcn_pointer\n");
-	left = AUDIO_DMA_LEFT << 5;
+	left = ai_dsp_get_remaining_byte_count(chip->dsp_base);
 	bytes = chip->period_size * (chip->cur_period + 1);
-	/* bytes = snd_pcm_lib_buffer_bytes(substream); */
-
-	DPRINTK("pointer: %i of %i(%i) bytes left, period #%i\n", left,
-		chip->period_size, bytes, chip->cur_period);
 
 	return bytes_to_frames(runtime, bytes - left);
 }
@@ -261,51 +302,58 @@ static snd_pcm_uframes_t snd_gcn_pointer(struct snd_pcm_substream * substream)
 static irqreturn_t snd_gcn_interrupt(int irq, void *dev)
 {
 	struct snd_gcn *chip = dev;
+	void *addr;
 	unsigned long flags;
-	u16 tmp;
+	u16 csr;
 
-	if (in_be16(AI_DSP_CSR) & AI_CSR_AIDINT) {
-		u_int32_t addr;
+	/*
+	 * This is a shared interrupt. Do nothing if it ain't ours.
+	 */
+	csr = in_be16(chip->dsp_base + AI_DSP_CSR);
+	if (!(csr & AI_CSR_AIDINT))
+		return IRQ_NONE;
 
-		DPRINTK("DSP interrupt! period #%i\n", chip->cur_period);
+	if (chip->start_play) {
+		chip->start_play = 0;
+	} else {
+		/* stop current sample */
+		ai_dsp_stop_sample(chip->dsp_base);
+		dma_unmap_single(chip->dev, chip->dma_addr, chip->period_size,
+				 DMA_TO_DEVICE);
 
-		if (chip->start_play) {
-			chip->start_play = 0;
-		} else if (chip->stop_play) {
-			StopSample();
-		} else {
-			StopSample();
-
+		/* load next sample if we are not stopping */
+		if (!chip->stop_play) {
 			if (chip->cur_period < (chip->nperiods - 1)) {
 				chip->cur_period++;
 			} else
 				chip->cur_period = 0;
 
-			addr =
-			    (u_int32_t) chip->playback_substream->runtime->
-			    dma_area + (chip->cur_period * chip->period_size);
-
-			flush_dcache_range(addr, addr + chip->period_size);
-			LoadSample(addr, chip->period_size);
-
-			StartSample();
-			/* chip->start_play = 1; */
+			addr = chip->playback_substream->runtime->dma_area
+				   + (chip->cur_period * chip->period_size);
+			chip->dma_addr = dma_map_single(chip->dev,
+							addr,
+							chip->period_size,
+							DMA_TO_DEVICE);
+			ai_dsp_load_sample(chip->dsp_base, addr,
+					   chip->period_size);
+			ai_dsp_start_sample(chip->dsp_base);
 
 			snd_pcm_period_elapsed(chip->playback_substream);
 		}
-		/* ack AI DMA interrupt, go through lengths to only ack
-		   the audio part */
-		local_irq_save(flags);
-		tmp = in_be16(AI_DSP_CSR);
-		tmp &= ~(AI_CSR_PIINT | AI_CSR_ARINT | AI_CSR_DSPINT);
-		out_be16(AI_DSP_CSR, tmp);
-		local_irq_restore(flags);
-		
-		return IRQ_HANDLED;
 	}
-
-	return IRQ_NONE;
+	/*
+	 * Ack the AI DMA interrupt, going through lengths to only ack
+	 * the audio part.
+	 */
+	local_irq_save(flags);
+	csr = in_be16(chip->dsp_base + AI_DSP_CSR);
+	csr &= ~(AI_CSR_PIINT | AI_CSR_ARINT | AI_CSR_DSPINT);
+	out_be16(chip->dsp_base + AI_DSP_CSR, csr);
+	local_irq_restore(flags);
+		
+	return IRQ_HANDLED;
 }
+
 
 static struct snd_pcm_ops snd_gcn_playback_ops = {
 	.open = snd_gcn_open,
@@ -321,15 +369,14 @@ static struct snd_pcm_ops snd_gcn_playback_ops = {
 static int __devinit snd_gcn_new_pcm(struct snd_gcn * chip)
 {
 	struct snd_pcm *pcm;
-	int err;
+	int retval;
 
-	if ((err =
-	     snd_pcm_new(chip->card, chip->card->shortname, 0, 1, 0, &pcm)) < 0)
-		return err;
+	retval = snd_pcm_new(chip->card, chip->card->shortname, 0, 1, 0, &pcm);
+	if (retval < 0)
+		return retval;
 
 	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_PLAYBACK,
 			&snd_gcn_playback_ops);
-	/* snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_CAPTURE, &snd_gcn_capture_ops); */
 
 	/* preallocate 64k buffer */
 	snd_pcm_lib_preallocate_pages_for_all(pcm, SNDRV_DMA_TYPE_CONTINUOUS,
@@ -346,96 +393,206 @@ static int __devinit snd_gcn_new_pcm(struct snd_gcn * chip)
 	return 0;
 }
 
-static int __init alsa_card_gcn_init(void)
+static void ai_shutdown(struct snd_gcn *chip)
 {
-	int err;
+	ai_dsp_stop_sample(chip->dsp_base);
+	ai_disable_interrupts(chip->dsp_base);
+}
+
+static int ai_init(struct snd_gcn *chip,
+		   struct resource *dsp, struct resource *ai,
+		   unsigned int irq)
+{
 	struct snd_card *card;
-	unsigned long flags;
-/*	if (!is_gamecube())
-		return -ENODEV; */
+	int retval;
 
-	/* register the soundcard */
-	card = snd_card_new(index, id, THIS_MODULE, sizeof(struct snd_gcn));
-	if (card == NULL)
-		return -ENOMEM;
+	chip->dsp_base = ioremap(dsp->start, dsp->end - dsp->start + 1);
+	chip->ai_base = ioremap(ai->start, ai->end - ai->start + 1);
+	chip->irq = irq;
 
-	gcn_audio = (struct snd_gcn *) card->private_data;
-	if (gcn_audio == NULL)
-		return -ENOMEM;
+	chip->stop_play = 1;
+	card = chip->card;
 
-	memset(gcn_audio, 0, sizeof(struct snd_gcn));
-	gcn_audio->card = card;
-	gcn_audio->stop_play = 1;
-
-	strcpy(card->driver, "gcn-ai");
+	strcpy(card->driver, DRV_MODULE_NAME);
 	strcpy(card->shortname, card->driver);
 	sprintf(card->longname, "Nintendo GameCube Audio Interface");
 
-	if (request_irq(DSP_IRQ, snd_gcn_interrupt,
-			IRQF_DISABLED | IRQF_SHARED, 
-			card->shortname,gcn_audio)) {
-		snd_printk(KERN_ERR "%s: unable to grab IRQ %d\n",
-			   card->shortname, DSP_IRQ);
-		return -EBUSY;
-	} else {
-
-		/* enable AI DMA and DSP interrupt */
-		local_irq_save(flags);
-		out_be16(AI_DSP_CSR,
-			 in_be16(AI_DSP_CSR) | AI_CSR_AIDINTMASK | AI_CSR_PIINT);
-		local_irq_restore(flags);
-	}
-
-#if 0
-	if (request_region(AUDIO_INTERFACE_ADDR, 0x200, card->shortname) ==
-	    NULL) {
-		printk("unable to grab memory region 0x%lx-0x%lx\n",
-		       AUDIO_INTERFACE_ADDR, AUDIO_INTERFACE_ADDR + 0x200 - 1);
-		return -EBUSY;
-	}
-
-	if ((iobase = (unsigned long)ioremap(AUDIO_INTERFACE_ADDR, 0x200)) == 0) {
-		printk("unable to remap memory region 0x%lx-0x%lx\n",
-		       AUDIO_INTERFACE_ADDR, AUDIO_INTERFACE_ADDR + 0x200 - 1);
-		return -ENOMEM;
-	}
-
-	printk("iobase=0x%lx\n", iobase);
-#endif
-
-#if 0
-	/* mixer */
-	if ((err = snd_gcn_mixer_new(gcn_audio)) < 0)
-		goto fail;
-#endif
 	/* PCM */
-	if ((err = snd_gcn_new_pcm(gcn_audio)) < 0)
-		goto fail;
+	retval = snd_gcn_new_pcm(chip);
+	if (retval < 0)
+		goto err_new_pcm;
 
-	if ((err = snd_card_register(card)) == 0) {
-		ai_printk(KERN_INFO, "%s initialized\n", DRV_DESCRIPTION);
+	retval = request_irq(chip->irq, snd_gcn_interrupt,
+			     IRQF_DISABLED | IRQF_SHARED,
+			     card->shortname, chip);
+	if (retval) {
+		drv_printk(KERN_ERR, "unable to request IRQ %d\n", chip->irq);
+		goto err_request_irq;
+	}
+	ai_enable_interrupts(chip->dsp_base);
+
+	gcn_audio = chip;
+	retval = snd_card_register(card);
+	if (retval) {
+		drv_printk(KERN_ERR, "failed to register card\n");
+		goto err_card_register;
+	}
+
+	return 0;
+
+err_card_register:
+	ai_disable_interrupts(chip->dsp_base);
+	free_irq(chip->irq, chip);
+err_request_irq:
+err_new_pcm:
+	iounmap(chip->dsp_base);
+	iounmap(chip->ai_base);
+	return retval;
+}
+
+static void ai_exit(struct snd_gcn *chip)
+{
+	ai_dsp_stop_sample(chip->dsp_base);
+	ai_disable_interrupts(chip->dsp_base);
+
+	free_irq(chip->irq, chip);
+	iounmap(chip->dsp_base);
+	iounmap(chip->ai_base);
+}
+
+
+/*
+ * Device interfaces.
+ *
+ */
+
+static int ai_do_shutdown(struct device *dev)
+{
+	struct snd_gcn *chip;
+
+	chip = dev_get_drvdata(dev);
+	if (chip) {
+		ai_shutdown(chip);
 		return 0;
 	}
-
-      fail:
-	snd_card_free(card);
-	return err;
+	return -ENODEV;
 }
 
-static void __exit alsa_card_gcn_exit(void)
+static int ai_do_probe(struct device *dev,
+		       struct resource *dsp, struct resource *ai,
+		       unsigned int irq)
 {
-	unsigned long flags;
-	DPRINTK("Goodbye, cruel world\n");
+	struct snd_card *card;
+	struct snd_gcn *chip;
+	int retval;
 
-	StopSample();
-	/* disable interrupts */
-	local_irq_save(flags);
-	out_be16(AI_DSP_CSR, in_be16(AI_DSP_CSR) & ~AI_CSR_AIDINTMASK);
-	local_irq_restore(flags);
-	
-	free_irq(DSP_IRQ, gcn_audio);
-	snd_card_free(gcn_audio->card);
+	card = snd_card_new(index, id, THIS_MODULE, sizeof(struct snd_gcn));
+	if (!card) {
+		drv_printk(KERN_ERR, "failed to allocate card\n");
+		return -ENOMEM;
+	}
+	chip = (struct snd_gcn *)card->private_data;
+	memset(chip, 0, sizeof(*chip));
+	chip->card = card;
+	dev_set_drvdata(dev, chip);
+	chip->dev = dev;
+
+	retval = ai_init(chip, dsp, ai, irq);
+	if (retval)
+		snd_card_free(card);
+
+	return retval;
 }
 
-module_init(alsa_card_gcn_init);
-module_exit(alsa_card_gcn_exit);
+static int ai_do_remove(struct device *dev)
+{
+	struct snd_gcn *chip;
+
+	chip = dev_get_drvdata(dev);
+	if (chip) {
+		ai_exit(chip);
+		dev_set_drvdata(dev, NULL);
+		snd_card_free(chip->card);
+		return 0;
+	}
+	return -ENODEV;
+}
+
+/*
+ * OF Platform device interfaces.
+ *
+ */
+
+static int __init ai_of_probe(struct of_device *odev,
+			      const struct of_device_id *match)
+{
+	struct resource dsp, ai;
+	int retval;
+
+	retval = of_address_to_resource(odev->node, 0, &dsp);
+	if (retval) {
+		drv_printk(KERN_ERR, "no dsp io memory range found\n");
+		return -ENODEV;
+	}
+	retval = of_address_to_resource(odev->node, 1, &ai);
+	if (retval) {
+		drv_printk(KERN_ERR, "no ai io memory range found\n");
+		return -ENODEV;
+	}
+
+	return ai_do_probe(&odev->dev,
+			   &dsp, &ai, irq_of_parse_and_map(odev->node, 0));
+}
+
+static int __exit ai_of_remove(struct of_device *odev)
+{
+	return ai_do_remove(&odev->dev);
+}
+
+static int ai_of_shutdown(struct of_device *odev)
+{
+	return ai_do_shutdown(&odev->dev);
+}
+
+
+static struct of_device_id ai_of_match[] = {
+	{ .compatible = "nintendo,ai" },
+	{ },
+};
+
+MODULE_DEVICE_TABLE(of, ai_of_match);
+
+static struct of_platform_driver ai_of_driver = {
+	.owner = THIS_MODULE,
+	.name = DRV_MODULE_NAME,
+	.match_table = ai_of_match,
+	.probe = ai_of_probe,
+	.remove = ai_of_remove,
+	.shutdown = ai_of_shutdown,
+};
+
+/*
+ * Module interfaces.
+ *
+ */
+
+static int __init ai_init_module(void)
+{
+	drv_printk(KERN_INFO, "%s - version %s\n", DRV_DESCRIPTION,
+		   ai_driver_version);
+
+	return of_register_platform_driver(&ai_of_driver);
+}
+
+static void __exit ai_exit_module(void)
+{
+        of_unregister_platform_driver(&ai_of_driver);
+}
+
+module_init(ai_init_module);
+module_exit(ai_exit_module);
+
+MODULE_DESCRIPTION(DRV_DESCRIPTION);
+MODULE_AUTHOR(DRV_AUTHOR);
+MODULE_LICENSE("GPL");
+

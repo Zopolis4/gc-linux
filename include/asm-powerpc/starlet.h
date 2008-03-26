@@ -25,8 +25,10 @@
 #define STARLET_IPC_DMA_ALIGN   0x1f /* 32 bytes */
 
 struct starlet_ipc_device {
-	void __iomem *io_base;
 	unsigned long flags;
+
+	void __iomem *io_base;
+	int irq;
 
 	struct dma_pool *dma_pool;
 
@@ -36,21 +38,19 @@ struct starlet_ipc_device {
 	struct list_head pending_list;
 	unsigned long nr_pending;
 
-	struct platform_device pdev;
-};
+	struct device *dev;
 
-#define to_ipc_dev(n) container_of(n,struct starlet_ipc_device,pdev)
+};
 
 /* from starlet-ipc.c */
 
 extern struct starlet_ipc_device *starlet_ipc_get_device(void);
 
-
 extern int starlet_ios_open(const char *pathname, int flags);
 extern int starlet_ios_close(int fd);
 extern int starlet_ios_ioctl(int fd, int request,
-			     dma_addr_t ibuf, size_t ilen, 
-			     dma_addr_t obuf, size_t olen);
+			     void *ibuf, size_t ilen, 
+			     void *obuf, size_t olen);
 
 /* from starlet-stm.c */
 

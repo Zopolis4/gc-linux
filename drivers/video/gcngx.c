@@ -31,6 +31,8 @@
 #include <asm/atomic.h>
 #include <asm/cacheflush.h>
 
+#error This driver is broken since ARCH=powerpc changes. A rewrite is needed. 
+
 #ifdef CONFIG_PPC_MERGE
 #include <platforms/embedded6xx/gamecube.h>
 #else

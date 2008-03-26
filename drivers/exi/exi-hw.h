@@ -16,19 +16,10 @@
 #ifndef __EXI_HW_H
 #define __EXI_HW_H
 
-#include <linux/interrupt.h>
-#include <asm/atomic.h>
-
 #include <linux/exi.h>
-
-#ifdef CONFIG_PPC_MERGE
-#include <platforms/embedded6xx/gamecube.h>
-#else
-#include <platforms/gamecube.h>
-#endif
-
-#define exi_printk(level, format, arg...) \
-	printk(level "exi: " format , ## arg)
+#include <linux/interrupt.h>
+#include <linux/resource.h>
+#include <asm/atomic.h>
 
 
 #define EXI_MAX_CHANNELS	3  /* channels on the EXI bus */
@@ -51,16 +42,9 @@
 #define EXI_IDI_MAX_SIZE	4
 
 
-#define EXI_IRQ			4
-
 #define EXI_DMA_ALIGN		0x1f /* 32 bytes */
 
-#define EXI_BASE		(GCN_IO2_BASE+0x6800)
-#define EXI_SIZE		0x40
-
 #define EXI_CHANNEL_SPACING	0x14
-
-#define EXI_IO_BASE(c) ((void __iomem *)(EXI_BASE + ((c)*EXI_CHANNEL_SPACING)))
 
 #define EXI_CSR			0x00
 #define   EXI_CSR_EXIINTMASK	(1<<0)
@@ -146,8 +130,8 @@ extern struct exi_device *exi_channel_owner(struct exi_channel *exi_channel);
 extern int exi_get_ext_line(struct exi_channel *exi_channel);
 extern void exi_update_ext_status(struct exi_channel *exi_channel);
 
-extern int exi_hw_init(char *);
-extern void exi_hw_exit(void);
+extern int exi_hw_init(char *name, struct resource *mem, unsigned int irq);
+extern void exi_hw_exit(struct resource *mem, unsigned int irq);
 
 #define exi_is_taken(x) ((x)->owner)
 

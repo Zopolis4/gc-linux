@@ -1,10 +1,10 @@
 /*
  * drivers/block/gcn-aram.c
  *
- * Nintendo GameCube Auxiliary RAM block driver
- * Copyright (C) 2004-2007 The GameCube Linux Team
+ * Nintendo GameCube Auxiliary RAM (ARAM) block driver
+ * Copyright (C) 2004-2008 The GameCube Linux Team
  * Copyright (C) 2005 Todd Jeffreys <todd@voidpointer.org>
- * Copyright (C) 2005,2007 Albert Herranz
+ * Copyright (C) 2005,2007,2008 Albert Herranz
  *
  * Based on previous work by Franz Lehner.
  *
@@ -15,45 +15,32 @@
  *
  */
 
-#include <linux/module.h>
-#include <linux/major.h>
-#include <linux/platform_device.h>
 #include <linux/blkdev.h>
+#include <linux/dma-mapping.h>
 #include <linux/fcntl.h>	/* O_ACCMODE */
 #include <linux/hdreg.h>	/* HDIO_GETGEO */
 #include <linux/interrupt.h>
-#include <linux/dma-mapping.h>
+#include <linux/major.h>
+#include <linux/module.h>
+#include <linux/of_platform.h>
 #include <asm/io.h>
 
 
 #define DRV_MODULE_NAME "gcn-aram"
-#define DRV_DESCRIPTION "Nintendo GameCube Auxiliary RAM block driver"
+#define DRV_DESCRIPTION "Nintendo GameCube Auxiliary RAM (ARAM) block driver"
 #define DRV_AUTHOR      "Todd Jeffreys <todd@voidpointer.org>, " \
 			"Albert Herranz"
 
-static char aram_driver_version[] = "3.0";
+static char aram_driver_version[] = "4.0";
 
-#define aram_printk(level, format, arg...) \
+#define drv_printk(level, format, arg...) \
 	printk(level DRV_MODULE_NAME ": " format , ## arg)
 
-#ifdef ARAM_DEBUG
-#  define DBG(fmt, args...) \
-          printk(KERN_ERR "%s: " fmt, __FUNCTION__ , ## args)
-#else
-#  define DBG(fmt, args...)
-#endif
 
 /*
  * Hardware.
  */
-#define ARAM_IRQ		6
-
 #define ARAM_DMA_ALIGN		0x1f	/* 32 bytes */
-
-#define DSP_BASE		0xcc005000
-#define DSP_SIZE		0x200
-
-#define DSP_IO_BASE		((void __iomem *)DSP_BASE)
 
 #define DSP_CSR			0x00a
 #define  DSP_CSR_RES		(1<<0)
@@ -90,22 +77,22 @@ static char aram_driver_version[] = "3.0";
 /*
  * Driver settings
  */
-#define ARAM_NAME		"gcnaram"
-#define ARAM_MAJOR		Z2RAM_MAJOR
+#define ARAM_NAME		DRV_MODULE_NAME
+#define ARAM_MAJOR		Z2RAM_MAJOR /* we share the major */
 
 #define ARAM_SECTOR_SIZE	PAGE_SIZE
 
-#define ARAM_SOUNDMEMORYOFFSET	0
-#define ARAM_BUFFERSIZE		(16*1024*1024 - ARAM_SOUNDMEMORYOFFSET)
+#define ARAM_BUFFERSIZE		(16*1024*1024)
 
-
-
-struct aram_device {
+/*
+ * Driver data.
+ */
+struct aram_drvdata {
 	spinlock_t			lock;
 
-	int				irq;
-	void __iomem			*io_base;
 	spinlock_t			io_lock;
+	void __iomem			*io_base;
+	int				irq;
 
 	struct block_device_operations	fops;
 	struct gendisk			*disk;
@@ -117,16 +104,10 @@ struct aram_device {
 
 	int				ref_count;
 
-	struct platform_device		pdev;	/* must be last member */
+	struct device			*dev;
 };
 
 
-/* get the aram device given the platform device of an aram device */
-#define to_aram_device(n) container_of(n,struct aram_device,pdev)
-
-/*
- * Converts a request direction into a DMA data direction.
- */
 static inline enum dma_data_direction rq_dir_to_dma_dir(struct request *req)
 {
 	if (rq_data_dir(req) == READ) {
@@ -136,9 +117,6 @@ static inline enum dma_data_direction rq_dir_to_dma_dir(struct request *req)
 	}
 }
 
-/*
- * Converts a request direction into an ARAM data direction.
- */
 static inline int rq_dir_to_aram_dir(struct request *req)
 {
 	if (rq_data_dir(req) == READ) {
@@ -148,16 +126,12 @@ static inline int rq_dir_to_aram_dir(struct request *req)
 	}
 }
 
-
-/*
- * Starts an ARAM DMA transfer.
- */
-static void aram_start_dma_transfer(struct aram_device *adev,
+static void aram_start_dma_transfer(struct aram_drvdata *drvdata,
 				    unsigned long aram_addr)
 {
-	void __iomem *io_base = adev->io_base;
-	dma_addr_t dma_addr = adev->dma_addr;
-	size_t dma_len = adev->dma_len;
+	void __iomem *io_base = drvdata->io_base;
+	dma_addr_t dma_addr = drvdata->dma_addr;
+	size_t dma_len = drvdata->dma_len;
 
 	/* DMA transfers require proper alignment */
 	BUG_ON((dma_addr & ARAM_DMA_ALIGN) != 0 ||
@@ -167,30 +141,28 @@ static void aram_start_dma_transfer(struct aram_device *adev,
 	out_be32(io_base + AR_DMA_ARADDR, aram_addr);
 
 	/* writing the low-word kicks off the DMA */
-	out_be32(io_base + AR_DMA_CNT, rq_dir_to_aram_dir(adev->req) | dma_len);
+	out_be32(io_base + AR_DMA_CNT,
+		 rq_dir_to_aram_dir(drvdata->req) | dma_len);
 }
 
-/*
- * Handles ARAM interrupts.
- */
 static irqreturn_t aram_irq_handler(int irq, void *dev0)
 {
-	struct aram_device *adev = dev0;
+	struct aram_drvdata *drvdata = dev0;
 	struct request *req;
-	u16 __iomem *csr_reg = adev->io_base + DSP_CSR;
+	u16 __iomem *csr_reg = drvdata->io_base + DSP_CSR;
 	u16 csr;
 	unsigned long flags;
 
-	spin_lock_irqsave(&adev->io_lock, flags);
+	spin_lock_irqsave(&drvdata->io_lock, flags);
 
 	csr = in_be16(csr_reg);
 
 	/*
 	 * Do nothing if the interrupt is not targetted for us.
-	 * (We share this interrupt with the sound driver).
+	 * We share this interrupt with the sound driver.
 	 */
 	if (!(csr & DSP_CSR_ARINT)) {
-		spin_unlock_irqrestore(&adev->io_lock, flags);
+		spin_unlock_irqrestore(&drvdata->io_lock, flags);
 		return IRQ_NONE;
 	}
 
@@ -199,34 +171,32 @@ static irqreturn_t aram_irq_handler(int irq, void *dev0)
 	out_be16(csr_reg, csr);
 
 	/* pick up current request being serviced */
-	req = adev->req;
-	adev->req = NULL;
+	req = drvdata->req;
+	drvdata->req = NULL;
 
-	spin_unlock_irqrestore(&adev->io_lock, flags);
+	spin_unlock_irqrestore(&drvdata->io_lock, flags);
 		
 	if (req) {
 		if (!end_that_request_first(req, 1, req->current_nr_sectors)) {
 			add_disk_randomness(req->rq_disk);
 			end_that_request_last(req, 1);
 		}
-		dma_unmap_single(&adev->pdev.dev, adev->dma_addr, adev->dma_len,
+		dma_unmap_single(drvdata->dev,
+				 drvdata->dma_addr, drvdata->dma_len,
 				 rq_dir_to_dma_dir(req));
-		spin_lock(&adev->lock);
-		blk_start_queue(adev->queue);
-		spin_unlock(&adev->lock);
+		spin_lock(&drvdata->lock);
+		blk_start_queue(drvdata->queue);
+		spin_unlock(&drvdata->lock);
 	} else {
-		aram_printk(KERN_ERR, "ignoring interrupt, no request\n");
+		drv_printk(KERN_ERR, "ignoring interrupt, no request\n");
 	}
 
 	return IRQ_HANDLED;
 }
 
-/*
- * Performs block layer requests.
- */
 static void aram_do_request(struct request_queue *q)
 {
-	struct aram_device *adev = q->queuedata;
+	struct aram_drvdata *drvdata = q->queuedata;
 	struct request *req;
 	unsigned long aram_addr;
 	size_t len;
@@ -234,11 +204,11 @@ static void aram_do_request(struct request_queue *q)
 
 	req = elv_next_request(q);
 	while(req) {
-		spin_lock_irqsave(&adev->io_lock, flags);
+		spin_lock_irqsave(&drvdata->io_lock, flags);
 
-		/* we can schedule just a single request each time */
-		if (adev->req) {
-			spin_unlock_irqrestore(&adev->io_lock, flags);
+		/* we schedule a single request each time */
+		if (drvdata->req) {
+			spin_unlock_irqrestore(&drvdata->io_lock, flags);
 			blk_stop_queue(q);
 			break;
 		}
@@ -247,15 +217,15 @@ static void aram_do_request(struct request_queue *q)
 
 		/* ignore requests that we can't handle */
 		if (!blk_fs_request(req)) {
-			spin_unlock_irqrestore(&adev->io_lock, flags);
+			spin_unlock_irqrestore(&drvdata->io_lock, flags);
 			continue;
 		}
 
 		/* store the request being handled */
-		adev->req = req;
+		drvdata->req = req;
 		blk_stop_queue(q);
 
-		spin_unlock_irqrestore(&adev->io_lock, flags);
+		spin_unlock_irqrestore(&drvdata->io_lock, flags);
 
 		/* calculate the ARAM address and length */
 		aram_addr = req->sector << 9;
@@ -263,8 +233,8 @@ static void aram_do_request(struct request_queue *q)
 
 		/* give up if the request goes out of bounds */
 		if (aram_addr + len > ARAM_BUFFERSIZE) {
-			aram_printk(KERN_ERR, "bad access: block=%lu,"
-				    " size=%u\n", (unsigned long)req->sector,
+			drv_printk(KERN_ERR, "bad access: block=%lu,"
+				   " size=%u\n", (unsigned long)req->sector,
 				    len);
 			/* XXX correct? the request is already dequeued */
 			end_request(req, 0);
@@ -274,27 +244,29 @@ static void aram_do_request(struct request_queue *q)
 		BUG_ON(req->nr_phys_segments != 1);
 
 		/* perform DMA mappings */
-		adev->dma_len = len;
-		adev->dma_addr = dma_map_single(&adev->pdev.dev, req->buffer,
-						len, rq_dir_to_dma_dir(req));
+		drvdata->dma_len = len;
+		drvdata->dma_addr = dma_map_single(drvdata->dev,
+						   req->buffer, len,
+						   rq_dir_to_dma_dir(req));
 
 		/* start the DMA transfer */
-		aram_start_dma_transfer(adev,
-					ARAM_SOUNDMEMORYOFFSET + aram_addr);
+		aram_start_dma_transfer(drvdata, aram_addr);
 		break;
 	}
 }
 
 /*
- * Opens the ARAM device.
+ * Block device hooks.
+ *
  */
+
 static int aram_open(struct inode *inode, struct file *filp)
 {
-	struct aram_device *adev = inode->i_bdev->bd_disk->private_data;
+	struct aram_drvdata *drvdata = inode->i_bdev->bd_disk->private_data;
 	unsigned long flags;
 	int retval = 0;
 
-	spin_lock_irqsave(&adev->lock, flags);
+	spin_lock_irqsave(&drvdata->lock, flags);
 
 	/* only allow a minor of 0 to be opened */
 	if (iminor(inode)) {
@@ -303,43 +275,37 @@ static int aram_open(struct inode *inode, struct file *filp)
 	}
 
 	/* honor exclusive open mode */
-	if (adev->ref_count == -1 ||
-	    (adev->ref_count && (filp->f_flags & O_EXCL))) {
+	if (drvdata->ref_count == -1 ||
+	    (drvdata->ref_count && (filp->f_flags & O_EXCL))) {
 		retval = -EBUSY;
 		goto out;
 	}
 
 	if ((filp->f_flags & O_EXCL))
-		adev->ref_count = -1;
+		drvdata->ref_count = -1;
 	else
-		adev->ref_count++;
+		drvdata->ref_count++;
 
 out:
-	spin_unlock_irqrestore(&adev->lock, flags);
+	spin_unlock_irqrestore(&drvdata->lock, flags);
 	return retval;
 }
 
-/*
- * Closes the ARAM device.
- */
 static int aram_release(struct inode *inode, struct file *filp)
 {
-	struct aram_device *adev = inode->i_bdev->bd_disk->private_data;
+	struct aram_drvdata *drvdata = inode->i_bdev->bd_disk->private_data;
 	unsigned long flags;
 
-	spin_lock_irqsave(&adev->lock, flags);
-	if (adev->ref_count > 0)
-		adev->ref_count--;
+	spin_lock_irqsave(&drvdata->lock, flags);
+	if (drvdata->ref_count > 0)
+		drvdata->ref_count--;
 	else
-		adev->ref_count = 0;
-	spin_unlock_irqrestore(&adev->lock, flags);
+		drvdata->ref_count = 0;
+	spin_unlock_irqrestore(&drvdata->lock, flags);
 	
 	return 0;
 }
 
-/*
- * Minimal ioctl for the ARAM device.
- */
 static int aram_ioctl(struct inode *inode, struct file *file,
 		      unsigned int cmd, unsigned long arg)
 {
@@ -380,24 +346,26 @@ static struct block_device_operations aram_fops = {
 
 
 /*
+ * Setup routines.
  *
  */
-static int aram_init_blk_dev(struct aram_device *adev)
+
+static int aram_init_blk_dev(struct aram_drvdata *drvdata)
 {
 	struct gendisk *disk;
 	struct request_queue *queue;
 	int retval;
 
-	adev->ref_count = 0;
+	drvdata->ref_count = 0;
 
 	retval = register_blkdev(ARAM_MAJOR, ARAM_NAME);
 	if (retval)
 		goto err_register_blkdev;
 	
 	retval = -ENOMEM;
-	spin_lock_init(&adev->lock);
-	spin_lock_init(&adev->io_lock);
-	queue = blk_init_queue(aram_do_request, &adev->lock);
+	spin_lock_init(&drvdata->lock);
+	spin_lock_init(&drvdata->io_lock);
+	queue = blk_init_queue(aram_do_request, &drvdata->lock);
 	if (!queue)
 		goto err_blk_init_queue;
 
@@ -405,8 +373,8 @@ static int aram_init_blk_dev(struct aram_device *adev)
 	blk_queue_dma_alignment(queue, ARAM_DMA_ALIGN);
 	blk_queue_max_phys_segments(queue, 1);
 	blk_queue_max_hw_segments(queue, 1);
-	queue->queuedata = adev;
-	adev->queue = queue;
+	queue->queuedata = drvdata;
+	drvdata->queue = queue;
 
 	disk = alloc_disk(1);
 	if (!disk)
@@ -416,18 +384,18 @@ static int aram_init_blk_dev(struct aram_device *adev)
 	disk->first_minor = 0;
 	disk->fops = &aram_fops;
 	strcpy(disk->disk_name, ARAM_NAME);
-	disk->queue = adev->queue;
+	disk->queue = drvdata->queue;
 	set_capacity(disk, ARAM_BUFFERSIZE >> 9);
-	disk->private_data = adev;
-	adev->disk = disk;
+	disk->private_data = drvdata;
+	drvdata->disk = disk;
 
-	add_disk(adev->disk);
+	add_disk(drvdata->disk);
 
 	retval = 0;
 	goto out;
 
 err_alloc_disk:
-	blk_cleanup_queue(adev->queue);
+	blk_cleanup_queue(drvdata->queue);
 err_blk_init_queue:
 	unregister_blkdev(ARAM_MAJOR, ARAM_NAME);
 err_register_blkdev:
@@ -435,237 +403,222 @@ out:
 	return retval;
 }
 
-/*
- *
- */
-static void aram_exit_blk_dev(struct aram_device *adev)
+static void aram_exit_blk_dev(struct aram_drvdata *drvdata)
 {
-	if (adev->disk) {
-		del_gendisk(adev->disk);
-		put_disk(adev->disk);
+	if (drvdata->disk) {
+		del_gendisk(drvdata->disk);
+		put_disk(drvdata->disk);
 	}
-	if (adev->queue)
-		blk_cleanup_queue(adev->queue);
+	if (drvdata->queue)
+		blk_cleanup_queue(drvdata->queue);
 	unregister_blkdev(ARAM_MAJOR, ARAM_NAME);
 }
 
-/*
- *
- */
-static void aram_quiesce(struct aram_device *adev)
+static void aram_quiesce(struct aram_drvdata *drvdata)
 {
-	u16 __iomem *csr_reg = adev->io_base + DSP_CSR;
+	u16 __iomem *csr_reg = drvdata->io_base + DSP_CSR;
 	u16 csr;
 	unsigned long flags;
 
 	/*
 	 * Disable ARAM interrupts, but do not accidentally ack non-ARAM ones.
 	 */
-	spin_lock_irqsave(&adev->io_lock, flags);
+	spin_lock_irqsave(&drvdata->io_lock, flags);
 	csr = in_be16(csr_reg);
 	csr &= ~(DSP_CSR_AIDINT | DSP_CSR_DSPINT | DSP_CSR_ARINTMASK);
 	out_be16(csr_reg, csr);
-	spin_unlock_irqrestore(&adev->io_lock, flags);
+	spin_unlock_irqrestore(&drvdata->io_lock, flags);
 
 	/* wait until pending transfers are finished */
 	while(in_be16(csr_reg) & DSP_CSR_DSPDMA)
 		cpu_relax();
 }
 
-/*
- *
- */
-static int aram_init_irq(struct aram_device *adev)
+static int aram_init_irq(struct aram_drvdata *drvdata)
 {
-	u16 __iomem *csr_reg = adev->io_base + DSP_CSR;
+	u16 __iomem *csr_reg = drvdata->io_base + DSP_CSR;
 	u16 csr;
 	unsigned long flags;
 	int retval;
 
-	/* request interrupt */
-	retval = request_irq(adev->irq, aram_irq_handler,
+	retval = request_irq(drvdata->irq, aram_irq_handler,
 			     IRQF_DISABLED | IRQF_SHARED,
-			     DRV_MODULE_NAME, adev);
+			     DRV_MODULE_NAME, drvdata);
 	if (retval) {
-		aram_printk(KERN_ERR, "request of irq%d failed\n", adev->irq);
+		drv_printk(KERN_ERR, "request of IRQ %d failed\n",
+			   drvdata->irq);
 		goto out;
 	}
 
 	/*
 	 * Enable ARAM interrupts, and route them to the processor.
-	 * As in the other cases, preserve the AI and DSP interrupts.
+	 * Make sure to preserve the AI and DSP interrupts.
 	 */
-	spin_lock_irqsave(&adev->io_lock, flags);
+	spin_lock_irqsave(&drvdata->io_lock, flags);
 	csr = in_be16(csr_reg);
 	csr |= (DSP_CSR_ARINT | DSP_CSR_ARINTMASK | DSP_CSR_PIINT);
 	csr &= ~(DSP_CSR_AIDINT | DSP_CSR_DSPINT);
 	out_be16(csr_reg, csr);
-	spin_unlock_irqrestore(&adev->io_lock, flags);
+	spin_unlock_irqrestore(&drvdata->io_lock, flags);
 
 out:
 	return retval;
 }
 
-/*
- *
- */
-static void aram_exit_irq(struct aram_device *adev)
+static void aram_exit_irq(struct aram_drvdata *drvdata)
 {
-	aram_quiesce(adev);
+	aram_quiesce(drvdata);
 
-	free_irq(adev->irq, adev);
+	free_irq(drvdata->irq, drvdata);
 }
 
-/*
- *
- */
-static int aram_init(struct aram_device *adev,
+static int aram_init(struct aram_drvdata *drvdata,
 		     struct resource *mem, int irq)
 {
 	int retval;
 
-	memset(adev, 0, sizeof(*adev) - sizeof(adev->pdev));
+        drvdata->io_base = ioremap(mem->start, mem->end - mem->start + 1);
+	drvdata->irq = irq;
 
-	adev->io_base = (void __iomem *)mem->start;
-	adev->irq = irq;
-
-	retval = aram_init_blk_dev(adev);
+	retval = aram_init_blk_dev(drvdata);
 	if (!retval) {
-		retval = aram_init_irq(adev);
+		retval = aram_init_irq(drvdata);
 		if (retval) {
-			aram_exit_blk_dev(adev);
+			aram_exit_blk_dev(drvdata);
 		}
 	}
 	return retval;
 }
 
-/*
- *
- */
-static void aram_exit(struct aram_device *adev)
+static void aram_exit(struct aram_drvdata *drvdata)
 {
-	aram_exit_blk_dev(adev);
-	aram_exit_irq(adev);
+	aram_exit_blk_dev(drvdata);
+	aram_exit_irq(drvdata);
+	if (drvdata->io_base) {
+		iounmap(drvdata->io_base);
+		drvdata->io_base = NULL;
+	}
 }
 
 /*
- * Needed for platform devices.
- */
-static void aram_dev_release(struct device *dev)
-{
-}
-
-
-static struct resource aram_resources[] = {
-	[0] = {
-		.start = DSP_BASE,
-		.end = DSP_BASE + DSP_SIZE -1,
-		.flags = IORESOURCE_MEM,
-	},
-	[1] = {
-		.start = ARAM_IRQ,
-		.end = ARAM_IRQ,
-		.flags = IORESOURCE_IRQ,
-	},
-};
-
-static struct aram_device aram_device = {
-	.pdev = {
-	       	.name = ARAM_NAME,
-	        .id = 0,
-	        .num_resources = ARRAY_SIZE(aram_resources),
-	        .resource = aram_resources,
-		.dev = {
-			.release = aram_dev_release,
-		},
-	},
-};
-
-
-/*
+ * Driver model helper routines.
  *
  */
-static int aram_probe(struct device *device)
+
+static int aram_do_probe(struct device *dev, struct resource *mem,
+			 int irq)
 {
-	struct platform_device *pdev = to_platform_device(device);
-	struct aram_device *adev = to_aram_device(pdev);
-	struct resource *mem;
-	int irq;
+	struct aram_drvdata *drvdata;
 	int retval;
 
-	retval = -ENODEV;
-	irq = platform_get_irq(pdev, 0);
-	mem = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	if (mem) {
-		retval = aram_init(adev, mem, irq);
+	drvdata = kzalloc(sizeof(*drvdata), GFP_KERNEL);
+	if (!drvdata) {
+		drv_printk(KERN_ERR, "failed to allocate aram_drvdata\n");
+		return -ENOMEM;
+	}
+	dev_set_drvdata(dev, drvdata);
+	drvdata->dev = dev;
+
+	retval = aram_init(drvdata, mem, irq);
+	if (retval) {
+		dev_set_drvdata(dev, NULL);
+		kfree(drvdata);
 	}
 	return retval;
 }
 
-/*
- *
- */
-static int aram_remove(struct device *device)
+static int aram_do_remove(struct device *dev)
 {
-	struct platform_device *pdev = to_platform_device(device);
-	struct aram_device *adev = to_aram_device(pdev);
+	struct aram_drvdata *drvdata = dev_get_drvdata(dev);
 
-	aram_exit(adev);
+	if (drvdata) {
+		aram_exit(drvdata);
+		dev_set_drvdata(dev, NULL);
+		kfree(drvdata);
+		return 0;
+	}
+	return -ENODEV;
+}
 
+static int aram_do_shutdown(struct device *dev)
+{
+	struct aram_drvdata *drvdata = dev_get_drvdata(dev);
+
+	if (drvdata)
+		aram_quiesce(drvdata);
 	return 0;
 }
 
+
 /*
+ * OF platform device routines.
  *
  */
-static void aram_shutdown(struct device *device)
-{
-	struct platform_device *pdev = to_platform_device(device);
-	struct aram_device *adev = to_aram_device(pdev);
 
-	aram_quiesce(adev);
+static int __init aram_of_probe(struct of_device *odev,
+				const struct of_device_id *match)
+{
+	struct resource res;
+	int retval;
+
+        retval = of_address_to_resource(odev->node, 0, &res);
+        if (retval) {
+		drv_printk(KERN_ERR, "no io memory range found\n");
+                return -ENODEV;
+        }
+
+	return aram_do_probe(&odev->dev,
+			     &res, irq_of_parse_and_map(odev->node, 0));
+}
+
+static int __exit aram_of_remove(struct of_device *odev)
+{
+	return aram_do_remove(&odev->dev);
+}
+
+static int aram_of_shutdown(struct of_device *odev)
+{
+	return aram_do_shutdown(&odev->dev);
 }
 
 
-static struct device_driver aram_driver = {
-       	.name = ARAM_NAME,
-	.bus = &platform_bus_type,
-	.probe = aram_probe,
-	.remove = aram_remove,
-	.shutdown = aram_shutdown,
+static struct of_device_id aram_of_match[] = {
+	{ .compatible = "nintendo,aram" },
+	{ },
+};
+	
+
+MODULE_DEVICE_TABLE(of, aram_of_match);
+
+static struct of_platform_driver aram_of_driver = {
+	.owner = THIS_MODULE,
+	.name = DRV_MODULE_NAME,
+	.match_table = aram_of_match,
+	.probe = aram_of_probe,
+	.remove = aram_of_remove,
+	.shutdown = aram_of_shutdown,
 };
 
-
 /*
+ * Module interfaces.
  *
  */
+
 static int __init aram_init_module(void)
 {
-	int retval = 0;
+	drv_printk(KERN_INFO, "%s - version %s\n", DRV_DESCRIPTION,
+		   aram_driver_version);
 
-	aram_printk(KERN_INFO, "%s - version %s\n", DRV_DESCRIPTION,
-		    aram_driver_version);
-
-	retval = driver_register(&aram_driver);
-	if (!retval) {
-		retval = platform_device_register(&aram_device.pdev);
-	}
-
-	return retval;
+	return of_register_platform_driver(&aram_of_driver);
 }
 
-/*
- *
- */
 static void __exit aram_exit_module(void)
 {
-	platform_device_unregister(&aram_device.pdev);
-	driver_unregister(&aram_driver);
+	of_unregister_platform_driver(&aram_of_driver);
 }
 
 module_init(aram_init_module);
 module_exit(aram_exit_module);
-
 
 MODULE_DESCRIPTION(DRV_DESCRIPTION);
 MODULE_AUTHOR(DRV_AUTHOR);

@@ -1,7 +1,7 @@
 /*
  * drivers/exi/exi-driver.c
  *
- * Nintendo GameCube Expansion Interface support. Driver model routines.
+ * Nintendo GameCube EXternal Interface (EXI) driver model routines.
  * Copyright (C) 2004-2008 The GameCube Linux Team
  * Copyright (C) 2004 Arthur Othieno <a.othieno@bluewin.ch>
  * Copyright (C) 2004,2005 Todd Jeffreys <todd@voidpointer.org>
@@ -14,20 +14,23 @@
  *
  */
 
-#include <linux/module.h>
-#include <linux/init.h>
-#include <linux/device.h>
-#include <linux/kthread.h>
 #include <linux/delay.h>
 #include <linux/exi.h>
+#include <linux/init.h>
+#include <linux/kthread.h>
+#include <linux/module.h>
+#include <linux/of_platform.h>
 
 #define DRV_MODULE_NAME	"exi-driver"
-#define DRV_DESCRIPTION	"Nintendo GameCube EXpansion Interface driver"
+#define DRV_DESCRIPTION	"Nintendo GameCube EXternal Interface (EXI) driver"
 #define DRV_AUTHOR	"Arthur Othieno <a.othieno@bluewin.ch>, " \
 			"Todd Jeffreys <todd@voidpointer.org>, " \
 			"Albert Herranz"
 
-static char exi_driver_version[] = "3.2-isobel";
+static char exi_driver_version[] = "4.0-isobel";
+
+#define drv_printk(level, format, arg...) \
+	printk(level DRV_MODULE_NAME ": " format , ## arg)
 
 
 struct exi_map_id_to_name {
@@ -44,6 +47,7 @@ static struct bus_type exi_bus_type = {
 	.name = "exi",
 	.match = exi_bus_match,
 };
+EXPORT_SYMBOL(exi_bus_type);
 
 static struct device exi_bus_devices[EXI_MAX_CHANNELS] = {
 	[0] = {
@@ -67,7 +71,8 @@ static struct exi_device exi_devices[EXI_MAX_CHANNELS][EXI_DEVICES_PER_CHANNEL];
 
 static struct exi_map_id_to_name exi_map_id_to_name[] = {
 	{ .id = EXI_ID_NONE, .name = "(external card)" },
-	{ .id = 0xffff1698,  .name = "Mask ROM/RTC/SRAM/UART" },
+	{ .id = 0xffff1698,  .name = "GameCube Mask ROM/RTC/SRAM/UART" },
+	{ .id = 0xfffff308,  .name = "Wii Mask ROM/RTC/SRAM/UART" },
 	{ .id = 0x00000004,  .name = "Memory Card 59" },
 	{ .id = 0x00000008,  .name = "Memory Card 123" },
 	{ .id = 0x00000010,  .name = "Memory Card 251" },
@@ -156,7 +161,7 @@ static int exi_bus_match(struct device *dev, struct device_driver *drv)
  */
 static void exi_bus_device_release(struct device *dev)
 {
-	exi_printk(KERN_WARNING, "exi_bus_device_release called!\n");
+	drv_printk(KERN_WARNING, "exi_bus_device_release called!\n");
 }
 
 static void exi_device_release(struct device *dev);
@@ -211,7 +216,7 @@ struct exi_device *exi_device_get(struct exi_device *exi_device)
                 get_device(&exi_device->dev);
         return exi_device;
 }
-
+EXPORT_SYMBOL(exi_device_get);
 
 /**
  *	exi_device_put  -  Releases a use of the exi device
@@ -224,6 +229,7 @@ void exi_device_put(struct exi_device *exi_device)
         if (exi_device)
                 put_device(&exi_device->dev);
 }
+EXPORT_SYMBOL(exi_device_put);
 
 /**
  *	exi_get_exi_device  -  Returns a reference to an exi device
@@ -236,6 +242,7 @@ struct exi_device *exi_get_exi_device(struct exi_channel *exi_channel,
 	// FIXME, maybe exi_device_get it too
 	return &exi_devices[to_channel(exi_channel)][device];
 }
+EXPORT_SYMBOL(exi_get_exi_device);
 
 /*
  * Internal. Call device driver probe function on match.
@@ -295,6 +302,7 @@ int exi_driver_register(struct exi_driver *driver)
 
 	return driver_register(&driver->driver);
 }
+EXPORT_SYMBOL(exi_driver_register);
 
 /**
  *      exi_driver_unregister - unregister an EXI device driver.
@@ -307,6 +315,7 @@ void exi_driver_unregister(struct exi_driver *driver)
 {
 	driver_unregister(&driver->driver);
 }
+EXPORT_SYMBOL(exi_driver_unregister);
 
 
 /*
@@ -321,23 +330,23 @@ static void exi_device_rescan(struct exi_device *exi_device)
 
 	if (exi_device->eid.id != EXI_ID_INVALID) {
 		/* device removed or changed */
-		exi_printk(KERN_INFO, "about to remove [%s] id=0x%08x %s\n",
+		drv_printk(KERN_INFO, "about to remove [%s] id=0x%08x %s\n",
 			   exi_device->dev.bus_id,
 			   exi_device->eid.id,
 			   exi_name_id(exi_device->eid.id));
 		device_unregister(&exi_device->dev);
-		exi_printk(KERN_INFO, "remove completed\n");
+		drv_printk(KERN_INFO, "remove completed\n");
 		exi_device->eid.id = EXI_ID_INVALID;
 	}
 
 	if (id != EXI_ID_INVALID) {
 		/* a new device has been found */
-		exi_printk(KERN_INFO, "about to add [%s] id=0x%08x %s\n",
+		drv_printk(KERN_INFO, "about to add [%s] id=0x%08x %s\n",
 			   exi_device->dev.bus_id,
 			   id, exi_name_id(id));
 		exi_device->eid.id = id;
 		device_register(&exi_device->dev);
-		exi_printk(KERN_INFO, "add completed\n");
+		drv_printk(KERN_INFO, "add completed\n");
 	}
 
 	exi_update_ext_status(exi_get_exi_channel(exi_device));
@@ -412,19 +421,19 @@ static int exi_bus_thread(void *__unused)
 extern void exi_channel_init(struct exi_channel *exi_channel,
 			     unsigned int channel);
 
-static int __init exi_layer_init(void)
+/*
+ *
+ */
+static int exi_init(struct resource *mem, unsigned int irq)
 {
 	struct exi_channel *exi_channel;
 	struct exi_device *exi_device;
 	unsigned int channel, device;
 	int retval;
 
-        exi_printk(KERN_INFO, "%s - version %s\n", DRV_DESCRIPTION,
-		   exi_driver_version);
-
 	extern unsigned long exi_running;
 	if (!test_and_set_bit(1, &exi_running)) {
-		retval = exi_hw_init(DRV_MODULE_NAME);
+		retval = exi_hw_init(DRV_MODULE_NAME, mem, irq);
 		if (retval)
 			goto err_hw_init;
 	}
@@ -457,7 +466,7 @@ static int __init exi_layer_init(void)
 	init_waitqueue_head(&exi_bus_waitq);
 	exi_bus_task = kthread_run(exi_bus_thread, NULL, "kexid");
 	if (IS_ERR(exi_bus_task)) {
-		exi_printk(KERN_WARNING, "failed to start exi kernel thread\n");
+		drv_printk(KERN_WARNING, "failed to start exi kernel thread\n");
 	}
 
 	return 0;
@@ -467,20 +476,38 @@ err_device_register:
 	while(--channel > 0) {
 		device_unregister(&exi_bus_devices[channel]);
 	}
-	exi_hw_exit();
+	exi_hw_exit(mem, irq);
 err_hw_init:
 	return retval;
 }
 
-EXPORT_SYMBOL(exi_driver_register);
-EXPORT_SYMBOL(exi_driver_unregister);
-EXPORT_SYMBOL(exi_bus_type);
+/*
+ *
+ */
+static int __init exi_layer_init(void)
+{
+	struct device_node *np;
+	struct resource res;
+	int retval;
 
-EXPORT_SYMBOL(exi_get_exi_device);
-EXPORT_SYMBOL(exi_device_get);
-EXPORT_SYMBOL(exi_device_put);
+        drv_printk(KERN_INFO, "%s - version %s\n", DRV_DESCRIPTION,
+		   exi_driver_version);
 
+	np = of_find_compatible_node(NULL, NULL, "nintendo,exi");
+	if (!np)
+		return -ENODEV;
 
+	retval = of_address_to_resource(np, 0, &res);
+	if (retval) {
+		drv_printk(KERN_ERR, "no io memory range found\n");
+		return -ENOMEM;
+	}
+
+	retval = exi_init(&res, irq_of_parse_and_map(np, 0));
+	of_node_put(np);
+
+	return retval;
+}
 postcore_initcall(exi_layer_init);
 
 MODULE_AUTHOR(DRV_AUTHOR);

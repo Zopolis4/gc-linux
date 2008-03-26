@@ -30,7 +30,7 @@
 #include <sound/initval.h>
 
 #define DRV_MODULE_NAME "gcn-mic"
-#define DRV_DESCRIPTION "Nintendo GameCube Microphone (DOL-022) driver"
+#define DRV_DESCRIPTION "Nintendo Microphone (DOL-022) driver"
 #define DRV_AUTHOR      "Albert Herranz"
 
 MODULE_AUTHOR(DRV_AUTHOR);

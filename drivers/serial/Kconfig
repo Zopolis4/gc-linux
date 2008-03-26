@@ -1,7 +1,7 @@
 #
 # Serial device configuration
 #
-# $Id: Kconfig,v 1.1 2008/02/24 18:08:15 herraa1 Exp $
+# $Id: Kconfig,v 1.2 2008/03/26 20:15:21 herraa1 Exp $
 #
 
 menu "Serial drivers"
@@ -1285,7 +1285,7 @@ config SERIAL_OF_PLATFORM
 	  others can easily be added.
 
 config SERIAL_USBGECKO
-	bool "USBGecko adapter on the Nintendo GameCube"
+	bool "USBGecko adapter on the Nintendo GameCube/Wii"
 	depends on GAMECUBE_EXI
 	select SERIAL_CORE
 	help

@@ -1,7 +1,7 @@
 /*
  * drivers/block/gcn-di/gcn-di.c
  *
- * Nintendo GameCube DVD Interface driver
+ * Nintendo GameCube DVD Interface (DI) driver
  * Copyright (C) 2005-2007 The GameCube Linux Team
  * Copyright (C) 2005,2006,2007 Albert Herranz
  *
@@ -14,32 +14,31 @@
  *
  */
 
-#include <linux/kernel.h>
-#include <linux/module.h>
-#include <linux/init.h>
-#include <linux/interrupt.h>
-#include <linux/dma-mapping.h>
-#include <linux/timer.h>
-#include <linux/delay.h>
-#include <linux/proc_fs.h>
-#include <linux/seq_file.h>
-#include <linux/platform_device.h>
 #include <linux/blkdev.h>
+#include <linux/cdrom.h>
+#include <linux/delay.h>
+#include <linux/dma-mapping.h>
 #include <linux/fcntl.h>
 #include <linux/hdreg.h>
-#include <linux/cdrom.h>
-
+#include <linux/init.h>
+#include <linux/interrupt.h>
+#include <linux/kernel.h>
+#include <linux/module.h>
+#include <linux/of_platform.h>
+#include <linux/proc_fs.h>
+#include <linux/seq_file.h>
+#include <linux/timer.h>
 #include <asm/io.h>
 
 #define DI_DEBUG
 
 #define DRV_MODULE_NAME	"gcn-di"
-#define DRV_DESCRIPTION	"Nintendo GameCube DVD Interface driver"
+#define DRV_DESCRIPTION	"Nintendo GameCube DVD Interface (DI) driver"
 #define DRV_AUTHOR	"Albert Herranz"
 
-static char di_driver_version[] = "0.8-isobel";
+static char di_driver_version[] = "1.0-isobel";
 
-#define di_printk(level, format, arg...) \
+#define drv_printk(level, format, arg...) \
 	printk(level DRV_MODULE_NAME ": " format , ## arg)
 
 #ifdef DI_DEBUG
@@ -53,14 +52,7 @@ static char di_driver_version[] = "0.8-isobel";
 /*
  * Hardware.
  */
-#define DI_IRQ			2
-
 #define DI_DMA_ALIGN		0x1f /* 32 bytes */
-
-#define DI_BASE			0xcc006000
-#define DI_SIZE			0x40
-
-#define DI_IO_BASE		((void __iomem *)DI_BASE)
 
 /* DI Status Register */
 #define DI_SR			0x00
@@ -138,7 +130,7 @@ static char di_driver_version[] = "0.8-isobel";
 
 
 /* Driver Settings */
-#define DI_NAME			"gcndi"
+#define DI_NAME			DRV_MODULE_NAME
 #define DI_MAJOR		60
 
 #define DI_COMMAND_TIMEOUT	20 /* seconds */
@@ -280,11 +272,8 @@ struct di_device {
 
 	int				ref_count;
 
-	struct platform_device		pdev;  /* must be last member */
+	struct device			*dev;
 };
-
-/* get the di device given the platform device of a di device */
-#define to_di_device(n) container_of(n,struct di_device,pdev)
 
 
 static struct di_drive_info di_drive_info
@@ -299,8 +288,8 @@ static struct di_drive_info di_drive_info
 static const int di_accept_gods = 0;
 
 /*
- *
  * Drive firmware extensions.
+ *
  */
 
 #define DI_DRIVE_CODE_BASE	0x40d000
@@ -781,9 +770,9 @@ static inline void di_debug_print_drive_status(u32 drive_status)
  */
 static void di_print_drive_status(u32 drive_status)
 {
-	di_printk(KERN_INFO, "drive_status=%08x, [%s, %s]\n", drive_status,
-		  di_printable_status(drive_status),
-		  di_printable_error(drive_status));
+	drv_printk(KERN_INFO, "drive_status=%08x, [%s, %s]\n", drive_status,
+		   di_printable_status(drive_status),
+		   di_printable_error(drive_status));
 }
 
 /*
@@ -791,7 +780,7 @@ static void di_print_drive_status(u32 drive_status)
  */
 static void di_print_disk_id(struct di_disk_id *disk_id)
 {
-	di_printk(KERN_INFO, "disk_id = [%s]\n", disk_id->id);
+	drv_printk(KERN_INFO, "disk_id = [%s]\n", disk_id->id);
 }
 
 /*
@@ -915,8 +904,8 @@ static void di_quiesce(struct di_device *ddev)
 }
 
 /*
- *
  * Command engine.
+ *
  */
 
 /*
@@ -980,7 +969,7 @@ static int di_start_dma_command(struct di_command *cmd)
 
 	ddev->cmd = cmd;
 	cmd->dma_len = cmd->len;
-	cmd->dma_addr = dma_map_single(&ddev->pdev.dev,
+	cmd->dma_addr = dma_map_single(ddev->dev,
 				       cmd->data, cmd->len,
 				       di_opidx_to_dma_dir(cmd));
 
@@ -1030,7 +1019,7 @@ static void di_complete_transfer(struct di_device *ddev, u32 result)
 
 	/* deal with caches after a dma transfer */
 	if (cmd->dma_len) {
-		dma_unmap_single(&ddev->pdev.dev,
+		dma_unmap_single(ddev->dev,
 				 cmd->dma_addr, cmd->dma_len,
 				 di_opidx_to_dma_dir(cmd));
 	}
@@ -1267,7 +1256,7 @@ static void di_reset(struct di_device *ddev)
 
 
 /*
- *
+ * Misc routines.
  * 
  */
 
@@ -1282,8 +1271,9 @@ static u32 di_retrieve_drive_model(struct di_device *ddev)
 	di_op_inq(&cmd, ddev, &di_drive_info);
 	di_run_command_and_wait(&cmd);
 
-	di_printk(KERN_INFO, "laser unit: rev=%x, code=%x, date=%x\n",
-	    di_drive_info.rev, di_drive_info.code, di_drive_info.date);
+	drv_printk(KERN_INFO, "laser unit: rev=%x, code=%x, date=%x\n",
+		   di_drive_info.rev, di_drive_info.code,
+		   di_drive_info.date);
 
 	ddev->model = di_drive_info.date;
 	return ddev->model;
@@ -1446,9 +1436,9 @@ static int di_select_drive_code(struct di_device *ddev)
 			ddev->drive_code = &drive_20010831;
 			break;
 		default:
-			di_printk(KERN_ERR, "sorry, drive %x is not yet"
-				  " supported\n",
-				  di_drive_info.date);
+			drv_printk(KERN_ERR, "sorry, drive %x is not yet"
+				   " supported\n",
+				   di_drive_info.date);
 			break;
 	}
 
@@ -1499,7 +1489,7 @@ static u32 di_park_firmware(struct di_device *ddev)
 	 */
 	irq_handler = le32_to_cpu(di_fw_get_irq_handler(ddev));
 	if (irq_handler != original_irq_handler) {
-		di_printk(KERN_ERR, "parking failed!\n");
+		drv_printk(KERN_ERR, "parking failed!\n");
 		di_reset(ddev);
 	} else {
 		DBG("parking done, irq handler = %08x\n", irq_handler);
@@ -1572,7 +1562,7 @@ static void di_init_alien_drive_code_quirks(struct di_device *ddev)
 	 */
 	if (!di_fw_read_meml(ddev, &fingerprint, 0x40c60a)) {
 		if (fingerprint == 0xf710fff7) {
-			di_printk(KERN_INFO, "drivechip: xenogc/duoq\n");
+			drv_printk(KERN_INFO, "drivechip: xenogc/duoq\n");
 			set_bit(__DI_AVOID_DEBUG, &ddev->flags);
 		}
 	}
@@ -1644,16 +1634,16 @@ static void di_probe_firmware(struct di_device *ddev)
 {
 	if (di_probe_debug_features(ddev)) {
 		/* we can't use debug features, thus try to avoid them */
-		di_printk(KERN_INFO, "firmware: debug features do not work,"
-				" using standard command set\n");
+		drv_printk(KERN_INFO, "firmware: debug features do not work,"
+			   " using standard command set\n");
 		set_bit(__DI_AVOID_DEBUG, &ddev->flags);
 	} else {
 		if (di_has_alien_drive_code(ddev)) {
-			di_printk(KERN_INFO, "firmware: patched drive\n");
+			drv_printk(KERN_INFO, "firmware: patched drive\n");
 			/* enable some workarounds if required */
 			di_init_alien_drive_code_quirks(ddev);
 		} else {
-			di_printk(KERN_INFO, "firmware: unpatched drive\n");
+			drv_printk(KERN_INFO, "firmware: unpatched drive\n");
 		}
 	}
 }
@@ -1758,13 +1748,10 @@ out:
 
 
 /*
+ * Block layer hooks.
  *
- * Block Layer.
  */
 
-/*
- * Determines media type and accepts accordingly.
- */
 static int di_read_toc(struct di_device *ddev)
 {
 	static struct di_disk_id disk_id
@@ -1789,8 +1776,8 @@ static int di_read_toc(struct di_device *ddev)
 		if (disk_id.id[0] && memcmp(disk_id.id, "GBL", 3) &&
 		    !di_accept_gods) {
 			di_print_disk_id(&disk_id);
-			di_printk(KERN_ERR, "sorry, gamecube media"
-				  " support is disabled\n");
+			drv_printk(KERN_ERR, "sorry, gamecube media"
+				   " support is disabled\n");
 		} else {
 			accepted_media = 1;
 		}
@@ -1835,9 +1822,6 @@ static int di_read_toc(struct di_device *ddev)
 }
 
 
-/*
- * Finishes a block layer request.
- */
 static void di_request_done(struct di_command *cmd)
 {
 	struct di_device *ddev = cmd->ddev;
@@ -1864,9 +1848,6 @@ static void di_request_done(struct di_command *cmd)
 	}
 }
 
-/*
- * Processes a block layer request.
- */
 static void di_do_request(struct request_queue *q)
 {
 	struct di_device *ddev = q->queuedata;
@@ -1879,21 +1860,21 @@ static void di_do_request(struct request_queue *q)
 	while ((req = elv_next_request(q))) {
 		/* keep our reads within limits */
 		if (req->sector + req->current_nr_sectors > ddev->nr_sectors) {
-			di_printk(KERN_ERR, "reading past end\n");
+			drv_printk(KERN_ERR, "reading past end\n");
 			end_request(req, 0);
 			continue;
 		}
 
 		/* it doesn't make sense to write to this device */
 		if (rq_data_dir(req) == WRITE) {
-			di_printk(KERN_ERR, "write attempted\n");
+			drv_printk(KERN_ERR, "write attempted\n");
 			end_request(req, 0);
 			continue;
 		}
 
 		/* it is not a good idea to open the lid ... */
 		if ((ddev->flags & DI_MEDIA_CHANGED)) {
-			di_printk(KERN_ERR, "media changed, aborting\n");
+			drv_printk(KERN_ERR, "media changed, aborting\n");
 			end_request(req, 0);
 			continue;
 		}
@@ -1937,13 +1918,10 @@ static void di_do_request(struct request_queue *q)
 }
 
 /*
+ * Block device hooks.
  *
- * Driver hooks.
  */
 
-/*
- * Opens the drive device.
- */
 static int di_open(struct inode *inode, struct file *filp)
 {
 	struct di_device *ddev = inode->i_bdev->bd_disk->private_data;
@@ -2007,9 +1985,6 @@ out:
 
 }
 
-/*
- * Releases the drive device.
- */
 static int di_release(struct inode *inode, struct file *filp)
 {
 	struct di_device *ddev = inode->i_bdev->bd_disk->private_data;
@@ -2038,9 +2013,6 @@ static int di_release(struct inode *inode, struct file *filp)
 	return 0;
 }
 
-/*
- * Checks if media is still valid.
- */
 static int di_revalidate_disk(struct gendisk *disk)
 {
 	struct di_device *ddev = disk->private_data;
@@ -2048,18 +2020,12 @@ static int di_revalidate_disk(struct gendisk *disk)
 	return 0;
 }
 
-/*
- * Checks if media changed.
- */
 static int di_media_changed(struct gendisk *disk)
 {
 	struct di_device *ddev = disk->private_data;
 	return (ddev->flags & DI_MEDIA_CHANGED) ? 1 : 0;
 }
 
-/*
- * Ioctl. Specific CDROM stuff is pending support.
- */
 static int di_ioctl(struct inode *inode, struct file *filp,
 		    unsigned int cmd, unsigned long arg)
 {
@@ -2115,8 +2081,10 @@ static struct block_device_operations di_fops = {
 };
 
 /*
- * Initializes the hardware.
+ * Setup routines.
+ *
  */
+
 static int di_init_irq(struct di_device *ddev)
 {
 	void __iomem *io_base = ddev->io_base;
@@ -2140,7 +2108,7 @@ static int di_init_irq(struct di_device *ddev)
 	retval = request_irq(ddev->irq, di_irq_handler, 0,
 			     DRV_MODULE_NAME, ddev);
 	if (retval) {
-		di_printk(KERN_ERR, "request of irq%d failed\n", ddev->irq);
+		drv_printk(KERN_ERR, "request of irq%d failed\n", ddev->irq);
 		goto out;
 	}
 
@@ -2167,9 +2135,6 @@ out:
 	return retval;
 }
 
-/*
- * Relinquishes control of the hardware.
- */
 static void di_exit_irq(struct di_device *ddev)
 {
 	/* stop DVD motor */
@@ -2181,10 +2146,6 @@ static void di_exit_irq(struct di_device *ddev)
 	free_irq(ddev->irq, ddev);
 }
 
-
-/*
- * Initializes the block layer interfaces.
- */
 static int di_init_blk_dev(struct di_device *ddev)
 {
 	struct gendisk *disk;
@@ -2198,7 +2159,7 @@ static int di_init_blk_dev(struct di_device *ddev)
 
 	retval = register_blkdev(DI_MAJOR, DI_NAME);
 	if (retval) {
-		di_printk(KERN_ERR, "error registering major %d\n", DI_MAJOR);
+		drv_printk(KERN_ERR, "error registering major %d\n", DI_MAJOR);
 		goto err_register_blkdev;
 	}
 
@@ -2206,7 +2167,7 @@ static int di_init_blk_dev(struct di_device *ddev)
 	spin_lock_init(&ddev->queue_lock);
 	queue = blk_init_queue(di_do_request, &ddev->queue_lock);
 	if (!queue) {
-		di_printk(KERN_ERR, "error initializing queue\n");
+		drv_printk(KERN_ERR, "error initializing queue\n");
 		goto err_blk_init_queue;
 	}
 
@@ -2219,7 +2180,7 @@ static int di_init_blk_dev(struct di_device *ddev)
 
 	disk = alloc_disk(1);
 	if (!disk) {
-		di_printk(KERN_ERR, "error allocating disk\n");
+		drv_printk(KERN_ERR, "error allocating disk\n");
 		goto err_alloc_disk;
 	}
 
@@ -2246,9 +2207,6 @@ out:
 	return retval;
 }
 
-/*
- * Exits the block layer interfaces.
- */
 static void di_exit_blk_dev(struct di_device *ddev)
 {
 	if (ddev->disk) {
@@ -2260,9 +2218,6 @@ static void di_exit_blk_dev(struct di_device *ddev)
 	unregister_blkdev(DI_MAJOR, DI_NAME);
 }
 
-/*
- * Initializes /proc filesystem support.
- */
 static int di_init_proc(struct di_device *ddev)
 {
 #ifdef CONFIG_PROC_FS
@@ -2270,26 +2225,17 @@ static int di_init_proc(struct di_device *ddev)
 	return 0;
 }
 
-/*
- * Exits /proc filesystem support.
- */
 static void di_exit_proc(struct di_device *ddev)
 {
 #ifdef CONFIG_PROC_FS
 #endif /* CONFIG_PROC_FS */
 }
 
-
-/*
- * Initializes the device.
- */
 static int di_init(struct di_device *ddev, struct resource *mem, int irq)
 {
 	int retval;
 
-	memset(ddev, 0, sizeof(*ddev) - sizeof(ddev->pdev));
-
-	ddev->io_base = (void __iomem *)mem->start;
+	ddev->io_base = ioremap(mem->start, mem->end - mem->start + 1);
 	ddev->irq = irq;
 
 	retval = di_init_blk_dev(ddev);
@@ -2304,140 +2250,130 @@ static int di_init(struct di_device *ddev, struct resource *mem, int irq)
 	return retval;
 }
 
-/*
- * Exits the device.
- */
 static void di_exit(struct di_device *ddev)
 {
         di_exit_blk_dev(ddev);
         di_exit_irq(ddev);
 	di_exit_proc(ddev);
-}
-
-
-/*
- * Needed for platform devices.
- */
-static void di_dev_release(struct device *dev)
-{
+	if (ddev->io_base) {
+		iounmap(ddev->io_base);
+		ddev->io_base = NULL;
+	}
 }
 
 /*
- * Set of resources used by the disk interface device.
+ * Driver model helper routines.
+ *
  */
-static struct resource di_resources[] = {
-        [0] = {
-                .start = DI_BASE,
-                .end = DI_BASE + DI_SIZE -1,
-                .flags = IORESOURCE_MEM,
-        },
-        [1] = {
-                .start = DI_IRQ,
-                .end = DI_IRQ,
-                .flags = IORESOURCE_IRQ,
-        },
-};
 
-
-/*
- * The disk interface device.
- */
-static struct di_device di_device = {
-	.pdev = {
-		.name = DI_NAME,
-		.id = 0,
-		.num_resources = ARRAY_SIZE(di_resources),
-		.resource = di_resources,
-		.dev = {
-			.release = di_dev_release,
-		},
-	},
-};
-
-
-/*
- * Driver model probe function for our device.
- */
-static int di_probe(struct device *device)
+static int di_do_probe(struct device *dev,
+		       struct resource *mem, int irq)
 {
-	struct platform_device *pdev = to_platform_device(device);
-	struct di_device *ddev = to_di_device(pdev);
-	struct resource *mem;
-	int irq;
+	struct di_device *ddev;
 	int retval;
 
-	retval = -ENODEV;
-	irq = platform_get_irq(pdev, 0);
-	mem = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	if (mem) {
-		retval = di_init(ddev, mem, irq);
+	ddev = kzalloc(sizeof(*ddev), GFP_KERNEL);
+	if (!ddev) {
+		drv_printk(KERN_ERR, "failed to allocate di_device\n");
+		return -ENOMEM;
+	}
+	dev_set_drvdata(dev, ddev);
+	ddev->dev = dev;
+
+	retval = di_init(ddev, mem, irq);
+	if (retval) {
+		dev_set_drvdata(dev, NULL);
+		kfree(ddev);
 	}
 	return retval;
 }
 
-/*
- * Driver model remove function for our device.
- */
-static int di_remove(struct device *device)
+static int di_do_remove(struct device *dev)
 {
-        struct platform_device *pdev = to_platform_device(device);
-        struct di_device *ddev = to_di_device(pdev);
-                                                                                
-        di_exit(ddev);
-                                                                                
-        return 0;
+	struct di_device *ddev = dev_get_drvdata(dev);
+
+	if (ddev) {
+		di_exit(ddev);
+		dev_set_drvdata(dev, NULL);
+		kfree(ddev);
+		return 0;
+	}
+	return -ENODEV;
+}
+
+static int di_do_shutdown(struct device *dev)
+{
+	struct di_device *ddev = dev_get_drvdata(dev);
+
+	if (ddev)
+		di_quiesce(ddev);
+	return 0;
 }
 
 /*
- * Driver model shutdown function for our device.
+ * OF platform driver hooks.
+ *
  */
-static void di_shutdown(struct device *device)
-{
-	struct platform_device *pdev = to_platform_device(device);
-	struct di_device *ddev = to_di_device(pdev);
 
-	di_quiesce(ddev);
+static int __init di_of_probe(struct of_device *odev,
+			      const struct of_device_id *match)
+{
+	struct resource res;
+	int retval;
+
+	retval = of_address_to_resource(odev->node, 0, &res);
+	if (retval) {
+		drv_printk(KERN_ERR, "no io memory range found\n");
+		return -ENODEV;
+	}
+
+	return di_do_probe(&odev->dev,
+			   &res, irq_of_parse_and_map(odev->node, 0));
+}
+
+static int __exit di_of_remove(struct of_device *odev)
+{
+	return di_do_remove(&odev->dev);
+}
+
+static int di_of_shutdown(struct of_device *odev)
+{
+	return di_do_shutdown(&odev->dev);
 }
 
 
-/*
- * The disk interface driver.
- */
-static struct device_driver di_driver = {
-	.name = DI_NAME,
-	.bus = &platform_bus_type,
-	.probe = di_probe,
-	.remove = di_remove,
-	.shutdown = di_shutdown,
+static struct of_device_id di_of_match[] = {
+	{ .compatible = "nintendo,di" },
+	{ },
+};
+
+MODULE_DEVICE_TABLE(of, di_of_match);
+
+static struct of_platform_driver di_of_driver = {
+	.owner = THIS_MODULE,
+	.name = DRV_MODULE_NAME,
+	.match_table = di_of_match,
+	.probe = di_of_probe,
+	.remove = di_of_remove,
+	.shutdown = di_of_shutdown,
 };
 
 /*
- * Module initialization routine.
+ * Module interface hooks.
+ *
  */
+
 static int __init di_init_module(void)
 {
-	int retval = 0;
+	drv_printk(KERN_INFO, "%s - version %s\n", DRV_DESCRIPTION,
+		   di_driver_version);
 
-	di_printk(KERN_INFO, "%s - version %s\n", DRV_DESCRIPTION,
-		  di_driver_version);
-
-	retval = driver_register(&di_driver);
-	if (!retval) {
-		retval = platform_device_register(&di_device.pdev);
-		if (retval)
-			driver_unregister(&di_driver);
-	}
-
-	return retval;
+	return of_register_platform_driver(&di_of_driver);
 }
 
-/*
- * Module de-initialization routine.
- */
 static void __exit di_exit_module(void)
 {
-        platform_device_unregister(&di_device.pdev);
-        driver_unregister(&di_driver);
+        of_unregister_platform_driver(&di_of_driver);
 }
 
 module_init(di_init_module);

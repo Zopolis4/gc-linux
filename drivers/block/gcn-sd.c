@@ -73,7 +73,7 @@
 #include <linux/exi.h>
 
 #define DRV_MODULE_NAME "gcn-sd"
-#define DRV_DESCRIPTION "MMC/SD card block driver for the Nintendo GameCube"
+#define DRV_DESCRIPTION "MMC/SD card block driver for the Nintendo GameCube/Wii"
 #define DRV_AUTHOR      "Rob Reylink, " \
 			"Todd Jeffreys, " \
                         "Albert Herranz"
@@ -501,9 +501,6 @@ static inline void spi_write(struct sd_host *host, void *data, size_t len)
 /* */
 static inline void spi_read(struct sd_host *host, void *data, size_t len)
 {
-#ifdef CONFIG_GAMECUBE_WII
-	exi_dev_read(host->exi_device, data, len);
-#else
 	/*
 	 * Houston, we have a problem.
 	 *
@@ -534,7 +531,6 @@ static inline void spi_read(struct sd_host *host, void *data, size_t len)
 	 *
 	 */
 	exi_dev_transfer(host->exi_device, data, len, EXI_OP_READ, EXI_CMD_IDI);
-#endif
 }
 
 /* cycles are expressed in 8 clock cycles */

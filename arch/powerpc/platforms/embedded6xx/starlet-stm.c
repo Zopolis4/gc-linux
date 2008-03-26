@@ -38,23 +38,14 @@ static u32 starlet_stm_buf[(STARLET_IPC_DMA_ALIGN+1)/sizeof(u32)]
  */
 static void starlet_stm_common_restart(int request, u32 value)
 {
-	struct starlet_ipc_device *ipc_dev = starlet_ipc_get_device();
-	dma_addr_t dma_addr;
-	u32 *vaddr = starlet_stm_buf;
+	u32 *buf = starlet_stm_buf;
 	size_t len = sizeof(starlet_stm_buf);
 	int fd;
 
-	if (!ipc_dev)
-		return;
-
 	fd = starlet_ios_open(dev_stm_immediate, 0);
 	if (fd >= 0) {
-		*vaddr = value;
-		dma_addr = dma_map_single(&ipc_dev->pdev.dev,
-					  vaddr, len, DMA_BIDIRECTIONAL);
-		starlet_ios_ioctl(fd, request, dma_addr, len, dma_addr, len);
-		dma_unmap_single(&ipc_dev->pdev.dev,
-				 dma_addr, len, DMA_BIDIRECTIONAL);
+		*buf = value;
+		starlet_ios_ioctl(fd, request, buf, len, buf, len);
 		starlet_ios_close(fd);
 	}
 }

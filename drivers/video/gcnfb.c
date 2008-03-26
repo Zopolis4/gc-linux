@@ -1,11 +1,11 @@
 /*
- * drivers/video/gcnfb.c
+ * drivers/video/gcn-vifb.c
  *
- * Nintendo GameCube "Flipper" chipset frame buffer driver
- * Copyright (C) 2004-2007 The GameCube Linux Team
+ * Nintendo GameCube/Wii Video Interface (VI) frame buffer driver
+ * Copyright (C) 2004-2008 The GameCube Linux Team
  * Copyright (C) 2004 Michael Steil <mist@c64.org>
  * Copyright (C) 2004,2005 Todd Jeffreys <todd@voidpointer.org>
- * Copyright (C) 2006,2007 Albert Herranz
+ * Copyright (C) 2006,2007,2008 Albert Herranz
  *
  * Based on vesafb (c) 1998 Gerd Knorr <kraxel@goldbach.in-berlin.de>
  *
@@ -16,48 +16,39 @@
  *
  */
 
-#include <linux/module.h>
-#include <linux/kernel.h>
-#include <linux/errno.h>
-#include <linux/string.h>
-#include <linux/mm.h>
-#include <linux/tty.h>
-#include <linux/slab.h>
 #include <linux/delay.h>
+#include <linux/errno.h>
 #include <linux/fb.h>
-#include <linux/ioport.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
+#include <linux/kernel.h>
+#include <linux/mm.h>
+#include <linux/module.h>
+#include <linux/of_platform.h>
+//#include <linux/slab.h>
+#include <linux/string.h>
+#include <linux/tty.h>
 #include <linux/wait.h>
-#include <linux/platform_device.h>
 #include <asm/io.h>
-
-#ifdef CONFIG_PPC_MERGE
-#include <platforms/embedded6xx/gamecube.h>
-#else
-#include <platforms/gamecube.h>
-#endif
 
 #include "gcngx.h"
 
-#define DRV_MODULE_NAME   "gcnfb"
-#define DRV_DESCRIPTION   "Nintendo GameCube framebuffer driver"
+#define DRV_MODULE_NAME   "gcn-vifb"
+#define DRV_DESCRIPTION   "Nintendo GameCube/Wii Video Interface (VI)" \
+			  " frame buffer driver"
 #define DRV_AUTHOR        "Michael Steil <mist@c64.org>, " \
                           "Todd Jeffreys <todd@voidpointer.org>, " \
 			  "Albert Herranz"
 
+static char vifb_driver_version[] = "1.0-isobel";
+
+#define drv_printk(level, format, arg...) \
+        printk(level DRV_MODULE_NAME ": " format , ## arg)
+
+
 /*
- *
- * Hardware.
+ * Hardware registers.
  */
-
-#define VI_IRQ	8
-
-#define VI_BASE			(GCN_IO1_BASE+0x2000)
-#define VI_SIZE			0x100
-
-#define VI_IO_BASE		((void __iomem *)VI_BASE)
-
 #define VI_DCR			0x02
 #define VI_HTR0			0x04
 #define VI_TFBL			0x1c
@@ -80,10 +71,15 @@
 #define VI_VISEL		0x6e
 #define VI_VISEL_PROGRESSIVE	(1 << 0)
 
+
+/*
+ * Video control data structure.
+ */
 struct vi_ctl {
 	spinlock_t lock;
 
 	void __iomem *io_base;
+	unsigned int irq;
 
 	int in_vtrace;
 	wait_queue_head_t vtrace_waitq;
@@ -189,14 +185,14 @@ static struct vi_video_mode vi_video_modes[] = {
 };
 
 
-static struct fb_fix_screeninfo gcnfb_fix = {
+static struct fb_fix_screeninfo vifb_fix = {
 	.id = DRV_MODULE_NAME,
 	.type = FB_TYPE_PACKED_PIXELS,
 	.visual = FB_VISUAL_TRUECOLOR,	/* lies, lies, lies, ... */
 	.accel = FB_ACCEL_NONE,
 };
 
-static struct fb_var_screeninfo gcnfb_var = {
+static struct fb_var_screeninfo vifb_var = {
 	.bits_per_pixel = 16,
 	.activate = FB_ACTIVATE_NOW,
 	.height = -1,
@@ -214,7 +210,7 @@ static struct fb_var_screeninfo gcnfb_var = {
 static struct vi_video_mode *vi_current_video_mode = NULL;
 static int ypan = 1;		/* 0..nothing, 1..ypan */
 
-/* legacy stuff, XXX really needed? */
+/* FIXME: is this really needed? */
 static u32 pseudo_palette[17];
 
 
@@ -334,34 +330,22 @@ static inline int vi_get_mode(struct vi_ctl *ctl)
 	return (in_be16(ctl->io_base + VI_DCR) >> 8) & 3;
 }
 
-/*
- * Check if the current video mode is NTSC.
- */
 static inline int vi_is_mode_ntsc(struct vi_ctl *ctl)
 {
 	return vi_get_mode(ctl) == 0;
 }
 
-/*
- * Check if the passed video mode is a progressive one.
- */
 static inline int vi_is_mode_progressive(__u32 vmode)
 {
 	return (vmode & FB_VMODE_MASK) == FB_VMODE_NONINTERLACED;
 }
 
-/*
- * Check if the display supports progressive modes.
- */
 static inline int vi_can_do_progressive(struct vi_ctl *ctl)
 {
 	return in_be16(ctl->io_base + VI_VISEL) & VI_VISEL_PROGRESSIVE;
 }
 
-/*
- * Try to guess a suitable video mode if none is currently selected.
- */
-static void vi_mode_guess(struct vi_ctl *ctl)
+static void vi_guess_mode(struct vi_ctl *ctl)
 {
 	void __iomem *io_base = ctl->io_base;
 	u16 mode;
@@ -395,7 +379,8 @@ static void vi_mode_guess(struct vi_ctl *ctl)
 
 	/* if we get here something wrong happened */
 	if (vi_current_video_mode == NULL) {
-		printk(KERN_DEBUG "HEY! SOMETHING WEIRD HERE!\n");
+		drv_printk(KERN_DEBUG, "failed to guess video mode,"
+			   "using NTSC\n");
 		vi_current_video_mode = vi_video_modes + VI_VM_NTSC;
 	}
 }
@@ -429,9 +414,6 @@ static inline void vi_flip_page(struct vi_ctl *ctl)
 	ctl->flip_pending = 0;
 }
 
-/*
- * Enable video related interrupts.
- */
 static void vi_enable_interrupts(struct vi_ctl *ctl, int enable)
 {
 	void __iomem *io_base = ctl->io_base;
@@ -471,9 +453,6 @@ static void vi_enable_interrupts(struct vi_ctl *ctl, int enable)
 	out_be32(io_base + VI_DI3, 0);
 }
 
-/*
- * Take care of vertical retrace events.
- */
 static void vi_dispatch_vtrace(struct vi_ctl *ctl)
 {
 	unsigned long flags;
@@ -486,14 +465,9 @@ static void vi_dispatch_vtrace(struct vi_ctl *ctl)
 	wake_up_interruptible(&ctl->vtrace_waitq);
 }
 
-
-/*
- * Handler for video related interrupts.
- */
 static irqreturn_t vi_irq_handler(int irq, void *dev)
 {
-	struct fb_info *info =
-	    platform_get_drvdata((struct platform_device *)dev);
+	struct fb_info *info = dev_get_drvdata((struct device *)dev);
 	struct vi_ctl *ctl = info->par;
 	void __iomem *io_base = ctl->io_base;
 	u32 val;
@@ -533,15 +507,15 @@ static irqreturn_t vi_irq_handler(int irq, void *dev)
 }
 
 /*
- *
  * Linux framebuffer support routines.
+ *
  */
 
 /*
  * This is just a quick, dirty and cheap way of getting right colors on the
  * linux framebuffer console.
  */
-unsigned int gcnfb_writel(unsigned int rgbrgb, void *address)
+unsigned int vifb_writel(unsigned int rgbrgb, void *address)
 {
 	uint16_t *rgb = (uint16_t *) & rgbrgb;
 	return fb_writel_real(rgbrgb16toycbycr(rgb[0], rgb[1]), address);
@@ -550,16 +524,13 @@ unsigned int gcnfb_writel(unsigned int rgbrgb, void *address)
 /*
  * Restore the video hardware to sane defaults.
  */
-int gcnfb_restorefb(struct fb_info *info)
+int vifb_restorefb(struct fb_info *info)
 {
 	struct vi_ctl *ctl = info->par;
 	void __iomem *io_base = ctl->io_base;
 	int i;
 	unsigned long flags;
 
-/*
-	printk(KERN_INFO "Setting mode %s\n", vi_current_video_mode->name);
-*/
 	/* set page 0 as the visible page and cancel pending flips */
 	spin_lock_irqsave(&ctl->lock, flags);
 	ctl->visible_page = 1;
@@ -587,13 +558,12 @@ int gcnfb_restorefb(struct fb_info *info)
 
 	return 0;
 }
-
-EXPORT_SYMBOL(gcnfb_restorefb);
+EXPORT_SYMBOL(vifb_restorefb);
 
 /*
- * XXX I wonder if we really need this.
+ * FIXME: do we really need this?
  */
-static int gcnfb_setcolreg(unsigned regno, unsigned red, unsigned green,
+static int vifb_setcolreg(unsigned regno, unsigned red, unsigned green,
 			   unsigned blue, unsigned transp, struct fb_info *info)
 {
 	/*
@@ -607,13 +577,9 @@ static int gcnfb_setcolreg(unsigned regno, unsigned red, unsigned green,
 		return 1;
 
 	switch (info->var.bits_per_pixel) {
-	case 8:
-		break;
-	case 15:
 	case 16:
 		if (info->var.red.offset == 10) {
-			/* XXX, not used currently */
-			/* 1:5:5:5 */
+			/* 1:5:5:5, not used currently */
 			((u32 *) (info->pseudo_palette))[regno] =
 			    ((red & 0xf800) >> 1) |
 			    ((green & 0xf800) >> 6) | ((blue & 0xf800) >> 11);
@@ -624,16 +590,10 @@ static int gcnfb_setcolreg(unsigned regno, unsigned red, unsigned green,
 			    ((green & 0xfc00) >> 5) | ((blue & 0xf800) >> 11);
 		}
 		break;
+	case 8:
+	case 15:
 	case 24:
 	case 32:
-		/* XXX, not used currently */
-		red >>= 8;
-		green >>= 8;
-		blue >>= 8;
-		((u32 *) (info->pseudo_palette))[regno] =
-		    (red << info->var.red.offset) |
-		    (green << info->var.green.offset) |
-		    (blue << info->var.blue.offset);
 		break;
 	}
 	return 0;
@@ -642,7 +602,7 @@ static int gcnfb_setcolreg(unsigned regno, unsigned red, unsigned green,
 /*
  * Pan the display by altering the framebuffer address in hardware.
  */
-static int gcnfb_pan_display(struct fb_var_screeninfo *var,
+static int vifb_pan_display(struct fb_var_screeninfo *var,
 			     struct fb_info *info)
 {
 	struct vi_ctl *ctl = info->par;
@@ -660,10 +620,7 @@ static int gcnfb_pan_display(struct fb_var_screeninfo *var,
 	return 0;
 }
 
-/*
- * Miscellaneous stuff end up here.
- */
-static int gcnfb_ioctl(struct fb_info *info,
+static int vifb_ioctl(struct fb_info *info,
 		       unsigned int cmd, unsigned long arg)
 {
 	struct vi_ctl *ctl = info->par;
@@ -731,10 +688,10 @@ static int gcnfb_ioctl(struct fb_info *info,
 /*
  * Set the video mode according to info->var.
  */
-static int gcnfb_set_par(struct fb_info *info)
+static int vifb_set_par(struct fb_info *info)
 {
 	/* just load sane default here */
-	gcnfb_restorefb(info);
+	vifb_restorefb(info);
 	return 0;
 }
 
@@ -742,7 +699,7 @@ static int gcnfb_set_par(struct fb_info *info)
  * Check var and eventually tweak it to something supported.
  * Do not modify par here.
  */
-static int gcnfb_check_var(struct fb_var_screeninfo *var, struct fb_info *info)
+static int vifb_check_var(struct fb_var_screeninfo *var, struct fb_info *info)
 {
 	struct vi_ctl *ctl = info->par;
 
@@ -759,26 +716,29 @@ static int gcnfb_check_var(struct fb_var_screeninfo *var, struct fb_info *info)
 	return 0;
 }
 
-/* linux framebuffer operations */
-struct fb_ops gcnfb_ops = {
+struct fb_ops vifb_ops = {
 	.owner = THIS_MODULE,
-	.fb_setcolreg = gcnfb_setcolreg,
-	.fb_pan_display = gcnfb_pan_display,
-	.fb_ioctl = gcnfb_ioctl,
+	.fb_setcolreg = vifb_setcolreg,
+	.fb_pan_display = vifb_pan_display,
+	.fb_ioctl = vifb_ioctl,
 #ifdef CONFIG_FB_GAMECUBE_GX
 	.fb_mmap = gcngx_mmap,
 #endif
-	.fb_check_var = gcnfb_check_var,
-	.fb_set_par = gcnfb_set_par,
+	.fb_check_var = vifb_check_var,
+	.fb_set_par = vifb_set_par,
 	.fb_fillrect = cfb_fillrect,
 	.fb_copyarea = cfb_copyarea,
 	.fb_imageblit = cfb_imageblit,
 };
 
 /*
+ * Driver model helper routines.
  *
  */
-static int gcnfb_probe(struct platform_device *dev)
+
+static int vifb_do_probe(struct device *dev,
+			 struct resource *mem, unsigned int irq,
+			 unsigned long xfb_start, unsigned long xfb_size)
 {
 	struct fb_info *info;
 	struct vi_ctl *ctl;
@@ -786,20 +746,21 @@ static int gcnfb_probe(struct platform_device *dev)
 	int video_cmap_len;
 	int err = -EINVAL;
 
-	info = framebuffer_alloc(sizeof(struct vi_ctl), &dev->dev);
+	info = framebuffer_alloc(sizeof(struct vi_ctl), dev);
 	if (!info)
 		goto err_framebuffer_alloc;
 
-	info->fbops = &gcnfb_ops;
-	info->var = gcnfb_var;
-	info->fix = gcnfb_fix;
+	info->fbops = &vifb_ops;
+	info->var = vifb_var;
+	info->fix = vifb_fix;
 	ctl = info->par;
 	ctl->info = info;
 
 	/* first thing needed */
-	ctl->io_base = VI_IO_BASE;
+	ctl->io_base = ioremap(mem->start, mem->end - mem->start + 1);
+	ctl->irq = irq;
 
-	vi_mode_guess(ctl);
+	vi_guess_mode(ctl);
 
 	info->var.xres = vi_current_video_mode->width;
 	info->var.yres = vi_current_video_mode->height;
@@ -814,24 +775,22 @@ static int gcnfb_probe(struct platform_device *dev)
 	/*
 	 * Location and size of the external framebuffer.
 	 */
-	info->fix.smem_start = GCN_XFB_START;
-	info->fix.smem_len = GCN_XFB_SIZE;
+	info->fix.smem_start = xfb_start;
+	info->fix.smem_len = xfb_size;
 
 	if (!request_mem_region(info->fix.smem_start, info->fix.smem_len,
 				DRV_MODULE_NAME)) {
-		printk(KERN_WARNING
-		       "gcnfb: abort, cannot reserve video memory at %p\n",
-		       (void *)info->fix.smem_start);
-		/* We cannot make this fatal. Sometimes this comes from magic
-		   spaces our resource handlers simply don't know about */
+		drv_printk(KERN_WARNING,
+			   "failed to request video memory at %p\n",
+			   (void *)info->fix.smem_start);
 	}
 
 	info->screen_base = ioremap(info->fix.smem_start, info->fix.smem_len);
 	if (!info->screen_base) {
-		printk(KERN_ERR
-		       "gcnfb: abort, cannot ioremap video memory"
-		       " at %p (%dk)\n",
-		       (void *)info->fix.smem_start, info->fix.smem_len / 1024);
+		drv_printk(KERN_ERR,
+			   "failed to ioremap video memory at %p (%dk)\n",
+			   (void *)info->fix.smem_start,
+			   info->fix.smem_len / 1024);
 		err = -EIO;
 		goto err_ioremap;
 	}
@@ -846,26 +805,26 @@ static int gcnfb_probe(struct platform_device *dev)
 
 	ctl->flip_pending = 0;
 
-	printk(KERN_INFO
-	       "gcnfb: framebuffer at 0x%p, mapped to 0x%p, size %dk\n",
-	       (void *)info->fix.smem_start, info->screen_base,
-	       info->fix.smem_len / 1024);
-	printk(KERN_INFO
-	       "gcnfb: mode is %dx%dx%d, linelength=%d, pages=%d\n",
-	       info->var.xres, info->var.yres,
-	       info->var.bits_per_pixel,
-	       info->fix.line_length,
-	       info->fix.smem_len / (info->fix.line_length * info->var.yres));
+	drv_printk(KERN_INFO,
+		   "framebuffer at 0x%p, mapped to 0x%p, size %dk\n",
+		   (void *)info->fix.smem_start, info->screen_base,
+		   info->fix.smem_len / 1024);
+	drv_printk(KERN_INFO,
+		   "mode is %dx%dx%d, linelength=%d, pages=%d\n",
+		   info->var.xres, info->var.yres,
+		   info->var.bits_per_pixel,
+		   info->fix.line_length,
+		   info->fix.smem_len / (info->fix.line_length*info->var.yres));
 
 	info->var.xres_virtual = info->var.xres;
 	info->var.yres_virtual = info->fix.smem_len / info->fix.line_length;
 
 	if (ypan && info->var.yres_virtual > info->var.yres) {
-		printk(KERN_INFO "gcnfb: scrolling: pan,  yres_virtual=%d\n",
-		       info->var.yres_virtual);
+		drv_printk(KERN_INFO, "scrolling: pan,  yres_virtual=%d\n",
+			   info->var.yres_virtual);
 	} else {
-		printk(KERN_INFO "gcnfb: scrolling: redraw, yres_virtual=%d\n",
-		       info->var.yres_virtual);
+		drv_printk(KERN_INFO, "scrolling: redraw, yres_virtual=%d\n",
+			   info->var.yres_virtual);
 		info->var.yres_virtual = info->var.yres;
 		ypan = 0;
 	}
@@ -875,38 +834,21 @@ static int gcnfb_probe(struct platform_device *dev)
 	if (!ypan)
 		info->fbops->fb_pan_display = NULL;
 
-	/* FIXME! Please, use here *real* values */
-	/* some dummy values for timing to make fbset happy */
+	/* use some dummy values for timing to make fbset happy */
 	info->var.pixclock = 10000000 / info->var.xres * 1000 / info->var.yres;
 	info->var.left_margin = (info->var.xres / 8) & 0xf8;
 	info->var.hsync_len = (info->var.xres / 8) & 0xf8;
 
-	if (info->var.bits_per_pixel == 15) {
-		info->var.red.offset = 11;
-		info->var.red.length = 5;
-		info->var.green.offset = 6;
-		info->var.green.length = 5;
-		info->var.blue.offset = 1;
-		info->var.blue.length = 5;
-		info->var.transp.offset = 15;
-		info->var.transp.length = 1;
-		video_cmap_len = 16;
-	} else if (info->var.bits_per_pixel == 16) {
-		info->var.red.offset = 11;
-		info->var.red.length = 5;
-		info->var.green.offset = 5;
-		info->var.green.length = 6;
-		info->var.blue.offset = 0;
-		info->var.blue.length = 5;
-		info->var.transp.offset = 0;
-		info->var.transp.length = 0;
-		video_cmap_len = 16;
-	} else {
-		info->var.red.length = 6;
-		info->var.green.length = 6;
-		info->var.blue.length = 6;
-		video_cmap_len = 256;
-	}
+	/* we support ony 16 bits per pixel */
+	info->var.red.offset = 11;
+	info->var.red.length = 5;
+	info->var.green.offset = 5;
+	info->var.green.length = 6;
+	info->var.blue.offset = 0;
+	info->var.blue.length = 5;
+	info->var.transp.offset = 0;
+	info->var.transp.length = 0;
+	video_cmap_len = 16;
 
 	info->pseudo_palette = pseudo_palette;
 	if (fb_alloc_cmap(&info->cmap, video_cmap_len, 0)) {
@@ -916,10 +858,11 @@ static int gcnfb_probe(struct platform_device *dev)
 
 	info->flags = FBINFO_FLAG_DEFAULT | (ypan) ? FBINFO_HWACCEL_YPAN : 0;
 
-	platform_set_drvdata(dev, info);
+	dev_set_drvdata(dev, info);
 
-	if (request_irq(VI_IRQ, vi_irq_handler, IRQF_DISABLED, "gcn-vi", dev)) {
-		printk(KERN_ERR "unable to register IRQ %u\n", VI_IRQ);
+	err = request_irq(ctl->irq, vi_irq_handler, 0, DRV_MODULE_NAME, dev);
+	if (err) {
+		drv_printk(KERN_ERR, "unable to register IRQ %u\n", ctl->irq);
 		goto err_request_irq;
 	}
 
@@ -930,7 +873,7 @@ static int gcnfb_probe(struct platform_device *dev)
 	}
 
 	/* setup the framebuffer address */
-	gcnfb_restorefb(info);
+	vifb_restorefb(info);
 
 #ifdef CONFIG_FB_GAMECUBE_GX
 	err = gcngx_init(info);
@@ -938,8 +881,8 @@ static int gcnfb_probe(struct platform_device *dev)
 		goto err_gcngx_init;
 #endif
 
-	printk(KERN_INFO "fb%d: %s frame buffer device\n",
-	       info->node, info->fix.id);
+	drv_printk(KERN_INFO, "fb%d: %s frame buffer device\n",
+		   info->node, info->fix.id);
 
 	return 0;
 
@@ -948,7 +891,7 @@ err_gcngx_init:
 	unregister_framebuffer(info);
 #endif
 err_register_framebuffer:
-	free_irq(VI_IRQ, 0);
+	free_irq(ctl->irq, 0);
 err_request_irq:
 	fb_dealloc_cmap(&info->cmap);
 err_alloc_cmap:
@@ -956,18 +899,17 @@ err_alloc_cmap:
 err_ioremap:
 	release_mem_region(info->fix.smem_start, info->fix.smem_len);
 
-	platform_set_drvdata(dev, NULL);
+	dev_set_drvdata(dev, NULL);
+	iounmap(ctl->io_base);
 	framebuffer_release(info);
 err_framebuffer_alloc:
 	return err;
 }
 
-/**
- *
- */
-static int gcnfb_remove(struct platform_device *dev)
+static int vifb_do_remove(struct device *dev)
 {
-	struct fb_info *info = platform_get_drvdata(dev);
+	struct fb_info *info = dev_get_drvdata(dev);
+	struct vi_ctl *ctl = info->par;
 
 	if (!info)
 		return -ENODEV;
@@ -975,42 +917,28 @@ static int gcnfb_remove(struct platform_device *dev)
 #ifdef CONFIG_FB_GAMECUBE_GX
 	gcngx_exit(info);
 #endif
-	free_irq(VI_IRQ, dev);
+	free_irq(ctl->irq, dev);
 	unregister_framebuffer(info);
 	fb_dealloc_cmap(&info->cmap);
 	iounmap(info->screen_base);
 	release_mem_region(info->fix.smem_start, info->fix.smem_len);
 
-	platform_set_drvdata(dev, NULL);
+	dev_set_drvdata(dev, NULL);
+	iounmap(ctl->io_base);
 	framebuffer_release(info);
 	return 0;
 }
 
-static struct platform_driver gcnfb_driver = {
-	.probe = gcnfb_probe,
-	.remove = gcnfb_remove,
-	.driver = {
-		   .name = DRV_MODULE_NAME,
-		   },
-};
-
-static struct platform_device gcnfb_device = {
-	.name = DRV_MODULE_NAME,
-};
-
 #ifndef MODULE
 
-/**
- *
- */
-static int __devinit gcnfb_setup(char *options)
+static int __devinit vifb_setup(char *options)
 {
 	char *this_opt;
 
 	if (!options || !*options)
 		return 0;
 
-	printk("gcnfb: options = %s\n", options);
+	drv_printk(KERN_DEBUG, "options = %s\n", options);
 
 	while ((this_opt = strsep(&options, ",")) != NULL) {
 		if (!*this_opt)
@@ -1034,45 +962,99 @@ static int __devinit gcnfb_setup(char *options)
 	return 0;
 }
 
-#endif				/* MODULE */
+#endif	/* MODULE */
+
 
 /*
+ * OF platform driver hooks.
  *
  */
-static int __init gcnfb_init_module(void)
-{
-	int ret = 0;
-#ifndef MODULE
-	char *option = NULL;
 
-	if (fb_get_options(DRV_MODULE_NAME, &option)) {
-		/* for backwards compatibility */
-		if (fb_get_options("gamecubefb", &option))
-			return -ENODEV;
+static int __init vifb_of_probe(struct of_device *odev,
+				 const struct of_device_id *match)
+{
+	struct resource res;
+	const unsigned long *prop;
+	unsigned long xfb_start, xfb_size;
+	int retval;
+
+	retval = of_address_to_resource(odev->node, 0, &res);
+	if (retval) {
+		drv_printk(KERN_ERR, "no io memory range found\n");
+		return -ENODEV;
 	}
-	gcnfb_setup(option);
+
+	prop = of_get_property(odev->node, "xfb-start", NULL);
+	if (!prop) {
+		drv_printk(KERN_ERR, "no xfb start found\n");
+		return -ENODEV;
+	}
+	xfb_start = *prop;
+
+	prop = of_get_property(odev->node, "xfb-size", NULL);
+	if (!prop) {
+		drv_printk(KERN_ERR, "no xfb size found\n");
+		return -ENODEV;
+	}
+	xfb_size = *prop;
+
+	return vifb_do_probe(&odev->dev,
+			     &res, irq_of_parse_and_map(odev->node, 0),
+			     xfb_start, xfb_size);
+}
+
+static int __exit vifb_of_remove(struct of_device *odev)
+{
+	return vifb_do_remove(&odev->dev);
+}
+
+
+static struct of_device_id vifb_of_match[] = {
+	{ .compatible = "nintendo,vifb", },
+	{ },
+};
+
+MODULE_DEVICE_TABLE(of, vifb_of_match);
+
+static struct of_platform_driver vifb_of_driver = {
+        .owner = THIS_MODULE,
+        .name = DRV_MODULE_NAME,
+        .match_table = vifb_of_match,
+        .probe = vifb_of_probe,
+        .remove = vifb_of_remove,
+};
+
+/*
+ * Module interface hooks
+ *
+ */
+
+static int __init vifb_init_module(void)
+{
+#ifndef MODULE
+        char *option = NULL;
+
+        if (fb_get_options(DRV_MODULE_NAME, &option)) {
+                /* for backwards compatibility */
+                if (fb_get_options("gcnfb", &option))
+                        return -ENODEV;
+        }
+        vifb_setup(option);
 #endif
 
-	ret = platform_driver_register(&gcnfb_driver);
-	if (!ret) {
-		ret = platform_device_register(&gcnfb_device);
-		if (ret)
-			platform_driver_unregister(&gcnfb_driver);
-	}
-	return ret;
+	drv_printk(KERN_INFO, "%s - version %s\n", DRV_DESCRIPTION,
+		   vifb_driver_version);
+
+	return of_register_platform_driver(&vifb_of_driver);
 }
 
-/*
- *
- */
-static void __exit gcnfb_exit_module(void)
+static void __exit vifb_exit_module(void)
 {
-	platform_device_unregister(&gcnfb_device);
-	platform_driver_unregister(&gcnfb_driver);
+	of_unregister_platform_driver(&vifb_of_driver);
 }
 
-module_init(gcnfb_init_module);
-module_exit(gcnfb_exit_module);
+module_init(vifb_init_module);
+module_exit(vifb_exit_module);
 
 MODULE_DESCRIPTION(DRV_DESCRIPTION);
 MODULE_AUTHOR(DRV_AUTHOR);

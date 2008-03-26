@@ -15,8 +15,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/init.h>
-#include <linux/device.h>
-#include <linux/platform_device.h>
+#include <linux/of_platform.h>
 #include <linux/ioport.h>
 #include <linux/interrupt.h>
 #include <linux/dmapool.h>
@@ -27,12 +26,6 @@
 
 #include <asm/starlet.h>
 
-#ifdef CONFIG_PPC_MERGE
-#include <platforms/embedded6xx/gamecube.h>
-#else
-#include <platforms/gamecube.h>
-#endif
-
 
 #define DRV_MODULE_NAME		"starlet-ipc"
 #define DRV_DESCRIPTION		"Nintendo Wii starlet IPC driver"
@@ -40,25 +33,9 @@
 
 static char starlet_ipc_driver_version[] = "0.1-isobel";
 
+#define drv_printk(level, format, arg...) \
+        printk(level DRV_MODULE_NAME ": " format , ## arg)
 
-#define PFX DRV_MODULE_NAME ": "
-#define ipc_printk(level, format, arg...) \
-        printk(level PFX format , ## arg)
-
-#ifdef SD_DEBUG
-#  define DBG(fmt, args...) \
-          printk(KERN_ERR "%s: " fmt, __FUNCTION__ , ## args)
-#else
-#  define DBG(fmt, args...)
-#endif
-
-
-#define STARLET_IPC_BASE	0x0d000000
-#define STARLET_IPC_SIZE	0x40
-
-#define STARLET_IPC_IRQ		14
-
-#define STARLET_IPC_DMA_ALIGN	0x1f	/* 32 bytes */
 
 /*
  * Hardware registers
@@ -90,7 +67,7 @@ enum {
 
 
 struct starlet_ipc_request {
-	/* begin starlet hardware request format */
+	/* begin starlet firmware request format */
 	u32 cmd;
 	s32 result;
 	union {
@@ -111,7 +88,7 @@ struct starlet_ipc_request {
 		} ioctl;
 		u32 argv[5];
 	};
-	/* end starlet hardware request format */
+	/* end starlet firmware request format */
 
 	struct starlet_ipc_device *ipc_dev;
 	struct list_head node;
@@ -191,7 +168,7 @@ static void starlet_ipc_quiesce(struct starlet_ipc_device *ipc_dev)
  */
 static void starlet_ipc_debug_print_request(struct starlet_ipc_request *req)
 {
-	DBG("cmd=%x, result=%d, fd=%x, dma_addr=%p\n",
+	pr_debug("cmd=%x, result=%d, fd=%x, dma_addr=%p\n",
 	    req->cmd, req->result, req->fd, (void *)req->dma_addr);
 }
 
@@ -232,7 +209,7 @@ static void starlet_ipc_start_request(struct starlet_ipc_request *req)
 	void __iomem *io_base = ipc_dev->io_base;
 	unsigned long flags;
 
-	DBG("start_request\n");
+	pr_debug("start_request\n");
 	starlet_ipc_debug_print_request(req);
 
 	spin_lock_irqsave(&ipc_dev->list_lock, flags);
@@ -257,7 +234,7 @@ static void starlet_ipc_complete_request(struct starlet_ipc_request *req)
 	ipc_dev->nr_outstanding--;
 	spin_unlock_irqrestore(&ipc_dev->list_lock, flags);
 
-	DBG("complete_request\n");
+	pr_debug("complete_request\n");
 	starlet_ipc_debug_print_request(req);
 
 	if (req->done)
@@ -317,7 +294,7 @@ static int starlet_ipc_dispatch_tbei(struct starlet_ipc_device *ipc_dev)
 	struct list_head *pending = &ipc_dev->pending_list;
 	unsigned long flags;
 
-	DBG("tx buf empty interrupt!\n");
+	pr_debug("tx buf empty interrupt!\n");
 
 	spin_lock_irqsave(&ipc_dev->list_lock, flags);
 	if (!list_empty(pending)) {
@@ -344,14 +321,14 @@ static int starlet_ipc_dispatch_rbfi(struct starlet_ipc_device *ipc_dev)
 	struct starlet_ipc_request *req;
 	unsigned long req_bus_addr;
 
-	DBG("rx buf full interrupt!\n");
+	pr_debug("rx buf full interrupt!\n");
 
 	req_bus_addr = starlet_ipc_recvfrom(io_base);
 	req = starlet_ipc_find_request_by_bus_addr(ipc_dev, req_bus_addr);
 	if (req) {
 		starlet_ipc_complete_request(req);
 	} else {
-		ipc_printk(KERN_WARNING, "unknown request, bus=%p\n",
+		drv_printk(KERN_WARNING, "unknown request, bus=%p\n",
 			   (void *)req_bus_addr);
 	}
 	return IRQ_HANDLED;
@@ -445,7 +422,7 @@ static struct starlet_ipc_device *starlet_ipc_device_instance;
 struct starlet_ipc_device *starlet_ipc_get_device(void)
 {
 	if (!starlet_ipc_device_instance)
-		ipc_printk(KERN_ERR, "uninitialized device instance!\n");
+		drv_printk(KERN_ERR, "uninitialized device instance!\n");
 	return starlet_ipc_device_instance;
 }
 EXPORT_SYMBOL_GPL(starlet_ipc_get_device);
@@ -484,14 +461,14 @@ int starlet_ios_open(const char *pathname, int flags)
 			strcpy(buf_aligned_pathname, pathname);
 			vaddr = buf_aligned_pathname;
 		}
-		dma_addr = dma_map_single(&ipc_dev->pdev.dev,
+		dma_addr = dma_map_single(ipc_dev->dev,
 					  vaddr, len, DMA_TO_DEVICE);
 		req->cmd = STARLET_IOS_OPEN;
 		req->open.pathname = dma_addr;	/* bus address */
 		req->open.mode = flags;
 		retval = starlet_ipc_call_and_wait(req);
 		if (use_private_buf) {
-			dma_unmap_single(&ipc_dev->pdev.dev, dma_addr,
+			dma_unmap_single(ipc_dev->dev, dma_addr,
 					 len, DMA_TO_DEVICE);
 			mutex_unlock(&buf_aligned_pathname_lock);
 		}
@@ -527,9 +504,9 @@ EXPORT_SYMBOL_GPL(starlet_ios_close);
 /*
  *
  */
-int starlet_ios_ioctl(int fd, int request,
-		      dma_addr_t ibuf, size_t ilen,
-		      dma_addr_t obuf, size_t olen)
+int starlet_ios_ioctl_dma(int fd, int request,
+			  dma_addr_t ibuf, size_t ilen,
+			  dma_addr_t obuf, size_t olen)
 {
 	struct starlet_ipc_device *ipc_dev = starlet_ipc_get_device();
 	struct starlet_ipc_request *req;
@@ -552,76 +529,84 @@ int starlet_ios_ioctl(int fd, int request,
 	}
 	return retval;
 }
+
+/*
+ *
+ */
+int starlet_ios_ioctl(int fd, int request,
+		      void *ibuf, size_t ilen,
+		      void *obuf, size_t olen)
+{
+	struct starlet_ipc_device *ipc_dev = starlet_ipc_get_device();
+	dma_addr_t ibuf_ba, obuf_ba;
+	int retval;
+
+	BUG_ON(!IS_ALIGNED((unsigned long)ibuf, STARLET_IPC_DMA_ALIGN+1));
+	BUG_ON(!IS_ALIGNED((unsigned long)obuf, STARLET_IPC_DMA_ALIGN+1));
+
+	ibuf_ba = dma_map_single(ipc_dev->dev, ibuf, ilen,
+				 DMA_TO_DEVICE);
+	obuf_ba = dma_map_single(ipc_dev->dev, obuf, olen,
+				 DMA_FROM_DEVICE);
+	retval = starlet_ios_ioctl_dma(fd, request, ibuf_ba, ilen,
+				       obuf_ba, olen);
+	dma_unmap_single(ipc_dev->dev, ibuf_ba, ilen, DMA_TO_DEVICE);
+	dma_unmap_single(ipc_dev->dev, obuf_ba, olen, DMA_FROM_DEVICE);
+
+	return retval;
+}
 EXPORT_SYMBOL_GPL(starlet_ios_ioctl);
 
 /*
- * Platform driver interface.
+ *
  *
  */
 
 /*
  *
  */
-static int starlet_ipc_init_irq(struct starlet_ipc_device *ipc_dev)
+static void starlet_ios_fixups(void)
 {
-	int retval;
-	int irq = platform_get_irq(&ipc_dev->pdev, 0);
+	int fd;
+	static u32 buf[32/sizeof(u32)]
+	    __attribute__ ((aligned(STARLET_IPC_DMA_ALIGN + 1)));
 
-	retval = request_irq(irq, starlet_ipc_handler, 0, DRV_MODULE_NAME,
-			     ipc_dev);
-	if (retval) {
-		ipc_printk(KERN_ERR, "request of irq%d failed\n", irq);
-	} else {
-		/* ack and enable MBOX? and REPLY interrupts */
-		out_be32(ipc_dev->io_base + STARLET_IPC_CSR,
-			 STARLET_IPC_CSR_TBEIMASK | STARLET_IPC_CSR_RBFIMASK |
-			 STARLET_IPC_CSR_TBEI | STARLET_IPC_CSR_RBFI);
+	/* try to close any open file descriptors, just in case */
+	for(fd = 0; fd < 15; fd++)
+		starlet_ios_close(fd);
+
+	/* stop dvd motor */
+	fd = starlet_ios_open("/dev/di", 0);
+	if (fd >= 0) {
+		buf[0] = 0xe3000000; /* stop motor command */
+		buf[1] = 0;
+		buf[2] = 0;
+		starlet_ios_ioctl(fd, buf[0],
+				  buf, sizeof(buf),
+				  buf, sizeof(buf));
+		starlet_ios_close(fd);
 	}
-	return retval;
 }
+
 
 /*
  *
  */
-static void starlet_ipc_exit_irq(struct starlet_ipc_device *ipc_dev)
+static int starlet_ipc_init(struct starlet_ipc_device *ipc_dev,
+			    struct resource *mem, int irq)
 {
-	int irq = platform_get_irq(&ipc_dev->pdev, 0);
-
-	starlet_ipc_quiesce(ipc_dev);
-	free_irq(irq, ipc_dev);
-}
-
-/*
- *
- */
-static int starlet_ipc_probe(struct platform_device *pdev)
-{
-	struct starlet_ipc_device *ipc_dev = to_ipc_dev(pdev);
-	struct resource *mem;
 	size_t size;
 	int retval;
 
-	mem = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	if (!mem) {
-		ipc_printk(KERN_ERR, "failed to determine io address range\n");
-		return -ENODEV;
-	}
-
-	memset(ipc_dev, 0, sizeof(*ipc_dev) - sizeof(ipc_dev->pdev));
-
 	ipc_dev->io_base = ioremap(mem->start, mem->end - mem->start + 1);
-	if (!ipc_dev->io_base) {
-		ipc_printk(KERN_ERR, "ioremap from %p to %p failed\n",
-			   (void *)mem->start, (void *)mem->end);
-		return -EINVAL;
-	}
+	ipc_dev->irq = irq;
 
-	size = max((size_t) 128, sizeof(struct starlet_ipc_request));
+	size = max((size_t)64, sizeof(struct starlet_ipc_request));
 	ipc_dev->dma_pool = dma_pool_create(DRV_MODULE_NAME,
-					    &ipc_dev->pdev.dev,
+					    ipc_dev->dev,
 					    size, STARLET_IPC_DMA_ALIGN + 1, 0);
 	if (!ipc_dev->dma_pool) {
-		ipc_printk(KERN_ERR, "dma_pool_create failed\n");
+		drv_printk(KERN_ERR, "dma_pool_create failed\n");
 		iounmap(ipc_dev->io_base);
 		return -ENOMEM;
 	}
@@ -631,58 +616,155 @@ static int starlet_ipc_probe(struct platform_device *pdev)
 
 	starlet_ipc_device_instance = ipc_dev;
 
-	retval = starlet_ipc_init_irq(ipc_dev);
+	retval = request_irq(ipc_dev->irq, starlet_ipc_handler, 0,
+			     DRV_MODULE_NAME, ipc_dev);
 	if (retval) {
+		drv_printk(KERN_ERR, "request of IRQ %d failed\n", irq);
 		starlet_ipc_device_instance = NULL;
 		dma_pool_destroy(ipc_dev->dma_pool);
 		iounmap(ipc_dev->io_base);
 		return retval;
 	}
 
-	return 0;
+	/* ack and enable MBOX? and REPLY interrupts */
+	out_be32(ipc_dev->io_base + STARLET_IPC_CSR,
+		 STARLET_IPC_CSR_TBEIMASK | STARLET_IPC_CSR_RBFIMASK |
+		 STARLET_IPC_CSR_TBEI | STARLET_IPC_CSR_RBFI);
+
+	starlet_ios_fixups();
+
+	return retval;
 }
 
 /*
  *
  */
-static int starlet_ipc_remove(struct platform_device *pdev)
+static void starlet_ipc_exit(struct starlet_ipc_device *ipc_dev)
 {
-	struct starlet_ipc_device *ipc_dev = to_ipc_dev(pdev);
+	starlet_ipc_device_instance = NULL;
+	starlet_ipc_quiesce(ipc_dev);
 
+	free_irq(ipc_dev->irq, ipc_dev);
+	dma_pool_destroy(ipc_dev->dma_pool);
 	iounmap(ipc_dev->io_base);
-	starlet_ipc_exit_irq(ipc_dev);
-
-	return 0;
+	ipc_dev->io_base = NULL;
 }
 
-static struct platform_driver starlet_ipc_driver = {
-	.probe = starlet_ipc_probe,
-	.remove = starlet_ipc_remove,
-	.driver = {
-		   .name = DRV_MODULE_NAME,
-		   },
+
+/*
+ * Device interface.
+ *
+ */
+
+/*
+ * Common probe function for the given device.
+ */
+static int starlet_ipc_do_probe(struct device *dev, struct resource *mem,
+				int irq)
+{
+	struct starlet_ipc_device *ipc_dev;
+	int retval;
+
+	ipc_dev = kzalloc(sizeof(*ipc_dev), GFP_KERNEL);
+	if (!ipc_dev) {
+		drv_printk(KERN_ERR, "failed to allocate ipc_dev\n");
+		return -ENOMEM;
+	}
+	dev_set_drvdata(dev, ipc_dev);
+	ipc_dev->dev = dev;
+
+	retval = starlet_ipc_init(ipc_dev, mem, irq);
+	if (retval) {
+		dev_set_drvdata(dev, NULL);
+		kfree(ipc_dev);
+	}
+	return retval;
+}
+
+/*
+ *
+ */
+static int starlet_ipc_do_remove(struct device *dev)
+{
+	struct starlet_ipc_device *ipc_dev = dev_get_drvdata(dev);
+
+	if (ipc_dev) {
+		starlet_ipc_exit(ipc_dev);
+		dev_set_drvdata(dev, NULL);
+		kfree(ipc_dev);
+		return 0;
+	}
+	return -ENODEV;
+}
+
+/*
+ *
+ */
+static int starlet_ipc_do_shutdown(struct device *dev)
+{
+	struct starlet_ipc_device *ipc_dev = dev_get_drvdata(dev);
+
+	if (ipc_dev) {
+		starlet_ipc_quiesce(ipc_dev);
+		return 0;
+	}
+	return -ENODEV;
+}
+
+/*
+ * OF Platform device interface.
+ *
+ */
+
+/*
+ *
+ */
+static int starlet_ipc_of_probe(struct of_device *odev,
+				const struct of_device_id *dev_id)
+{
+	struct resource res;
+	int retval;
+
+	retval = of_address_to_resource(odev->node, 0, &res);
+	if (retval) {
+		drv_printk(KERN_ERR, "no io memory range found\n");
+		return -ENODEV;
+	}
+
+	return starlet_ipc_do_probe(&odev->dev, &res,
+				    irq_of_parse_and_map(odev->node, 0));
+}
+
+/*
+ *
+ */
+static int starlet_ipc_of_remove(struct of_device *odev)
+{
+	return starlet_ipc_do_remove(&odev->dev);
+}
+
+/*
+ *
+ */
+static int starlet_ipc_of_shutdown(struct of_device *odev)
+{
+	return starlet_ipc_do_shutdown(&odev->dev);
+}
+
+static struct of_device_id starlet_ipc_of_match[] = {
+	{ .compatible = "nintendo,starlet-ipc" },
+	{ },
 };
 
-static struct resource starlet_ipc_resources[] = {
-	[0] = {
-	       .start = STARLET_IPC_BASE,
-	       .end = STARLET_IPC_BASE + STARLET_IPC_SIZE - 1,
-	       .flags = IORESOURCE_MEM,
-	       },
-	[1] = {
-	       .start = STARLET_IPC_IRQ,
-	       .end = STARLET_IPC_IRQ,
-	       .flags = IORESOURCE_IRQ,
-	       },
-};
+MODULE_DEVICE_TABLE(of, starlet_ipc_of_match);
 
-static struct starlet_ipc_device starlet_ipc_device = {
-	.pdev = {
-		 .name = DRV_MODULE_NAME,
-		 .id = 0,
-		 .num_resources = ARRAY_SIZE(starlet_ipc_resources),
-		 .resource = starlet_ipc_resources,
-		 },
+static struct of_platform_driver starlet_ipc_of_driver = {
+	.owner = THIS_MODULE,
+	.name = DRV_MODULE_NAME,
+	.match_table = starlet_ipc_of_match,
+	.probe = starlet_ipc_of_probe,
+	.remove = starlet_ipc_of_remove,
+	.shutdown = starlet_ipc_of_shutdown,
 };
 
 /*
@@ -693,30 +775,23 @@ static struct starlet_ipc_device starlet_ipc_device = {
 /*
  *
  */
-static int __init starlet_ipc_init(void)
+static int __init starlet_ipc_init_module(void)
 {
-	int retval;
-
-	ipc_printk(KERN_INFO, "%s - version %s\n", DRV_DESCRIPTION,
+	drv_printk(KERN_INFO, "%s - version %s\n", DRV_DESCRIPTION,
 		   starlet_ipc_driver_version);
 
-	retval = platform_driver_register(&starlet_ipc_driver);
-	if (!retval) {
-		retval = platform_device_register(&starlet_ipc_device.pdev);
-		if (retval)
-			platform_driver_unregister(&starlet_ipc_driver);
-	}
-	return retval;
+	return of_register_platform_driver(&starlet_ipc_of_driver);
 }
 
 /*
  *
  */
-static void __exit starlet_ipc_exit(void)
+static void __exit starlet_ipc_exit_module(void)
 {
-	platform_device_unregister(&starlet_ipc_device.pdev);
-	platform_driver_unregister(&starlet_ipc_driver);
+	of_unregister_platform_driver(&starlet_ipc_of_driver);
 }
 
-module_init(starlet_ipc_init);
-module_exit(starlet_ipc_exit);
+module_init(starlet_ipc_init_module);
+module_exit(starlet_ipc_exit_module);
+
+

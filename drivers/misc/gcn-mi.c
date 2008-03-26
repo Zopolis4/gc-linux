@@ -1,9 +1,9 @@
 /*
  * drivers/misc/gcn-mi.c
  *
- * Nintendo GameCube Memory Interface driver
- * Copyright (C) 2004-2007 The GameCube Linux Team
- * Copyright (C) 2004,2005,2007 Albert Herranz
+ * Nintendo GameCube Memory Interface (MI) driver.
+ * Copyright (C) 2004-2008 The GameCube Linux Team
+ * Copyright (C) 2004,2005,2007,2008 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -12,10 +12,10 @@
  *
  */
 
+#include <linux/device.h>
+#include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/init.h>
-#include <linux/device.h>
 #include <linux/platform_device.h>
 #include <linux/ioport.h>
 #include <linux/interrupt.h>
