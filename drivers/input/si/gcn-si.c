@@ -314,10 +314,19 @@ static void si_timer(unsigned long data)
 		break;
 		
 	case CTL_KEYBOARD:
-		key[0] = (raw[0] >> 12) & 0xFF;
-		key[1] = (raw[0] >> 4) & 0xFF;
-		key[2] = (raw[0] << 4) & 0xFF;
-		key[2] |= (raw[1] << 28) & 0xFF;
+		/*
+		raw nibbles:
+		  [4]<C>[0][0][0][0][0][0] <1H><1L><2H><2L><3H><3L><X><C>
+		where:
+		  [n] = fixed to n
+		  <nH> <nL> = high / low nibble of n-th key pressed
+		              (0 if not pressed)
+		  <X> = <1H> xor <2H> xor <3H>
+		  <C> = counter: 0, 0, 1, 1, 2, 2, ..., F, F, 0, 0, ...
+		*/
+		key[0] = (raw[1] >> 24) & 0xFF;
+		key[1] = (raw[1] >> 16) & 0xFF;
+		key[2] = (raw[1] >>  8) & 0xFF;
 
 		/* check if anything was released */
 		for (i = 0; i < 3; ++i) {
