@@ -44,7 +44,7 @@
 #define DRV_AUTHOR	"Albert Herranz, " \
 			"Todd Jeffreys"
 
-static char bba_driver_version[] = "1.4-isobel";
+static char bba_driver_version[] = "1.4i";
 
 
 #define bba_printk(level, format, arg...) \

@@ -35,7 +35,7 @@ static int __init wii_device_probe(void)
 
 	of_platform_bus_probe(NULL, wii_of_bus, NULL);
 
-	np = of_find_compatible_node(NULL, NULL, "nintendo,mem2");
+	np = of_find_compatible_node(NULL, NULL, "nintendo,hollywood-mem2");
 	if (np) {
 		of_platform_device_create(np, NULL, NULL);
 		of_node_put(np);

@@ -82,7 +82,7 @@ MODULE_AUTHOR(DRV_AUTHOR);
 MODULE_DESCRIPTION(DRV_DESCRIPTION);
 MODULE_LICENSE("GPL");
 
-static char sd_driver_version[] = "4.1-isobel";
+static char sd_driver_version[] = "4.1i";
 
 #define sd_printk(level, format, arg...) \
 	printk(level DRV_MODULE_NAME ": " format , ## arg)

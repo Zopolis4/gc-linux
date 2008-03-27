@@ -1,7 +1,7 @@
 /*
  * drivers/block/gcn-di/gcn-di.c
  *
- * Nintendo GameCube DVD Interface (DI) driver
+ * Nintendo GameCube Disk Interface (DI) driver
  * Copyright (C) 2005-2007 The GameCube Linux Team
  * Copyright (C) 2005,2006,2007 Albert Herranz
  *
@@ -33,10 +33,10 @@
 #define DI_DEBUG
 
 #define DRV_MODULE_NAME	"gcn-di"
-#define DRV_DESCRIPTION	"Nintendo GameCube DVD Interface (DI) driver"
+#define DRV_DESCRIPTION	"Nintendo GameCube Disk Interface (DI) driver"
 #define DRV_AUTHOR	"Albert Herranz"
 
-static char di_driver_version[] = "1.0-isobel";
+static char di_driver_version[] = "1.0i";
 
 #define drv_printk(level, format, arg...) \
 	printk(level DRV_MODULE_NAME ": " format , ## arg)
@@ -191,7 +191,7 @@ struct di_drive_code {
 struct di_device;
 
 /*
- * A DVD Interface command.
+ * A Disk Interface command.
  */
 struct di_command {
 	u16				opidx;
@@ -229,7 +229,7 @@ enum {
 };
 
 /*
- * The DVD Interface device.
+ * The Disk Interface device.
  */
 struct di_device {
 	spinlock_t			lock;
@@ -2343,7 +2343,7 @@ static int di_of_shutdown(struct of_device *odev)
 
 
 static struct of_device_id di_of_match[] = {
-	{ .compatible = "nintendo,di" },
+	{ .compatible = "nintendo,flipper-disk" },
 	{ },
 };
 

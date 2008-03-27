@@ -31,7 +31,7 @@
 #define DRV_DESCRIPTION "Console and TTY driver for the USB Gecko adapter"
 #define DRV_AUTHOR      "Albert Herranz"
 
-static char ug_driver_version[] = "0.1-isobel";
+static char ug_driver_version[] = "0.1i";
 
 #define drv_printk(level, format, arg...) \
 	printk(level DRV_MODULE_NAME ": " format , ## arg)

@@ -1,9 +1,16 @@
 /*
+ * arch/powerpc/boot/dts/wii.dts
  *
+ * Nintendo Wii platform device tree source
+ * Copyright (C) 2008 The GameCube Linux Team
+ * Copyright (C) 2008 Albert Herranz
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
  *
  */
-
-/* /memreserve/ 01654000-017fffff; */
 
 / {
 	model = "NintendoWii";
@@ -12,18 +19,16 @@
 	#size-cells = <1>;
 
 	chosen {
-		bootargs = "root=/dev/ram0 video=gcnfb:tv=auto ip=192.168.001.047:192.168.001.253:192.168.001.251 force_keyboard_port=4"; 
-
+		bootargs = "root=/dev/ram0 video=gcnfb:tv=auto ip=on force_keyboard_port=4"; 
 		linux,crashkernel-base = <0>;
 		linux,crashkernel-size = <0>;
-
 		linux,stdout-path = "/exi@0d006800/usbgecko@0d006814";
 	};
 
 	memory {
 		device_type = "memory";
-		/* 24M - framebuffer - fifo - kexec,	00000000-01653fff */
-		reg = <00000000 01654000	/* only 1st range is used */
+		/* 24M minus framebuffer memory area (640*576*2*2) */
+		reg = <00000000 01698000	/* only 1st range is used */
 		       10000000 04000000>;
 	};
 
@@ -46,25 +51,27 @@
 		};
 	};
 
-	hollywood_pic: pic@0c003000 {
+	pic: pic@0c003000 {
 		#interrupt-cells = <1>;
 		compatible = "nintendo,flipper-pic";
 		reg = <0c003000 8>;
 		interrupt-controller;
 	};
 
+	/* MEM2 memory, discontiguous */
 	mem2 {
-		compatible = "nintendo,mem2";
+		compatible = "nintendo,hollywood-mem2";
 		reg = <10000000 3400000>; /* 52M of MEM2 RAM */
 	};
 
+	/* External Interface bus */
 	exi@0d006800 {
 		#address-cells = <1>;
 		#size-cells = <1>;
-		compatible = "nintendo,exi";
+		compatible = "nintendo,hollywood-exi";
 		reg = <0d006800 40>;
 		interrupts = <04>;
-		interrupt-parent = <&hollywood_pic>;
+		interrupt-parent = <&pic>;
 
 		udbg_console: usbgecko@0d006814 {
 			compatible = "usbgecko,usbgecko";
@@ -73,7 +80,8 @@
 		};
 	};
 
-	hollywood {
+	/* devices contained in the hollywood chipset */
+	soc {
 		#address-cells = <1>;
 		#size-cells = <1>;
 		#interrupt-cells = <1>;
@@ -83,42 +91,42 @@
 		ranges = <0c000000 0c000000 00010000 
 			  0d000000 0d000000 00010000>;
 
-		vifb@0c002000 {
-			compatible = "nintendo,vifb";
+		video@0c002000 {
+			compatible = "nintendo,hollywood-video";
 			reg = <0c002000 100>;
 			interrupts = <08>;
-			interrupt-parent = <&hollywood_pic>;
+			interrupt-parent = <&pic>;
 			xfb-start = <01698000>; /* end-of-ram - xfb-size */
 			xfb-size = <168000>;
 		};
 
-		rsw@0c003000 {
-			compatible = "nintendo,rsw";
+		resetswitch@0c003000 {
+			compatible = "nintendo,hollywood-resetswitch";
 			reg = <0c003000 4>;
 			interrupts = <01>;
-			interrupt-parent = <&hollywood_pic>;
+			interrupt-parent = <&pic>;
 		};
 
-		ai@0c005000 {
-			compatible = "nintendo,ai";
+		audio@0c005000 {
+			compatible = "nintendo,hollywood-audio";
 			reg = <0c005000 200	/* DSP */
 			       0d006c00 20>;	/* AI */
 			interrupts = <06>;
-			interrupt-parent = <&hollywood_pic>;
+			interrupt-parent = <&pic>;
 		};
 
 		starlet-ipc@0d000000 {
 			compatible = "nintendo,starlet-ipc";
 			reg = <0d000000 40>;
 			interrupts = <0e>;
-			interrupt-parent = <&hollywood_pic>;
+			interrupt-parent = <&pic>;
 		};
 
-		si@0d006400 {
-			compatible = "nintendo,si";
+		serial@0d006400 {
+			compatible = "nintendo,hollywood-serial";
 			reg = <0d006400 100>;
 			interrupts = <03>;
-			interrupt-parent = <&hollywood_pic>;
+			interrupt-parent = <&pic>;
 		};
 	};
 };

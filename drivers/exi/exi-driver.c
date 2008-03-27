@@ -21,13 +21,13 @@
 #include <linux/module.h>
 #include <linux/of_platform.h>
 
-#define DRV_MODULE_NAME	"exi-driver"
+#define DRV_MODULE_NAME	"exi"
 #define DRV_DESCRIPTION	"Nintendo GameCube EXternal Interface (EXI) driver"
 #define DRV_AUTHOR	"Arthur Othieno <a.othieno@bluewin.ch>, " \
 			"Todd Jeffreys <todd@voidpointer.org>, " \
 			"Albert Herranz"
 
-static char exi_driver_version[] = "4.0-isobel";
+static char exi_driver_version[] = "4.0i";
 
 #define drv_printk(level, format, arg...) \
 	printk(level DRV_MODULE_NAME ": " format , ## arg)
@@ -493,9 +493,13 @@ static int __init exi_layer_init(void)
         drv_printk(KERN_INFO, "%s - version %s\n", DRV_DESCRIPTION,
 		   exi_driver_version);
 
-	np = of_find_compatible_node(NULL, NULL, "nintendo,exi");
-	if (!np)
-		return -ENODEV;
+	np = of_find_compatible_node(NULL, NULL, "nintendo,flipper-exi");
+	if (!np) {
+		np = of_find_compatible_node(NULL, NULL,
+					     "nintendo,hollywood-exi");
+		if (!np)
+			return -ENODEV;
+	}
 
 	retval = of_address_to_resource(np, 0, &res);
 	if (retval) {

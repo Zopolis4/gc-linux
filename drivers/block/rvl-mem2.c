@@ -368,7 +368,7 @@ static int __exit mem2_of_remove(struct of_device *odev)
 }
 
 static struct of_device_id mem2_of_match[] = {
-	{ .compatible = "nintendo,mem2" },
+	{ .compatible = "nintendo,hollywood-mem2" },
 	{ },
 };
 

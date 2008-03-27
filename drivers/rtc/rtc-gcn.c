@@ -25,7 +25,7 @@
 #define DRV_AUTHOR        "Torben Nielsen, " \
 			  "Albert Herranz"
 
-static char gcnrtc_driver_version[] = "1.0-isobel";
+static char gcnrtc_driver_version[] = "1.0i";
 
 #define drv_printk(level, format, arg...) \
 	printk(level DRV_MODULE_NAME ": " format , ## arg)

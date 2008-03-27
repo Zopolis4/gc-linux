@@ -65,7 +65,6 @@ config WII
 	 More information at: <http://gc-linux.sourceforge.net/>
 
 config TSI108_BRIDGE
-config TSI108_BRIDGE
 	bool
 	depends on MPC7448HPC2 || PPC_HOLLY
 	select PCI

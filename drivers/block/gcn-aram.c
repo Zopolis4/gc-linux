@@ -31,7 +31,7 @@
 #define DRV_AUTHOR      "Todd Jeffreys <todd@voidpointer.org>, " \
 			"Albert Herranz"
 
-static char aram_driver_version[] = "4.0";
+static char aram_driver_version[] = "4.0i";
 
 #define drv_printk(level, format, arg...) \
 	printk(level DRV_MODULE_NAME ": " format , ## arg)
@@ -583,7 +583,7 @@ static int aram_of_shutdown(struct of_device *odev)
 
 
 static struct of_device_id aram_of_match[] = {
-	{ .compatible = "nintendo,aram" },
+	{ .compatible = "nintendo,flipper-auxram" },
 	{ },
 };
 	

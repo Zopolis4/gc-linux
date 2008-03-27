@@ -36,7 +36,7 @@
 #define DRV_AUTHOR           "Stefan Esser <se@nopiracy.de>, " \
 			     "Albert Herranz"
 
-static char rsw_driver_version[] = "1.0-isobel";
+static char rsw_driver_version[] = "1.0i";
 
 #define drv_printk(level, format, arg...) \
 	printk(level DRV_MODULE_NAME ": " format , ## arg)
@@ -282,7 +282,8 @@ static int __exit rsw_of_remove(struct of_device *odev)
 }
 
 static struct of_device_id rsw_of_match[] = {
-	{.compatible = "nintendo,rsw"},
+	{.compatible = "nintendo,flipper-resetswitch"},
+	{.compatible = "nintendo,hollywood-resetswitch"},
 	{},
 };
 

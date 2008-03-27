@@ -36,7 +36,7 @@
 			 "Steven Looman, " \
 			 "Albert Herranz"
 
-static char ai_driver_version[] = "1.0-isobel";
+static char ai_driver_version[] = "1.0i";
 
 #define drv_printk(level, format, arg...) \
         printk(level DRV_MODULE_NAME ": " format , ## arg)
@@ -556,7 +556,8 @@ static int ai_of_shutdown(struct of_device *odev)
 
 
 static struct of_device_id ai_of_match[] = {
-	{ .compatible = "nintendo,ai" },
+	{ .compatible = "nintendo,flipper-audio" },
+	{ .compatible = "nintendo,hollywood-audio" },
 	{ },
 };
 

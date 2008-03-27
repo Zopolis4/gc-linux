@@ -42,7 +42,7 @@
 #define DRV_AUTHOR       "Steven Looman <steven@krx.nl>, " \
 			 "Albert Herranz"
 
-static char si_driver_version[] = "1.0-isobel";
+static char si_driver_version[] = "1.0i";
 
 #define drv_printk(level, format, arg...) \
         printk(level DRV_MODULE_NAME ": " format , ## arg)
@@ -685,7 +685,8 @@ static int __exit si_of_remove(struct of_device *odev)
 }
 
 static struct of_device_id si_of_match[] = {
-        { .compatible = "nintendo,si" },
+        { .compatible = "nintendo,flipper-serial" },
+        { .compatible = "nintendo,hollywood-serial" },
         { },
 };
 

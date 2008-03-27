@@ -37,7 +37,7 @@ MODULE_AUTHOR(DRV_AUTHOR);
 MODULE_DESCRIPTION(DRV_DESCRIPTION);
 MODULE_LICENSE("GPL");
 
-static char mic_driver_version[] = "0.1-isobel";
+static char mic_driver_version[] = "0.1i";
 
 #define mic_printk(level, format, arg...) \
 	printk(level DRV_MODULE_NAME ": " format , ## arg)

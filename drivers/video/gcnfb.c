@@ -34,13 +34,12 @@
 #include "gcngx.h"
 
 #define DRV_MODULE_NAME   "gcn-vifb"
-#define DRV_DESCRIPTION   "Nintendo GameCube/Wii Video Interface (VI)" \
-			  " frame buffer driver"
+#define DRV_DESCRIPTION   "Nintendo GameCube/Wii Video Interface (VI) driver"
 #define DRV_AUTHOR        "Michael Steil <mist@c64.org>, " \
                           "Todd Jeffreys <todd@voidpointer.org>, " \
 			  "Albert Herranz"
 
-static char vifb_driver_version[] = "1.0-isobel";
+static char vifb_driver_version[] = "1.0i";
 
 #define drv_printk(level, format, arg...) \
         printk(level DRV_MODULE_NAME ": " format , ## arg)
@@ -938,7 +937,7 @@ static int __devinit vifb_setup(char *options)
 	if (!options || !*options)
 		return 0;
 
-	drv_printk(KERN_DEBUG, "options = %s\n", options);
+	drv_printk(KERN_DEBUG, "options: %s\n", options);
 
 	while ((this_opt = strsep(&options, ",")) != NULL) {
 		if (!*this_opt)
@@ -1010,7 +1009,8 @@ static int __exit vifb_of_remove(struct of_device *odev)
 
 
 static struct of_device_id vifb_of_match[] = {
-	{ .compatible = "nintendo,vifb", },
+	{ .compatible = "nintendo,flipper-video", },
+	{ .compatible = "nintendo,hollywood-video", },
 	{ },
 };
 
