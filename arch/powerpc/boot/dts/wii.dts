@@ -120,6 +120,11 @@
 			reg = <0d000000 40>;
 			interrupts = <0e>;
 			interrupt-parent = <&pic>;
+
+		};
+
+		starlet-sd {
+			compatible = "nintendo,starlet-sd";
 		};
 
 		serial@0d006400 {
