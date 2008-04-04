@@ -127,6 +127,22 @@ config GAMECUBE_SD
 	  To compile this driver as a module, choose M here: the
 	  module will be called gcn-sd.
 
+config WII_SD
+	tristate "Nintendo Wii front slot MMC/SD"
+	depends on WII
+	help
+	  This enables support for MMC/SD cards using the front slot of
+	  the Nintendo Wii.
+	  
+	  You probably want to compile FAT support, and the required
+	  codepages, or mount will complain. See Filesystems -> DOS/FAT/NT
+	  filesystems and Filesystems -> Native Language Support
+
+	  Say Y if you want to include this driver in the kernel.
+	  
+	  To compile this driver as a module, choose M here: the
+	  module will be called rvl-stsd.
+
 config WII_MEM2
 	tristate "Nintendo Wii MEM2"
 	depends on WII
