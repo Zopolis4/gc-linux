@@ -22,11 +22,7 @@
 #include <linux/spinlock.h>
 #include <linux/delay.h>
 #include <linux/reboot.h>
-
-#ifdef CONFIG_KEXEC
 #include <linux/kexec.h>
-#endif
-
 
 /* for flipper hardware registers */
 #include "flipper-pic.h"
@@ -175,8 +171,10 @@ static irqreturn_t rsw_handler(int irq, void *data)
 }
 
 /*
- * Initializes the driver.
+ * Setup routines.
+ *
  */
+
 static int rsw_init(struct rsw_drvdata *drvdata, struct resource *mem, int irq)
 {
 	int retval;
@@ -197,9 +195,6 @@ static int rsw_init(struct rsw_drvdata *drvdata, struct resource *mem, int irq)
 	return retval;
 }
 
-/*
- * Deinitializes the driver.
- */
 static void rsw_exit(struct rsw_drvdata *drvdata)
 {
 	free_irq(drvdata->irq, drvdata);
@@ -210,8 +205,10 @@ static void rsw_exit(struct rsw_drvdata *drvdata)
 }
 
 /*
- * Common probe function for a reset button device.
+ * Driver model helper routines.
+ *
  */
+
 static int rsw_do_probe(struct device *dev, struct resource *mem, int irq)
 {
 	struct rsw_drvdata *drvdata;
@@ -233,9 +230,6 @@ static int rsw_do_probe(struct device *dev, struct resource *mem, int irq)
 	return retval;
 }
 
-/*
- * Common remove function for a reset button device.
- */
 static int rsw_do_remove(struct device *dev)
 {
 	struct rsw_drvdata *drvdata = dev_get_drvdata(dev);
@@ -254,9 +248,6 @@ static int rsw_do_remove(struct device *dev)
  *
  */
 
-/*
- * Driver model probe function.
- */
 static int __init rsw_of_probe(struct of_device *odev,
 			       const struct of_device_id *match)
 {
@@ -273,9 +264,6 @@ static int __init rsw_of_probe(struct of_device *odev,
 			    &mem, irq_of_parse_and_map(odev->node, 0));
 }
 
-/*
- * Driver model remove function.
- */
 static int __exit rsw_of_remove(struct of_device *odev)
 {
 	return rsw_do_remove(&odev->dev);
@@ -298,9 +286,11 @@ static struct of_platform_driver rsw_of_driver = {
 };
 
 /*
- * Module initialization function.
+ * Kernel module hooks.
+ *
  */
-static int rsw_init_module(void)
+
+static int __init rsw_init_module(void)
 {
 	drv_printk(KERN_INFO, "%s - version %s\n", DRV_DESCRIPTION,
 		   rsw_driver_version);
@@ -308,10 +298,7 @@ static int rsw_init_module(void)
 	return of_register_platform_driver(&rsw_of_driver);
 }
 
-/*
- * Module deinitialization function.
- */
-static void rsw_exit_module(void)
+static void __exit rsw_exit_module(void)
 {
 	of_unregister_platform_driver(&rsw_of_driver);
 }
