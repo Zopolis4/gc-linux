@@ -1267,9 +1267,9 @@ setup_cpm_bat:
 #ifdef CONFIG_PPC_EARLY_DEBUG_USBGECKO
 setup_usbgecko_bat:
 	/* prepare a BAT for early io */
-	lis	r8, 0x0c00	/* DBAT3 for IO mem */
+	lis	r8, 0x0c00
 	ori	r8, r8, 0x002a	/* uncached, guarded ,rw */
-	lis	r11, 0xcc00	/* DBAT3 for IO mem */
+	lis	r11, 0xcc00
 	ori	r11, r11, 0x3	/* 128K */
 #ifdef CONFIG_WII
 	oris	r8, r8, 0x0100

@@ -23,9 +23,6 @@ static struct of_device_id wii_of_bus[] = {
 	{ },
 };
 
-/*
- *
- */
 static int __init wii_device_probe(void)
 {
 	struct device_node *np;

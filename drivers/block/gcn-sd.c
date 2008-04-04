@@ -1,7 +1,7 @@
 /*
  * drivers/block/gcn-sd.c
  *
- * MMC/SD card block driver for the Nintendo GameCube
+ * MMC/SD card block driver for the Nintendo GameCube/Wii
  * Copyright (C) 2004-2008 The GameCube Linux Team
  * Copyright (C) 2004,2005 Rob Reylink
  * Copyright (C) 2005 Todd Jeffreys
@@ -77,10 +77,6 @@
 #define DRV_AUTHOR      "Rob Reylink, " \
 			"Todd Jeffreys, " \
                         "Albert Herranz"
-
-MODULE_AUTHOR(DRV_AUTHOR);
-MODULE_DESCRIPTION(DRV_DESCRIPTION);
-MODULE_LICENSE("GPL");
 
 static char sd_driver_version[] = "4.1i";
 
@@ -176,8 +172,6 @@ static const unsigned int tacc_mant[] = {
 
 #define KERNEL_SECTOR_SHIFT     9
 #define KERNEL_SECTOR_SIZE      (1 << KERNEL_SECTOR_SHIFT)	/*512 */
-
-unsigned long unclean_slots = 0;
 
 enum {
 	__SD_MEDIA_CHANGED = 0,
@@ -1736,4 +1730,8 @@ static void __exit sd_exit_module(void)
 
 module_init(sd_init_module);
 module_exit(sd_exit_module);
+
+MODULE_AUTHOR(DRV_AUTHOR);
+MODULE_DESCRIPTION(DRV_DESCRIPTION);
+MODULE_LICENSE("GPL");
 

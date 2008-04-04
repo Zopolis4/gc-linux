@@ -261,8 +261,7 @@ void __init ug_udbg_init(void)
 #ifdef CONFIG_PPC_EARLY_DEBUG_USBGECKO
 
 /*
- * USB Gecko early udbg support initialization.
- * The USB Gecko must be inserted in memcard slot B for early debugging.
+ * USB Gecko early debug support initialization for udbg.
  *
  */
 void __init udbg_init_debug_usbgecko(void)

@@ -27,11 +27,11 @@
         printk(level DRV_MODULE_NAME ": " format , ## arg)
 
 
-static struct irq_host *flipper_irq_host;
-
 /*
+ * IRQ chip hooks.
  *
  */
+
 static void flipper_pic_mask_and_ack(unsigned int virq)
 {
 	int irq = virq_to_hw(virq);
@@ -41,9 +41,6 @@ static void flipper_pic_mask_and_ack(unsigned int virq)
 	set_bit(irq, io_base + FLIPPER_ICR);
 }
 
-/*
- *
- */
 static void flipper_pic_ack(unsigned int virq)
 {
 	int irq = virq_to_hw(virq);
@@ -52,9 +49,6 @@ static void flipper_pic_ack(unsigned int virq)
 	set_bit(irq, io_base + FLIPPER_ICR);
 }
 
-/*
- *
- */
 static void flipper_pic_mask(unsigned int virq)
 {
 	int irq = virq_to_hw(virq);
@@ -63,9 +57,6 @@ static void flipper_pic_mask(unsigned int virq)
 	clear_bit(irq, io_base + FLIPPER_IMR);
 }
 
-/*
- *
- */
 static void flipper_pic_unmask(unsigned int virq)
 {
 	int irq = virq_to_hw(virq);
@@ -74,9 +65,7 @@ static void flipper_pic_unmask(unsigned int virq)
 	set_bit(irq, io_base + FLIPPER_IMR);
 }
 
-/*
- *
- */
+
 static struct irq_chip flipper_pic = {
 	.typename	= "flipper-pic",
 	.ack		= flipper_pic_ack,
@@ -86,8 +75,12 @@ static struct irq_chip flipper_pic = {
 };
 
 /*
+ * IRQ host hooks.
  *
  */
+
+static struct irq_host *flipper_irq_host;
+
 static int flipper_pic_map(struct irq_host *h, unsigned int virq,
 			   irq_hw_number_t hwirq)
 {
@@ -96,18 +89,12 @@ static int flipper_pic_map(struct irq_host *h, unsigned int virq,
 	return 0;
 }
 
-/*
- *
- */
 static void flipper_pic_unmap(struct irq_host *h, unsigned int irq)
 {
 	set_irq_chip_data(irq, NULL);
 	set_irq_chip(irq, NULL);
 }
 
-/*
- * 
- */
 static int flipper_pic_match(struct irq_host *h, struct device_node *np)
 {
 	return 1;
@@ -121,8 +108,10 @@ static struct irq_host_ops flipper_irq_host_ops = {
 };
 
 /*
+ * Platform hooks.
  *
  */
+
 struct irq_host * __init flipper_pic_init(struct device_node *np)
 {
 	struct irq_host *irq_host;
@@ -156,9 +145,6 @@ struct irq_host * __init flipper_pic_init(struct device_node *np)
 	return irq_host;
 }
 
-/*
- *
- */
 unsigned int flipper_pic_get_irq(void)
 {
 	void __iomem *io_base = flipper_irq_host->host_data;
@@ -175,8 +161,10 @@ unsigned int flipper_pic_get_irq(void)
 }
 
 /*
+ * Probe function.
  *
  */
+
 void __init flipper_pic_probe(void)
 {
 	struct device_node *np;
@@ -193,12 +181,12 @@ void __init flipper_pic_probe(void)
 }
 
 /*
- * Misc functions provided by the flipper chipset.
+ * Misc functions related to the flipper chipset.
  *
  */
 
 /*
- *
+ * Resets the platform.
  */
 void flipper_platform_reset(void)
 {
@@ -211,7 +199,7 @@ void flipper_platform_reset(void)
 }
 
 /*
- * Tells if the reset button is pressed.
+ * Returns non-zero if the reset button is pressed.
  */
 int flipper_is_reset_button_pressed(void)
 {

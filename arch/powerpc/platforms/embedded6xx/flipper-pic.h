@@ -15,6 +15,12 @@
 #ifndef __FLIPPER_PIC_H
 #define __FLIPPER_PIC_H
 
+#ifdef CONFIG_WII
+#define FLIPPER_NR_IRQS         (15)
+#else
+#define FLIPPER_NR_IRQS         (14)
+#endif
+
 /*
  * Each interrupt has a corresponding bit in both
  * the Interrupt Cause (ICR) and Interrupt Mask (IMR) registers.
@@ -23,12 +29,6 @@
  * the corresponding bit in IMR. ACK'ing a request simply involves
  * asserting the corresponding bit in ICR.
  */
-#ifdef CONFIG_WII
-#define FLIPPER_NR_IRQS         (15)
-#else
-#define FLIPPER_NR_IRQS         (14)
-#endif
-
 #define FLIPPER_ICR             0x00
 #define FLIPPER_ICR_RSS		(1<<16) /* reset switch state */
 

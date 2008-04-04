@@ -74,7 +74,7 @@
 	};
 
 	/* devices contained int the flipper chipset */
-        soc {
+	soc {
 		#address-cells = <1>;
 		#size-cells = <1>;
 		#interrupt-cells = <1>;
