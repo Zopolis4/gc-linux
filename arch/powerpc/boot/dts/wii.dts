@@ -123,8 +123,16 @@
 
 		};
 
+		starlet-es {
+			compatible = "nintendo,starlet-es";
+		};
+
 		starlet-sd {
 			compatible = "nintendo,starlet-sd";
+		};
+
+		starlet-keyboard {
+			compatible = "nintendo,starlet-keyboard";
 		};
 
 		serial@0d006400 {
