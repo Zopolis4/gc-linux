@@ -649,7 +649,7 @@ static int __stsd_inout(struct stsd_host *host, int write,
 	/*
 	 * REVISIT maybe use a dma pool or small buffer for query data
 	 */
-	query = starlet_kzalloc(sizeof(*query), GFP_KERNEL);
+	query = starlet_kzalloc(sizeof(*query), GFP_ATOMIC);
 	if (!query)
 		return -ENOMEM;
 
@@ -683,7 +683,7 @@ static int __stsd_inout(struct stsd_host *host, int write,
  *
  */
 
-static u32 stsd_small_buf[1]
+static u32 stsd_small_buf[L1_CACHE_BYTES / sizeof(u32)]
 		    __attribute__ ((aligned(STARLET_IPC_DMA_ALIGN + 1)));
 static const size_t stsd_small_buf_size = sizeof(stsd_small_buf_size);
 static DEFINE_MUTEX(stsd_small_buf_lock);
@@ -693,9 +693,11 @@ static u32 *stsd_small_buf_get(void)
 	u32 *buf;
 
 	if (!mutex_trylock(&stsd_small_buf_lock))
-		buf = starlet_kzalloc(stsd_small_buf_size, GFP_KERNEL);
-	else
+		buf = starlet_kzalloc(stsd_small_buf_size, GFP_NOIO);
+	else {
+		memset(stsd_small_buf, 0, stsd_small_buf_size);
 		buf = stsd_small_buf;
+	}
 
 	return buf;
 }
@@ -938,11 +940,11 @@ static int stsd_send_command(struct stsd_host *host,
 	if (buf_len > reply_len)
 		return -EINVAL;
 	
-	cmd = starlet_kzalloc(sizeof(*cmd), GFP_KERNEL);
+	cmd = starlet_kzalloc(sizeof(*cmd), GFP_NOIO);
 	if (!cmd)
 		return -ENOMEM;
 
-	reply = starlet_kzalloc(reply_len, GFP_KERNEL);
+	reply = starlet_kzalloc(reply_len, GFP_NOIO);
 	if (!reply) {
 		starlet_kfree(cmd);
 		return -ENOMEM;
