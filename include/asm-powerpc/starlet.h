@@ -25,6 +25,8 @@
 
 #define STARLET_IPC_DMA_ALIGN   0x1f /* 32 bytes */
 
+struct starlet_ipc_request;
+
 struct starlet_ipc_device {
 	unsigned long flags;
 
@@ -39,8 +41,9 @@ struct starlet_ipc_device {
 	struct list_head pending_list;
 	unsigned long nr_pending;
 
-	struct device *dev;
+	struct starlet_ipc_request *req; /* for requests causing a ios reboot */
 
+	struct device *dev;
 };
 
 struct starlet_iovec {
@@ -48,7 +51,6 @@ struct starlet_iovec {
 	u32 dma_len;
 };
 
-struct starlet_ipc_request;
 typedef int (*starlet_ipc_callback_t)(struct starlet_ipc_request *req);
 
 struct starlet_ipc_request {
@@ -123,6 +125,7 @@ extern int starlet_ios_ioctl_nowait(int fd, int request,
 				    void *obuf, size_t olen,
 				    starlet_ipc_callback_t callback,
 				    void *arg);
+extern void starlet_ios_ioctl_complete(struct starlet_ipc_request *req);
 
 extern int starlet_ios_ioctlv(int fd, int request,
 			      unsigned int nents_in,
@@ -136,6 +139,11 @@ extern int starlet_ios_ioctlv_nowait(int fd, int request,
 				     struct scatterlist *sgl_out,
 				     starlet_ipc_callback_t callback,
 				     void *arg);
+extern int starlet_ios_ioctlv_and_reboot(int fd, int request,
+					 unsigned int nents_in,
+					 struct scatterlist *sgl_in,
+					 unsigned int nents_out,
+					 struct scatterlist *sgl_out);
 extern void starlet_ios_ioctlv_complete(struct starlet_ipc_request *req);
 
 /* from starlet-stm.c */

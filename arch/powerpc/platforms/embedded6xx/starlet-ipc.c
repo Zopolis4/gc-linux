@@ -12,7 +12,7 @@
  *
  */
 
-#undef DEBUG
+#define DEBUG
 
 #define DBG(fmt, arg...)	pr_debug(fmt, ##arg)
 
@@ -68,6 +68,7 @@ static char starlet_ipc_driver_version[] = "0.2i";
 /* starlet_ipc_device flags */
 enum {
 	__TX_INUSE = 0,		/* tx buffer in use flag */
+	__REBOOT,		/* request causes IOS reboot */
 };
 
 /*
@@ -212,8 +213,10 @@ static void starlet_ipc_quiesce(struct starlet_ipc_device *ipc_dev)
 
 static void starlet_ipc_debug_print_request(struct starlet_ipc_request *req)
 {
+#if 0
 	DBG("cmd=%x, result=%x, fd=%x, dma_addr=%p\n",
 	    req->cmd, req->result, req->fd, (void *)req->dma_addr);
+#endif
 }
 
 static struct starlet_ipc_request *
@@ -222,7 +225,7 @@ starlet_ipc_alloc_request(struct starlet_ipc_device *ipc_dev)
 	struct starlet_ipc_request *req;
 	dma_addr_t dma_addr;
 
-	req = dma_pool_alloc(ipc_dev->dma_pool, GFP_KERNEL, &dma_addr);
+	req = dma_pool_alloc(ipc_dev->dma_pool, GFP_NOIO, &dma_addr);
 	if (req) {
 		memset(req, 0, sizeof(*req));
 		req->ipc_dev = ipc_dev;
@@ -326,10 +329,21 @@ static int starlet_ipc_dispatch_tbei(struct starlet_ipc_device *ipc_dev)
 		ipc_dev->nr_pending--;
 	}
 	spin_unlock_irqrestore(&ipc_dev->list_lock, flags);
-	if (req)
+	if (req) {
 		starlet_ipc_start_request(req);
-	else
-		clear_bit(__TX_INUSE, &ipc_dev->flags);
+	} else {
+		if (!test_and_clear_bit(__TX_INUSE, &ipc_dev->flags)) {
+			/* we get two consecutive TBEIs on reboot */
+			if (test_and_clear_bit(__REBOOT, &ipc_dev->flags)) {
+				req = ipc_dev->req;
+				ipc_dev->req = NULL;
+				if (req) {
+					starlet_ipc_complete_request(req);
+					req->result = 0;
+				}
+			}
+		}
+	}
 
 	return IRQ_HANDLED;
 }
@@ -467,7 +481,7 @@ int starlet_ios_open(const char *pathname, int flags)
 	dma_addr_t dma_addr;
 	char *local_pathname = NULL;
 	size_t len;
-	int retval = -ENOMEM;
+	int error = -ENOMEM;
 
 	if (!ipc_dev)
 		return -ENODEV;
@@ -495,7 +509,7 @@ int starlet_ios_open(const char *pathname, int flags)
 		req->cmd = STARLET_IOS_OPEN;
 		req->open.pathname = dma_addr;	/* bus address */
 		req->open.mode = flags;
-		retval = starlet_ipc_call(req);
+		error = starlet_ipc_call(req);
 
 		dma_unmap_single(ipc_dev->dev, dma_addr, len, DMA_TO_DEVICE);
 
@@ -506,7 +520,9 @@ int starlet_ios_open(const char *pathname, int flags)
 
 		starlet_ipc_free_request(req);
 	}
-	return retval;
+	if (error < 0)
+		DBG("%s: error=%d (%x)\n", __func__, error, error);
+	return error;
 }
 EXPORT_SYMBOL_GPL(starlet_ios_open);
 
@@ -517,7 +533,7 @@ int starlet_ios_close(int fd)
 {
 	struct starlet_ipc_device *ipc_dev = starlet_ipc_get_device();
 	struct starlet_ipc_request *req;
-	int retval = -ENOMEM;
+	int error = -ENOMEM;
 
 	if (!ipc_dev)
 		return -ENODEV;
@@ -526,10 +542,10 @@ int starlet_ios_close(int fd)
 	if (req) {
 		req->cmd = STARLET_IOS_CLOSE;
 		req->fd = fd;
-		retval = starlet_ipc_call(req);
+		error = starlet_ipc_call(req);
 		starlet_ipc_free_request(req);
 	}
-	return retval;
+	return error;
 }
 EXPORT_SYMBOL_GPL(starlet_ios_close);
 
@@ -560,11 +576,13 @@ starlet_ios_ioctl_dma_prepare(int fd, int request,
 		req->ioctl.obuf = obuf;
 		req->ioctl.olen = olen;
 
+#if 0
 		DBG("%s: fd=%d, request=%x,"
 		    " ibuf=%x, ilen=%u, obuf=%x, olen=%u\n" ,  __func__,
 				req->fd, req->ioctl.request,
 				req->ioctl.ibuf, req->ioctl.ilen,
 				req->ioctl.obuf, req->ioctl.olen);
+#endif
 	}
 	return req;
 
@@ -586,15 +604,17 @@ int starlet_ios_ioctl_dma(int fd, int request,
 			  dma_addr_t obuf, size_t olen)
 {
 	struct starlet_ipc_request *req;
-	int retval = -ENOMEM;
+	int error = -ENOMEM;
 
 	req = starlet_ios_ioctl_dma_prepare(fd, request, ibuf, ilen, obuf, olen);
 	if (req) {
-		retval = starlet_ipc_call(req);
+		error = starlet_ipc_call(req);
 		starlet_ios_ioctl_dma_complete(req);
 		starlet_ipc_free_request(req);
 	}
-	return retval;
+	if (error)
+		DBG("%s: error=%d (%x)\n", __func__, error, error);
+	return error;
 }
 EXPORT_SYMBOL_GPL(starlet_ios_ioctl_dma);
 
@@ -607,14 +627,14 @@ int starlet_ios_ioctl_dma_nowait(int fd, int request,
 				 starlet_ipc_callback_t callback, void *arg)
 {
 	struct starlet_ipc_request *req;
-	int retval = -ENOMEM;
+	int error = -ENOMEM;
 
 	req = starlet_ios_ioctl_dma_prepare(fd, request, ibuf, ilen, obuf, olen);
 	if (req) {
 		starlet_ipc_call_nowait(req, callback, arg);
-		retval = 0;
+		error = 0;
 	}
-	return retval;
+	return error;
 }
 EXPORT_SYMBOL_GPL(starlet_ios_ioctl_dma_nowait);
 
@@ -654,7 +674,7 @@ starlet_ios_ioctl_prepare(int fd, int request,
 /**
  *
  */
-static void starlet_ios_ioctl_complete(struct starlet_ipc_request *req)
+void starlet_ios_ioctl_complete(struct starlet_ipc_request *req)
 {
 	struct starlet_ipc_device *ipc_dev = starlet_ipc_get_device();
 	dma_addr_t ibuf_ba, obuf_ba;
@@ -680,15 +700,17 @@ int starlet_ios_ioctl(int fd, int request,
 		      void *obuf, size_t olen)
 {
 	struct starlet_ipc_request *req;
-	int retval = -ENOMEM;
+	int error = -ENOMEM;
 
 	req = starlet_ios_ioctl_prepare(fd, request, ibuf, ilen, obuf, olen);
 	if (req) {
-		retval = starlet_ipc_call(req);
+		error = starlet_ipc_call(req);
 		starlet_ios_ioctl_complete(req);
 		starlet_ipc_free_request(req);
 	}
-	return retval;
+	if (error < 0)
+		DBG("%s: error=%d (%x)\n", __func__, error, error);
+	return error;
 }
 EXPORT_SYMBOL_GPL(starlet_ios_ioctl);
 
@@ -701,14 +723,14 @@ int starlet_ios_ioctl_nowait(int fd, int request,
 			     starlet_ipc_callback_t callback, void *arg)
 {
 	struct starlet_ipc_request *req;
-	int retval = -ENOMEM;
+	int error = -ENOMEM;
 
 	req = starlet_ios_ioctl_prepare(fd, request, ibuf, ilen, obuf, olen);
 	if (req) {
 		starlet_ipc_call_nowait(req, callback, arg);
-		retval = 0;
+		error = 0;
 	}
-	return retval;
+	return error;
 }
 EXPORT_SYMBOL_GPL(starlet_ios_ioctl_nowait);
 
@@ -741,7 +763,7 @@ starlet_ios_ioctlv_prepare(int fd, int request,
 	nents  = nents_in + nents_out;
 	if (nents > 0) {
 		iovec_size = nents * sizeof(*iovec);
-		iovec = starlet_kzalloc(iovec_size, GFP_KERNEL);
+		iovec = starlet_kzalloc(iovec_size, GFP_NOIO);
 		if (!iovec)
 			return NULL;
 	} else {
@@ -789,12 +811,13 @@ starlet_ios_ioctlv_prepare(int fd, int request,
 		req->ioctlv.argc_out = nents_out;
 		req->ioctlv.iovec_da = iovec_da;
 
+#if 0
 		DBG("%s: fd=%d, request=%d,"
 		    " argc_in=%u, argc_out=%u, iovec_da=%08x\n" ,  __func__,
 				req->fd, req->ioctlv.request,
 				req->ioctlv.argc_in, req->ioctlv.argc_out,
 				req->ioctlv.iovec_da);
-
+#endif
 	} else {
 		if (iovec)
 			starlet_kfree(iovec);
@@ -836,17 +859,19 @@ int starlet_ios_ioctlv(int fd, int request,
 		       struct scatterlist *sgl_out)
 {
 	struct starlet_ipc_request *req;
-	int retval = -ENOMEM;
+	int error = -ENOMEM;
 
 	req = starlet_ios_ioctlv_prepare(fd, request,
 					 nents_in, sgl_in,
 					 nents_out, sgl_out);
 	if (req) {
-		retval = starlet_ipc_call(req);
+		error = starlet_ipc_call(req);
 		starlet_ios_ioctlv_complete(req);
 		starlet_ipc_free_request(req);
 	}
-	return retval;
+	if (error < 0)
+		DBG("%s: error=%d (%x)\n", __func__, error, error);
+	return error;
 }
 EXPORT_SYMBOL_GPL(starlet_ios_ioctlv);
 
@@ -861,18 +886,49 @@ int starlet_ios_ioctlv_nowait(int fd, int request,
 			      starlet_ipc_callback_t callback, void *arg)
 {
 	struct starlet_ipc_request *req;
-	int retval = -ENOMEM;
+	int error = -ENOMEM;
 
 	req = starlet_ios_ioctlv_prepare(fd, request,
 					 nents_in, sgl_in,
 					 nents_out, sgl_out);
 	if (req) {
 		starlet_ipc_call_nowait(req, callback, arg);
-		retval = 0;
+		error = 0;
 	}
-	return retval;
+	return error;
 }
 EXPORT_SYMBOL_GPL(starlet_ios_ioctlv_nowait);
+
+/**
+ *
+ */
+int starlet_ios_ioctlv_and_reboot(int fd, int request,
+				  unsigned int nents_in,
+				  struct scatterlist *sgl_in,
+				  unsigned int nents_out,
+				  struct scatterlist *sgl_out)
+{
+	struct starlet_ipc_device *ipc_dev;
+	struct starlet_ipc_request *req;
+	int error = -ENOMEM;
+
+	req = starlet_ios_ioctlv_prepare(fd, request,
+					 nents_in, sgl_in,
+					 nents_out, sgl_out);
+	if (req) {
+		ipc_dev = req->ipc_dev;
+		ipc_dev->req = req;
+		set_bit(__REBOOT, &ipc_dev->flags);
+		error = starlet_ipc_call(req);
+		starlet_ios_ioctlv_complete(req);
+		starlet_ipc_free_request(req);
+	}
+	if (error < 0)
+		DBG("%s: error=%d (%x)\n", __func__, error, error);
+	return error;
+}
+EXPORT_SYMBOL_GPL(starlet_ios_ioctlv_and_reboot);
+
 
 
 /*
@@ -885,7 +941,7 @@ EXPORT_SYMBOL_GPL(starlet_ios_ioctlv_nowait);
  */
 static void starlet_ios_fixups(void)
 {
-	static u32 buf[7]
+	static u32 buf[8]
 	    __attribute__ ((aligned(STARLET_IPC_DMA_ALIGN + 1)));
 	struct scatterlist in[6], out[1];
 	int fd;
