@@ -22,7 +22,7 @@
 #include <linux/of_platform.h>
 
 #define DRV_MODULE_NAME	"exi"
-#define DRV_DESCRIPTION	"Nintendo GameCube EXternal Interface (EXI) driver"
+#define DRV_DESCRIPTION	"Nintendo GameCube/Wii EXternal Interface (EXI) driver"
 #define DRV_AUTHOR	"Arthur Othieno <a.othieno@bluewin.ch>, " \
 			"Todd Jeffreys <todd@voidpointer.org>, " \
 			"Albert Herranz"
