@@ -181,7 +181,7 @@ struct stsd_host {
 	struct stsd_transfer	*xfer;
 
 	struct task_struct	*io_thread;
-	struct mutex		io_mutex;
+//	struct mutex		io_mutex;
 
 	int fd;
 	struct device		*dev;
@@ -667,8 +667,8 @@ static int __stsd_inout(struct stsd_host *host, int write,
 	query->size = size;
 	query->buf = buf_b; /* data to starlet */
 
-	error = starlet_ios_ioctl(host->fd, request,
-				   query, sizeof(*query), buf_a, data_size);
+	error = starlet_ioctl(host->fd, request,
+				  query, sizeof(*query), buf_a, data_size);
 
 	starlet_kfree(query);
 
@@ -805,7 +805,7 @@ static int stsd_ioctl_small_read(struct stsd_host *host, int request,
 	if (!local_buf)
 		return -ENOMEM;
 
-	error = starlet_ios_ioctl(host->fd, request,
+	error = starlet_ioctl(host->fd, request,
 				   NULL, 0, local_buf, size);
 	if (!error)
 		memcpy(buf, local_buf, size);
@@ -830,7 +830,7 @@ static int stsd_ioctl_small_write(struct stsd_host *host, int request,
 		return -ENOMEM;
 
 	memcpy(local_buf, buf, size);
-	error = starlet_ios_ioctl(host->fd, request,
+	error = starlet_ioctl(host->fd, request,
 				   local_buf, size, NULL, 0);
 
 	stsd_small_buf_put(local_buf);
@@ -958,7 +958,7 @@ static int stsd_send_command(struct stsd_host *host,
 	if (opcode == MMC_SELECT_CARD && arg == 0)
 		cmd->rsptype = STSD_RSPTYPE_NONE;
 
-	error = starlet_ios_ioctl(host->fd, STSD_IOCTL_SENDCMD,
+	error = starlet_ioctl(host->fd, STSD_IOCTL_SENDCMD,
 				   cmd, sizeof(*cmd), reply, reply_len);
 	if (error) {
 		DBG("%s: error=%d (%08x)\n", __func__, error, error);
@@ -1047,8 +1047,14 @@ static int stsd_set_block_len(struct stsd_host *host, unsigned int len)
 static int stsd_welcome_card(struct stsd_host *host)
 {
 	int error;
+	int i;
 
-	error = stsd_reset_card(host);
+	/* reset the card, maybe several times before giving up */
+	for (i = 0; i < 3; i++) {
+		error = stsd_reset_card(host);
+		if (!error)
+			break;
+	}
 	if (error)
 		goto out;
 
@@ -1147,7 +1153,7 @@ static int stsd_do_block_transfer(struct stsd_host *host, int write,
 	cmd->dma_addr = xfer->dma_addr;
 	cmd->_unk1 = 1;
 
-	error = starlet_ios_ioctlv(host->fd, STSD_IOCTLV_READWRITE,
+	error = starlet_ioctlv(host->fd, STSD_IOCTLV_READWRITE,
 				    2, xfer->in, 1, xfer->out);
 
 	dma_unmap_single(xfer->host->dev,
@@ -1229,7 +1235,7 @@ static int stsd_io_thread(void *param)
 
         current->flags |= PF_NOFREEZE|PF_MEMALLOC;
 
-	mutex_lock(&host->io_mutex);
+//	mutex_lock(&host->io_mutex);
 	for(;;) {
 		req = NULL;
 		set_current_state(TASK_INTERRUPTIBLE);
@@ -1244,9 +1250,9 @@ static int stsd_io_thread(void *param)
 				set_current_state(TASK_RUNNING);
 				break;
 			}
-			mutex_unlock(&host->io_mutex);
+//			mutex_unlock(&host->io_mutex);
 			schedule();
-			mutex_lock(&host->io_mutex);
+//			mutex_lock(&host->io_mutex);
 			continue;
 		}
 		set_current_state(TASK_INTERRUPTIBLE);
@@ -1256,7 +1262,7 @@ static int stsd_io_thread(void *param)
 		end_queued_request(req, uptodate);
 		spin_unlock_irqrestore(&host->queue_lock, flags);
 	}
-	mutex_unlock(&host->io_mutex);
+//	mutex_unlock(&host->io_mutex);
 
 	return 0;
 }
@@ -1532,7 +1538,7 @@ static int stsd_init_io_thread(struct stsd_host *host)
 {
 	int result = 0;
 
-	mutex_init(&host->io_mutex);
+//	mutex_init(&host->io_mutex);
 	host->io_thread = kthread_run(stsd_io_thread, host, "ksdio");
 	if (IS_ERR(host->io_thread)) {
 		drv_printk(KERN_ERR, "error creating io thread\n");
@@ -1559,7 +1565,7 @@ static int stsd_init(struct stsd_host *host)
 	set_bit(__STSD_MEDIA_CHANGED, &host->flags);
 	host->f_max = 25000000; /* 25MHz */
 
-	host->fd = starlet_ios_open(stsd_dev_sdio_slot0, 0);
+	host->fd = starlet_open(stsd_dev_sdio_slot0, 0);
 	if (host->fd < 0) {
 		drv_printk(KERN_ERR, "unable to open starlet sd device\n");
 		return -ENODEV;
@@ -1604,7 +1610,7 @@ static void stsd_exit(struct stsd_host *host)
 	stsd_exit_xfer(host);
 	stsd_exit_blk_dev(host);
 	if (host->fd >= 0)
-		starlet_ios_close(host->fd);
+		starlet_close(host->fd);
 	host->fd = -1;
 
 }
