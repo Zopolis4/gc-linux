@@ -19,7 +19,21 @@
 	#size-cells = <1>;
 
 	chosen {
-		bootargs = "root=/dev/ram0 video=gcnfb:tv=auto ip=on force_keyboard_port=4"; 
+
+/*
+ * ramdisk command-line example
+ */
+/*		bootargs = "root=/dev/ram0 video=gcnfb:tv=NTSC ip=on force_keyboard_port=4"; */
+
+/*
+ * nfsroot command-line example
+ */
+/*		bootargs = "root=/dev/nfs nfsroot=192.168.001.253:/nfsroot/cube.etch ip=on video=gcnfb:tv=NTSC force_keyboard_port=4"; */
+
+/*
+ * root filesystem on second partition of front SD card example
+ */
+		bootargs = "root=/dev/rvlsda2 video=gcnfb:tv=NTSC force_keyboard_port=4 placeholder_for_additional_kernel_options_targetted_at_hexedit_lovers";
 		linux,crashkernel-base = <0>;
 		linux,crashkernel-size = <0>;
 		linux,stdout-path = "/exi@0d006800/usbgecko@0d006814";
@@ -61,7 +75,7 @@
 	/* MEM2 memory, discontiguous */
 	mem2 {
 		compatible = "nintendo,hollywood-mem2";
-		reg = <10000000 3400000>; /* 52M of MEM2 RAM */
+		reg = <10000000 33e0000>; /* ~51.8M of MEM2 RAM */
 	};
 
 	/* External Interface bus */
@@ -89,7 +103,8 @@
 		compatible = "nintendo,hollywood";
 		clock-frequency = <e7be2c0>; /* 243MHz */
 		ranges = <0c000000 0c000000 00010000 
-			  0d000000 0d000000 00010000>;
+			  0d000000 0d000000 00010000
+			  133e0000 133e0000 00020000>;
 
 		video@0c002000 {
 			compatible = "nintendo,hollywood-video";
@@ -117,7 +132,8 @@
 
 		starlet-ipc@0d000000 {
 			compatible = "nintendo,starlet-ipc";
-			reg = <0d000000 40>;
+			reg = <0d000000 40	 /* IPC */
+			       133e0000 20000>; /* MEM2 ioh 128K */
 			interrupts = <0e>;
 			interrupt-parent = <&pic>;
 
@@ -133,6 +149,10 @@
 
 		starlet-keyboard {
 			compatible = "nintendo,starlet-keyboard";
+		};
+
+		starlet-hcd {
+			compatible = "nintendo,starlet-hcd";
 		};
 
 		serial@0d006400 {
