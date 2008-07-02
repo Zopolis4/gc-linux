@@ -60,6 +60,7 @@ config WII
 	depends on EMBEDDED6xx
 	select GAMECUBE_COMMON
 	select WANT_DEVICE_TREE
+	select PPC_LIB_RHEAP
 	help
 	 Select WII if configuring for the Nintendo Wii.
 	 More information at: <http://gc-linux.sourceforge.net/>
