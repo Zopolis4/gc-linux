@@ -42,11 +42,11 @@ static void starlet_stm_common_restart(int request, u32 value)
 	size_t len = sizeof(starlet_stm_buf);
 	int fd;
 
-	fd = starlet_ios_open(dev_stm_immediate, 0);
+	fd = starlet_open(dev_stm_immediate, 0);
 	if (fd >= 0) {
 		*buf = value;
-		starlet_ios_ioctl(fd, request, buf, len, buf, len);
-		starlet_ios_close(fd);
+		starlet_ioctl(fd, request, buf, len, buf, len);
+		starlet_close(fd);
 	}
 }
 
