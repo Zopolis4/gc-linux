@@ -221,8 +221,7 @@ static int stkbd_dispatch_ipc_request(struct starlet_ipc_request *req)
 	struct stkbd_event *event;
 	int error;
 
-	/* complete and free the ipc request, retrieving our data first */
-	starlet_ios_ioctl_complete(req);
+	/* retrieve the interesting data before freeing the request */
 	kbd = req->done_data;
 	error = req->result;
 	starlet_ipc_free_request(req);
@@ -261,7 +260,7 @@ static int stkbd_wait_for_events(struct stkbd_keyboard *kbd)
 	int error = 0;
 
 	if (!test_and_set_bit(__STKBD_WAITING_REPORT, &kbd->flags)) {
-		error = starlet_ios_ioctl_nowait(kbd->fd, 0,
+		error = starlet_ioctl_nowait(kbd->fd, 0,
 						 NULL, 0,
 						 event, sizeof(*event),
 						 stkbd_dispatch_ipc_request,
@@ -378,7 +377,7 @@ static int stkbd_init(struct stkbd_keyboard *kbd)
 	}
 	kbd->event = event;
 
-	kbd->fd = starlet_ios_open(stkbd_dev_path, 0);
+	kbd->fd = starlet_open(stkbd_dev_path, 0);
 	if (kbd->fd < 0) {
 		drv_printk(KERN_ERR, "unable to open device %s\n",
 			   stkbd_dev_path);
@@ -400,7 +399,7 @@ static int stkbd_init(struct stkbd_keyboard *kbd)
 err_input_dev:
 	stkbd_exit_input_dev(kbd);
 err_fd:
-	starlet_ios_close(kbd->fd);
+	starlet_close(kbd->fd);
 err_event:
 	starlet_kfree(event);
 err:
@@ -410,7 +409,7 @@ err:
 static void stkbd_exit(struct stkbd_keyboard *kbd)
 {
 	stkbd_exit_input_dev(kbd);
-	starlet_ios_close(kbd->fd);
+	starlet_close(kbd->fd);
 	starlet_kfree(kbd->event);
 }
 
