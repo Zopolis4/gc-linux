@@ -155,7 +155,7 @@ EXPORT_SYMBOL_GPL(starlet_es_get_device);
 int starlet_es_get_title_count(unsigned long *count)
 {
 	struct starlet_es_device *es_dev = starlet_es_get_device();
-	struct scatterlist out[1];
+	struct scatterlist io[1];
 	u32 *count_buf;
 	int error;
 
@@ -167,11 +167,10 @@ int starlet_es_get_title_count(unsigned long *count)
 		return -ENOMEM;
 
 	*count_buf = 0;
-	sg_init_table(out, 1);
-	sg_set_buf(out, count_buf, sizeof(*count_buf));
+	sg_init_one(io, count_buf, sizeof(*count_buf));
 
-	error = starlet_ios_ioctlv(es_dev->fd, ES_IOCTLV_GETTITLECOUNT,
-				   0, NULL, 1, out);
+	error = starlet_ioctlv(es_dev->fd, ES_IOCTLV_GETTITLECOUNT,
+				   0, NULL, 1, io);
 	if (error) {
 		DBG("%s: error=%d (%08x)\n", __func__, error, error);
 	} else {
@@ -189,7 +188,7 @@ int starlet_es_get_title_count(unsigned long *count)
 int starlet_es_get_titles(u64 *titles, unsigned long count)
 {
 	struct starlet_es_device *es_dev = starlet_es_get_device();
-	struct scatterlist in[1], out[1];
+	struct scatterlist in[1], io[1];
 	u32 *count_buf;
 	int error;
 
@@ -201,13 +200,11 @@ int starlet_es_get_titles(u64 *titles, unsigned long count)
 		return -ENOMEM;
 
 	*count_buf = count;
-	sg_init_table(in, 1);
-	sg_set_buf(in, count_buf, sizeof(*count_buf));
-	sg_init_table(out, 1);
-	sg_set_buf(out, titles, sizeof(*titles)*count);
+	sg_init_one(in, count_buf, sizeof(*count_buf));
+	sg_init_one(io, titles, sizeof(*titles)*count);
 
-	error = starlet_ios_ioctlv(es_dev->fd, ES_IOCTLV_GETTITLES,
-				   1, in, 1, out);
+	error = starlet_ioctlv(es_dev->fd, ES_IOCTLV_GETTITLES,
+				   1, in, 1, io);
 	if (error) {
 		DBG("%s: error=%d (%08x)\n", __func__, error, error);
 	}
@@ -223,7 +220,7 @@ int starlet_es_get_titles(u64 *titles, unsigned long count)
 int starlet_es_get_ticket_view_count(u64 title, unsigned long *count)
 {
 	struct starlet_es_device *es_dev = starlet_es_get_device();
-	struct scatterlist in[1], out[1];
+	struct scatterlist in[1], io[1];
 	u64 *title_buf;
 	u32 *count_buf;
 	int error;
@@ -242,14 +239,11 @@ int starlet_es_get_ticket_view_count(u64 title, unsigned long *count)
 	}
 
 	*title_buf = title;
-	sg_init_table(in, 1);
-	sg_set_buf(in, title_buf, sizeof(*title_buf));
+	sg_init_one(in, title_buf, sizeof(*title_buf));
+	sg_init_one(io, count_buf, sizeof(*count_buf));
 
-	sg_init_table(out, 1);
-	sg_set_buf(out, count_buf, sizeof(*count_buf));
-
-	error = starlet_ios_ioctlv(es_dev->fd, ES_IOCTLV_GETTICKETVIEWCOUNT,
-				   1, in, 1, out);
+	error = starlet_ioctlv(es_dev->fd, ES_IOCTLV_GETTICKETVIEWCOUNT,
+				   1, in, 1, io);
 	if (error) {
 		DBG("%s: error=%d (%08x)\n", __func__, error, error);
 	} else {
@@ -270,7 +264,7 @@ int starlet_es_get_ticket_views(u64 title,
 				unsigned long count)
 {
 	struct starlet_es_device *es_dev = starlet_es_get_device();
-	struct scatterlist in[2], out[1];
+	struct scatterlist in[2], io[1];
 	u32 *count_buf;
 	u64 *title_buf;
 	int error;
@@ -294,11 +288,10 @@ int starlet_es_get_ticket_views(u64 title,
 	sg_set_buf(&in[0], title_buf, sizeof(*title_buf));
 	sg_set_buf(&in[1], count_buf, sizeof(*count_buf));
 
-	sg_init_table(out, 1);
-	sg_set_buf(&out[0], views, sizeof(*views)*count);
+	sg_init_one(io, views, sizeof(*views)*count);
 
-	error = starlet_ios_ioctlv(es_dev->fd, ES_IOCTLV_GETTICKETVIEWS,
-				   2, in, 1, out);
+	error = starlet_ioctlv(es_dev->fd, ES_IOCTLV_GETTICKETVIEWS,
+				   2, in, 1, io);
 	if (error) {
 		DBG("%s: error=%d (%08x)\n", __func__, error, error);
 	}
@@ -331,7 +324,7 @@ int starlet_es_launch_title_view(u64 title, struct starlet_es_ticket_view *view)
 	sg_set_buf(&in[0], title_buf, sizeof(*title_buf));
 	sg_set_buf(&in[1], view, sizeof(*view));
 
-	error = starlet_ios_ioctlv_and_reboot(es_dev->fd,
+	error = starlet_ioctlv_and_reboot(es_dev->fd,
 					      ES_IOCTLV_LAUNCHTITLE,
 					      2, in, 0, NULL);
 	if (error) {
@@ -428,7 +421,7 @@ static int starlet_es_launch_title(struct starlet_es_device *es_dev, u64 title)
 	return error;
 }
 
-static int starlet_es_load_preferred_ios(struct starlet_es_device *es_dev,
+static int starlet_es_load_preferred(struct starlet_es_device *es_dev,
 					 u64 ios_min, u64 ios_max)
 {
 	u64 title;
@@ -443,12 +436,36 @@ static int starlet_es_load_preferred_ios(struct starlet_es_device *es_dev,
 	return error;
 }
 
+static int starlet_nwc24_stop_scheduler(void)
+{
+	void *obuf;
+	const size_t osize = 0x20;
+	int fd;
+	int error = 0;
+
+	obuf = es_small_buf_get();
+	if (!obuf)
+		return -ENOMEM;
+
+	fd = starlet_open("/dev/net/kd/request", 0);
+	if (fd >= 0) {
+		error = starlet_ioctl(fd, 1, NULL, 0, obuf, osize);
+		starlet_close(fd);
+	}
+
+	es_small_buf_put(obuf);
+
+	if (error)
+		DBG("%s: error=%d (%08x)\n", __func__, error, error);
+	return error;
+}
+
 static int starlet_es_init(struct starlet_es_device *es_dev)
 {
 	u64 ios_min, ios_max;
 	int error;
 
-	error = starlet_ios_open(dev_es, 0);
+	error = starlet_open(dev_es, 0);
 	if (error >= 0) {
 		starlet_es_device_instance = es_dev;
 		es_dev->fd = error;
@@ -456,11 +473,13 @@ static int starlet_es_init(struct starlet_es_device *es_dev)
 		ios_min = 0x100000000ULL | STARLET_ES_IOS_MIN;
 		ios_max = 0x100000000ULL | STARLET_ES_IOS_MAX;
 
-		error = starlet_es_load_preferred_ios(es_dev, ios_min, ios_max);
+		error = starlet_es_load_preferred(es_dev, ios_min, ios_max);
 		if (error) {
 			drv_printk(KERN_WARNING, "unable to load preferred"
 				   " IOS version (min %llx, max %llx)\n",
 				   ios_min, ios_max);
+		} else {
+			starlet_nwc24_stop_scheduler();
 		}
 	}
 	return error;
@@ -469,7 +488,7 @@ static int starlet_es_init(struct starlet_es_device *es_dev)
 static void starlet_es_exit(struct starlet_es_device *es_dev)
 {
 	starlet_es_device_instance = NULL;
-	starlet_ios_close(es_dev->fd);
+	starlet_close(es_dev->fd);
 	es_dev->fd = -1;
 }
 
