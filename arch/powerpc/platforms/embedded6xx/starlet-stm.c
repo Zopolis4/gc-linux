@@ -12,9 +12,12 @@
  *
  */
 
+#define DBG(fmt, arg...)        drv_printk(KERN_INFO, fmt, ##arg)
+
 #include <linux/kernel.h>
 #include <linux/dma-mapping.h>
 #include <asm/starlet.h>
+
 
 /*
  * /dev/stm/immediate
@@ -25,6 +28,9 @@
 #define STARLET_STM_SHUTDOWN	0x2003
 
 #define STARLET_DEV_STM_IMMEDIATE	"/dev/stm/immediate"
+
+#define drv_printk(level, format, arg...) \
+        printk(level "starlet-stm: " format , ## arg)
 
 
 static const char dev_stm_immediate[] = STARLET_DEV_STM_IMMEDIATE;
@@ -41,13 +47,29 @@ static void starlet_stm_common_restart(int request, u32 value)
 	u32 *buf = starlet_stm_buf;
 	size_t len = sizeof(starlet_stm_buf);
 	int fd;
+	int error;
+
+	/* REVISIT, use polled ipc calls here */
+
+
+	drv_printk(KERN_INFO, "trying IPC restart...\n");
 
 	fd = starlet_open(dev_stm_immediate, 0);
-	if (fd >= 0) {
-		*buf = value;
-		starlet_ioctl(fd, request, buf, len, buf, len);
-		starlet_close(fd);
+	if (fd < 0) {
+		drv_printk(KERN_ERR, "failed to open %s\n", dev_stm_immediate);
+		error = fd;
+		goto done;
 	}
+
+	*buf = value;
+	error = starlet_ioctl(fd, request, buf, len, buf, len);
+	if (error < 0)
+		drv_printk(KERN_ERR, "ioctl %d failed\n", request);
+	starlet_close(fd);
+
+done:
+        if (error < 0)
+                DBG("%s: error=%d (%x)\n", __func__, error, error);
 }
 
 /*

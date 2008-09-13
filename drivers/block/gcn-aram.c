@@ -177,10 +177,7 @@ static irqreturn_t aram_irq_handler(int irq, void *dev0)
 	spin_unlock_irqrestore(&drvdata->io_lock, flags);
 		
 	if (req) {
-		if (!end_that_request_first(req, 1, req->current_nr_sectors)) {
-			add_disk_randomness(req->rq_disk);
-			end_that_request_last(req, 1);
-		}
+		__blk_end_request(req, 0, req->current_nr_sectors << 9);
 		dma_unmap_single(drvdata->dev,
 				 drvdata->dma_addr, drvdata->dma_len,
 				 rq_dir_to_dma_dir(req));

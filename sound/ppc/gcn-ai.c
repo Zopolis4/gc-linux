@@ -21,7 +21,6 @@
 #include <linux/interrupt.h>
 #include <linux/dma-mapping.h>
 #include <asm/io.h>
-#include <sound/driver.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
 #define SNDRV_GET_ID
@@ -399,7 +398,7 @@ static void ai_shutdown(struct snd_gcn *chip)
 	ai_disable_interrupts(chip->dsp_base);
 }
 
-static int ai_init(struct snd_gcn *chip,
+static int __devinit ai_init(struct snd_gcn *chip,
 		   struct resource *dsp, struct resource *ai,
 		   unsigned int irq)
 {
@@ -478,7 +477,7 @@ static int ai_do_shutdown(struct device *dev)
 	return -ENODEV;
 }
 
-static int ai_do_probe(struct device *dev,
+static int __devinit ai_do_probe(struct device *dev,
 		       struct resource *dsp, struct resource *ai,
 		       unsigned int irq)
 {

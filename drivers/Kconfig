@@ -54,11 +54,15 @@ source "drivers/exi/Kconfig"
 
 source "drivers/spi/Kconfig"
 
+source "drivers/gpio/Kconfig"
+
 source "drivers/w1/Kconfig"
 
 source "drivers/power/Kconfig"
 
 source "drivers/hwmon/Kconfig"
+
+source "drivers/thermal/Kconfig"
 
 source "drivers/watchdog/Kconfig"
 
@@ -78,6 +82,8 @@ source "drivers/usb/Kconfig"
 
 source "drivers/mmc/Kconfig"
 
+source "drivers/memstick/Kconfig"
+
 source "drivers/leds/Kconfig"
 
 source "drivers/infiniband/Kconfig"
@@ -92,9 +98,5 @@ source "drivers/dca/Kconfig"
 
 source "drivers/auxdisplay/Kconfig"
 
-source "drivers/kvm/Kconfig"
-
 source "drivers/uio/Kconfig"
-
-source "drivers/virtio/Kconfig"
 endmenu

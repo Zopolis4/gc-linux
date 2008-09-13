@@ -76,12 +76,12 @@ static int __init gamecube_probe(void)
         return 1;
 }
 
-#ifdef CONFIG_KEXEC
 static void gamecube_shutdown(void)
 {
 	/* currently not used */
 }
 
+#ifdef CONFIG_KEXEC
 static int gamecube_kexec_prepare(struct kimage *image)
 {
 	return 0;
@@ -102,8 +102,8 @@ define_machine(gamecube) {
 	.get_irq		= flipper_pic_get_irq,
 	.calibrate_decr		= generic_calibrate_decr,
 	.progress		= udbg_progress,
-#ifdef CONFIG_KEXEC
 	.machine_shutdown	= gamecube_shutdown,
+#ifdef CONFIG_KEXEC
 	.machine_kexec_prepare	= gamecube_kexec_prepare,
 	.machine_kexec		= default_machine_kexec,
 #endif

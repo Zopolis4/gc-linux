@@ -23,7 +23,6 @@
 #include <linux/proc_fs.h>
 #include <linux/exi.h>
 
-#include <sound/driver.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
 #define SNDRV_GET_ID

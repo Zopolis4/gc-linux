@@ -1827,7 +1827,7 @@ static void di_request_done(struct di_command *cmd)
 	struct di_device *ddev = cmd->ddev;
 	struct request *req;
 	unsigned long flags;
-	int uptodate = (cmd->result & DI_SR_TCINT)?1:0;
+	int error = (cmd->result & DI_SR_TCINT)?0:-EIO;
 
 	spin_lock_irqsave(&ddev->lock, flags);
 
@@ -1837,11 +1837,7 @@ static void di_request_done(struct di_command *cmd)
 	spin_unlock_irqrestore(&ddev->lock, flags);
 
 	if (req) {
-		if (!end_that_request_first(req, uptodate,
-					    req->current_nr_sectors)) {
-			add_disk_randomness(req->rq_disk);
-			end_that_request_last(req, uptodate);
-		}
+		__blk_end_request(req, error, req->current_nr_sectors << 9);
 		spin_lock_irqsave(&ddev->queue_lock, flags);
 		blk_start_queue(ddev->queue);
 		spin_unlock_irqrestore(&ddev->queue_lock, flags);

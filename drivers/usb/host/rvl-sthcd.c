@@ -920,12 +920,10 @@ static int sthcd_pep_send_urb(struct sthcd_pep *pep, struct urb *urb)
 
 		switch(typeReq) {
 		case DeviceOutRequest | USB_REQ_SET_ADDRESS: /* 0005 */
-	                if (urb->dev->devnum == 0) {
-				drv_printk(KERN_INFO, "new address %u\n",
-					   wValue);
-	                } else {
+	                if (urb->dev->devnum != 0) {
 				/* REVISIT, never reached */
-	                        drv_printk(KERN_INFO, "address change %u->%u\n",
+	                        drv_printk(KERN_WARNING,
+					   "address change %u->%u\n",
 					   urb->dev->devnum, wValue);
 	                }
 			/* we have an udev because the takein was successful */
@@ -1024,7 +1022,7 @@ static int sthcd_pep_xfer_callback(struct starlet_ipc_request *req)
 		status = xfer_len;
 		xfer_len = 0;
 
-		if (status != -7004) {
+		if (status != -7004 && status != 7003) {
 			drv_printk(KERN_ERR, "req %lu: completed with"
 				   " error %d\n", pep->serial, status);
 		}
@@ -1033,6 +1031,7 @@ static int sthcd_pep_xfer_callback(struct starlet_ipc_request *req)
 		case -7005:
 			status = -ESHUTDOWN;
 			break;
+		case -7003:
 		case -7004:
 			/* endpoint stall */
 			status = -EPIPE;
@@ -1583,8 +1582,7 @@ static int sthcd_oh_remove_udev(struct sthcd_oh *oh,
 
 	udev = sthcd_find_udev_by_ids(oh->hcd, idVendor, idProduct);
 	if (!udev) {
-		drv_printk(KERN_WARNING, "unable to find removed device,"
-			   " was it a ignored hub?\n");
+		/* normally reached for ignored hubs */
 		error = -ENODEV;
 	} else {
 		sthcd_udev_exit(udev);
@@ -1688,13 +1686,8 @@ static int sthcd_oh_check_hub(struct sthcd_oh *oh, u16 idVendor, u16 idProduct)
 	starlet_close(fd);
 
 	if (retval >= USB_DT_DEVICE_SIZE) {
-		if (descriptor->bDeviceClass == USB_CLASS_HUB) {
-			drv_printk(KERN_WARNING, "ignoring hub %04X.%04X!\n",
-				   idVendor, idProduct);
-			retval = 1; /* hub found */
-		} else {
-			retval = 0;
-		}
+		/* tell if a hub was found */
+		retval = (descriptor->bDeviceClass == USB_CLASS_HUB)?1:0;
 	} else {
 		if (retval >= 0)
 			retval = -EINVAL;	/* short descriptor */
@@ -1704,7 +1697,7 @@ static int sthcd_oh_check_hub(struct sthcd_oh *oh, u16 idVendor, u16 idProduct)
 
 done:
 	if (retval < 0)
-		drv_printk(KERN_ERR, "%s: retval=%d (%x)\n", __func__, retval, retval);
+		DBG("%s: retval=%d (%x)\n", __func__, retval, retval);
 	return retval;
 }
 
@@ -1801,8 +1794,8 @@ static int sthcd_oh_rescan(struct sthcd_oh *oh)
 		p = &oh->devids[i];
 		if (!sthcd_devid_find(oh->new_devids, nr_new_devids, p)) {
 			/* removal */
-			drv_printk(KERN_INFO, "%s: %04X.%04X removed\n",
-				   __func__, p->idVendor, p->idProduct);
+			drv_printk(KERN_INFO, "removing device %04X.%04X\n",
+				   p->idVendor, p->idProduct);
 			sthcd_oh_remove_udev(oh, p->idVendor, p->idProduct);
 		}
 	}
@@ -1811,14 +1804,19 @@ static int sthcd_oh_rescan(struct sthcd_oh *oh)
 		p = &oh->new_devids[i];
 		if (!sthcd_devid_find(oh->devids, oh->nr_devids, p)) {
 			/* insertion */
-			drv_printk(KERN_INFO, "%s: %04X.%04X inserted\n",
-				   __func__, p->idVendor, p->idProduct);
 			error = sthcd_oh_check_hub(oh, p->idVendor,
 						   p->idProduct);
 			if (error == 0) {
 				/* not a hub, register the usb device */
+				drv_printk(KERN_INFO,
+					   "inserting device %04X.%04X\n",
+					   p->idVendor, p->idProduct);
 				sthcd_oh_insert_udev(oh, p->idVendor,
 						     p->idProduct);
+			} else {
+				drv_printk(KERN_INFO,
+					   "ignoring hub %04X.%04X\n",
+					   p->idVendor, p->idProduct);
 			}
 		}
 	}
@@ -2052,6 +2050,7 @@ static int sthcd_urb_dequeue(struct usb_hcd *hcd, struct urb *urb, int status)
 		    pep, pep->serial, urb);
 		/*
 		 * There is an urb in flight.
+		 *
 		 * We deattach the urb from the pep and leave the pep to the
 		 * callback function, which will free it upon completion,
 		 * without further action.
@@ -2086,9 +2085,9 @@ static void sthcd_endpoint_disable(struct usb_hcd *hcd,
 		goto done;
 
 	if (pep->urb) {
-		DBG("%s: (pep %p, sn %lu, urb %p) urb in transit!\n", __func__,
-		    pep, pep->serial, pep->urb);
 		/*
+		 * There is an urb in flight.
+		 *
 		 * Disable the private endpoint and take the urb out of it.
 		 * The callback function will take care of freeing the pep
 		 * when the IOS call completes.

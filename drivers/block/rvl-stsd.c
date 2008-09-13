@@ -22,6 +22,7 @@
 #define DEBUG
 
 #define DBG(fmt, arg...)	pr_debug(fmt, ##arg)
+//#define DBG(fmt, arg...)	drv_printk(KERN_ERR, fmt, ##arg)
 
 #include <linux/blkdev.h>
 #include <linux/delay.h>
@@ -181,7 +182,7 @@ struct stsd_host {
 	struct stsd_transfer	*xfer;
 
 	struct task_struct	*io_thread;
-//	struct mutex		io_mutex;
+	struct mutex		io_mutex;
 
 	int fd;
 	struct device		*dev;
@@ -798,12 +799,16 @@ static int stsd_ioctl_small_read(struct stsd_host *host, int request,
 	int error;
 
 	/* we do 8, 16 and 32 bits reads */
-	if (size > stsd_small_buf_size)
-		return -EINVAL;
+	if (size > stsd_small_buf_size) {
+		error = -EINVAL;
+		goto done;
+	}
 
 	local_buf = stsd_small_buf_get();
-	if (!local_buf)
-		return -ENOMEM;
+	if (!local_buf) {
+		error = -ENOMEM;
+		goto done;
+	}
 
 	error = starlet_ioctl(host->fd, request,
 				   NULL, 0, local_buf, size);
@@ -812,6 +817,9 @@ static int stsd_ioctl_small_read(struct stsd_host *host, int request,
 
 	stsd_small_buf_put(local_buf);
 
+done:
+	if (error)
+		DBG("%s: error=%d (%08x)\n", __func__, error, error);
 	return error;
 }
 
@@ -822,12 +830,16 @@ static int stsd_ioctl_small_write(struct stsd_host *host, int request,
 	int error;
 
 	/* we do 8, 16 and 32 bits writes */
-	if (size > stsd_small_buf_size)
-		return -EINVAL;
+	if (size > stsd_small_buf_size) {
+		error = -EINVAL;
+		goto done;
+	}
 
 	local_buf = stsd_small_buf_get();
-	if (!local_buf)
-		return -ENOMEM;
+	if (!local_buf) {
+		error = -ENOMEM;
+		goto done;
+	}
 
 	memcpy(local_buf, buf, size);
 	error = starlet_ioctl(host->fd, request,
@@ -835,6 +847,9 @@ static int stsd_ioctl_small_write(struct stsd_host *host, int request,
 
 	stsd_small_buf_put(local_buf);
 
+done:
+	if (error)
+		DBG("%s: error=%d (%08x)\n", __func__, error, error);
 	return error;
 }
 
@@ -844,7 +859,6 @@ static int stsd_ioctl_small_write(struct stsd_host *host, int request,
  *
  */
 
-#if 0
 static int stsd_get_status(struct stsd_host *host, u32 *status)
 {
 	int error;
@@ -856,7 +870,6 @@ static int stsd_get_status(struct stsd_host *host, u32 *status)
 
 	return error;
 }
-#endif
 
 #if 0
 static int stsd_get_ocr(struct stsd_host *host)
@@ -1046,8 +1059,26 @@ static int stsd_set_block_len(struct stsd_host *host, unsigned int len)
 
 static int stsd_welcome_card(struct stsd_host *host)
 {
-	int error;
+	u32 status;
 	int i;
+	int error;
+
+	mutex_lock(&host->io_mutex);
+
+	/*
+	 * Re-open the sdio device if things look wrong.
+	 */
+	error = stsd_get_status(host, &status);
+	if (error == STARLET_EINVAL) {
+		starlet_close(host->fd);
+		host->fd = starlet_open(stsd_dev_sdio_slot0, 0);
+		if (host->fd < 0) {
+			drv_printk(KERN_ERR, "unable to re-open %s\n",
+				   stsd_dev_sdio_slot0);
+			error = -ENODEV;
+			goto err_bad_card;
+		}
+	}
 
 	/* reset the card, maybe several times before giving up */
 	for (i = 0; i < 3; i++) {
@@ -1056,7 +1087,7 @@ static int stsd_welcome_card(struct stsd_host *host)
 			break;
 	}
 	if (error)
-		goto out;
+		goto err_bad_card;
 
 #if 0
 	/* read Operating Conditions Register */
@@ -1085,6 +1116,8 @@ static int stsd_welcome_card(struct stsd_host *host)
 	if (error)
 		goto err_bad_card;
 
+	mutex_unlock(&host->io_mutex);
+
 	error = stsd_set_clock(host, host->card.csd.max_dtr);
 
 	/* FIXME check if card supports 4 bit bus width */
@@ -1104,6 +1137,7 @@ static int stsd_welcome_card(struct stsd_host *host)
 	goto out;
 
 err_bad_card:
+	mutex_unlock(&host->io_mutex);
 	stsd_card_set_bad(host);
 out:
 	return error;
@@ -1235,7 +1269,7 @@ static int stsd_io_thread(void *param)
 
         current->flags |= PF_NOFREEZE|PF_MEMALLOC;
 
-//	mutex_lock(&host->io_mutex);
+	mutex_lock(&host->io_mutex);
 	for(;;) {
 		req = NULL;
 		set_current_state(TASK_INTERRUPTIBLE);
@@ -1250,9 +1284,9 @@ static int stsd_io_thread(void *param)
 				set_current_state(TASK_RUNNING);
 				break;
 			}
-//			mutex_unlock(&host->io_mutex);
+			mutex_unlock(&host->io_mutex);
 			schedule();
-//			mutex_lock(&host->io_mutex);
+			mutex_lock(&host->io_mutex);
 			continue;
 		}
 		set_current_state(TASK_INTERRUPTIBLE);
@@ -1262,7 +1296,7 @@ static int stsd_io_thread(void *param)
 		end_queued_request(req, uptodate);
 		spin_unlock_irqrestore(&host->queue_lock, flags);
 	}
-//	mutex_unlock(&host->io_mutex);
+	mutex_unlock(&host->io_mutex);
 
 	return 0;
 }
@@ -1356,6 +1390,8 @@ static int stsd_media_changed(struct gendisk *disk)
 
 	/* REVISIT use the starlet provided iotcl to check the status */
 
+	mutex_lock(&host->io_mutex);
+
 	/* check if the serial number of the card changed */
 	last_serial = host->card.cid.serial;
 	error = stsd_deselect_card(host);
@@ -1364,6 +1400,9 @@ static int stsd_media_changed(struct gendisk *disk)
 		if (!error)
 			error = stsd_select_card(host);
 	}
+
+	mutex_unlock(&host->io_mutex);
+
 	if (!error && last_serial == host->card.cid.serial && last_serial) {
 		clear_bit(__STSD_MEDIA_CHANGED, &host->flags);
 	} else {
@@ -1487,6 +1526,8 @@ static int stsd_init_blk_dev(struct stsd_host *host)
 	struct request_queue *queue;
 	int error;
 
+	mutex_init(&host->io_mutex);
+
 	/* queue */
 	error = -ENOMEM;
 	spin_lock_init(&host->queue_lock);
@@ -1538,7 +1579,6 @@ static int stsd_init_io_thread(struct stsd_host *host)
 {
 	int result = 0;
 
-//	mutex_init(&host->io_mutex);
 	host->io_thread = kthread_run(stsd_io_thread, host, "ksdio");
 	if (IS_ERR(host->io_thread)) {
 		drv_printk(KERN_ERR, "error creating io thread\n");
@@ -1567,7 +1607,8 @@ static int stsd_init(struct stsd_host *host)
 
 	host->fd = starlet_open(stsd_dev_sdio_slot0, 0);
 	if (host->fd < 0) {
-		drv_printk(KERN_ERR, "unable to open starlet sd device\n");
+		drv_printk(KERN_ERR, "unable to open %s\n",
+			   stsd_dev_sdio_slot0);
 		return -ENODEV;
 	}
 

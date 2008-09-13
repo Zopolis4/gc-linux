@@ -431,13 +431,8 @@ static int si_setup_pad(struct input_dev *idev)
 	idev->absflat[ABS_Y] = 8;
 
 	/* b pad */
-	set_bit(ABS_HAT0X, idev->absbit);
-	idev->absmin[ABS_HAT0X] = -1;
-	idev->absmax[ABS_HAT0X] = 1;
-
-	set_bit(ABS_HAT0Y, idev->absbit);
-	idev->absmin[ABS_HAT0Y] = -1;
-	idev->absmax[ABS_HAT0Y] = 1;
+	input_set_abs_params(idev, ABS_HAT0X, -1, 1, 0, 0);
+	input_set_abs_params(idev, ABS_HAT0Y, -1, 1, 0, 0);
 
 	/* c stick */
 	set_bit(ABS_RX, idev->absbit);

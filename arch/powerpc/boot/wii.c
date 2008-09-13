@@ -1,7 +1,7 @@
 /*
- * arch/powerpc/boot/gamecube.c
+ * arch/powerpc/boot/wii.c
  *
- * Nintendo GameCube/Wii platforms
+ * Nintendo Wii platform
  * Copyright (C) 2004-2008 The GameCube Linux Team
  * Copyright (C) 2008 Albert Herranz
  *
@@ -65,7 +65,7 @@ _zimage_start:\n\
 /*
  * 
  */
-static void gamecube_console_write(const char *buf, int len)
+static void wii_console_write(const char *buf, int len)
 {
 	char *b = (char *)buf;
 
@@ -87,6 +87,6 @@ void platform_init(unsigned long r3, unsigned long r4, unsigned long r5)
 	fdt_init(_dtb_start);
 
 	if (!ug_grab_io_base() && ug_is_adapter_present())
-		console_ops.write = gamecube_console_write;
+		console_ops.write = wii_console_write;
 }
 

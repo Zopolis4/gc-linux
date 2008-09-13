@@ -25,6 +25,8 @@
 #include <linux/timer.h>
 #include <asm/rheap.h>
 
+#define STARLET_EINVAL	-4
+
 
 #define STARLET_IPC_DMA_ALIGN   0x1f /* 32 bytes */
 
@@ -55,6 +57,8 @@ struct starlet_ipc_device {
 
 	struct dma_pool *dma_pool;	/* to allocate requests */
 	struct starlet_ioh *ioh;	/* to allocate special io buffers */
+
+	unsigned int random_id;
 
 	spinlock_t list_lock;
 	struct list_head outstanding_list;
@@ -106,6 +110,12 @@ struct starlet_ipc_request {
 		u32 argv[5];			/* 0x0c,0x10,0x14,0x18,0x1c */
 	};
 	/* end starlet firmware request format */
+
+	/*
+	 * A signature is used to discard bogus requests from earlier
+	 * IPC instances.
+	 */
+	unsigned int sig;
 
 	dma_addr_t dma_addr;	/* request dma address */
 

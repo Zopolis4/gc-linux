@@ -478,10 +478,17 @@ static int starlet_es_init(struct starlet_es_device *es_dev)
 			drv_printk(KERN_WARNING, "unable to load preferred"
 				   " IOS version (min %llx, max %llx)\n",
 				   ios_min, ios_max);
-		} else {
-			starlet_nwc24_stop_scheduler();
 		}
 	}
+
+	/*
+	 * Try to disable the Nintendo Wifi Connect 24 scheduler.
+	 * And do this even if we failed to load our preferred IOS.
+	 *
+	 * When the scheduler kicks in, starlet IPC calls from Broadway fail.
+	 */
+	starlet_nwc24_stop_scheduler();
+
 	return error;
 }
 

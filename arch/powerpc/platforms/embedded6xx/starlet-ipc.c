@@ -26,6 +26,7 @@
 #include <linux/jiffies.h>
 #include <linux/dmapool.h>
 #include <linux/dma-mapping.h>
+#include <linux/random.h>
 #include <linux/scatterlist.h>
 #include <linux/string.h>
 #include <asm/io.h>
@@ -194,6 +195,7 @@ starlet_ipc_alloc_request(struct starlet_ipc_device *ipc_dev, gfp_t flags)
 		memset(req, 0, sizeof(*req));
 		req->ipc_dev = ipc_dev;
 		req->result = 0xdeadbeef;
+		req->sig = ipc_dev->random_id;
 		req->dma_addr = dma_addr;
 		INIT_LIST_HEAD(&req->node);
 	}
@@ -229,7 +231,7 @@ static void starlet_ipc_complete_request(struct starlet_ipc_request *req)
 	unsigned long flags;
 
 	spin_lock_irqsave(&ipc_dev->list_lock, flags);
-	list_del(&req->node);
+	list_del_init(&req->node);
 	ipc_dev->nr_outstanding--;
 	spin_unlock_irqrestore(&ipc_dev->list_lock, flags);
 
@@ -268,6 +270,14 @@ starlet_ipc_find_request_by_bus_addr(struct starlet_ipc_device *ipc_dev,
 
 	spin_lock_irqsave(&ipc_dev->list_lock, flags);
 	list_for_each_entry(req, &ipc_dev->outstanding_list, node) {
+		if (req && req->sig != ipc_dev->random_id) {
+			drv_printk(KERN_ERR, "IPC trash detected\n");
+			ipc_dev->nr_outstanding = 0;
+			INIT_LIST_HEAD(&ipc_dev->outstanding_list);
+			INIT_LIST_HEAD(&req->node);
+			spin_unlock_irqrestore(&ipc_dev->list_lock, flags);
+			return NULL;
+		}
 		if (req && req_bus_addr == req->dma_addr) {
 			spin_unlock_irqrestore(&ipc_dev->list_lock, flags);
 			return req;
@@ -500,7 +510,7 @@ int starlet_open(const char *pathname, int flags)
 }
 EXPORT_SYMBOL_GPL(starlet_open);
 
-/**
+/*
  *
  */
 int starlet_close(int fd)
@@ -559,7 +569,7 @@ int starlet_ioctl_dma_prepare(struct starlet_ipc_request *req,
 	return 0;
 }
 
-/**
+/*
  *
  */
 int starlet_ioctl_dma(int fd, int request,
@@ -1266,10 +1276,13 @@ static void starlet_fixups(void)
 		starlet_close(fd);
 	}
 
-	/* try to turn off the front led (not starlet-related but anyway...) */
+	/*
+	 * Try to turn off the front led and sensor bar.
+	 * (not strictly starlet-only stuff but anyway...)
+	 */
 	gpio = ioremap(0x0d8000c0, 4);
 	if (gpio) {
-		out_be32(gpio, in_be32(gpio) & ~0x20);
+		out_be32(gpio, in_be32(gpio) & ~0x120);
 		iounmap(gpio);
 	}
 }
@@ -1279,6 +1292,8 @@ static int starlet_ipc_init(struct starlet_ipc_device *ipc_dev,
 {
 	size_t size, io_size;
 	int error;
+
+	ipc_dev->random_id = get_random_int();
 
 	error = starlet_malloc_lib_bootstrap(&mem[1]);
 	if (error)
@@ -1388,7 +1403,11 @@ static int starlet_ipc_do_shutdown(struct device *dev)
 	struct starlet_ipc_device *ipc_dev = dev_get_drvdata(dev);
 
 	if (ipc_dev) {
-		starlet_ipc_quiesce(ipc_dev);
+		/*
+		 * We can't shutdown IPC as we need it to reboot the
+		 * machine.
+		 * Thus, no starlet_ipc_quiesce(ipc_dev); here, sorry.
+		 */
 		return 0;
 	}
 	return -ENODEV;

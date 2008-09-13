@@ -37,7 +37,7 @@ static int __init wii_device_probe(void)
 		of_platform_device_create(np, NULL, NULL);
 		of_node_put(np);
 	}
-	
+
 	return 0;
 }
 device_initcall(wii_device_probe);
