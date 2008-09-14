@@ -35,8 +35,6 @@ bootargs = "root=/dev/rvlsda2 video=gcnfb:tv=NTSC force_keyboard_port=4 placehol
 
 		bootargs = "root=/dev/rvlsda2 video=gcnfb:tv=NTSC force_keyboard_port=4 placeholder_for_additional_kernel_options_targetted_at_hexedit_lovers";
 
-		linux,crashkernel-base = <0>;
-		linux,crashkernel-size = <0>;
 		linux,stdout-path = "/exi@0d006800/usbgecko@0d006814";
 	};
 

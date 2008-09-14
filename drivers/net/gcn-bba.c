@@ -755,7 +755,13 @@ static int bba_io_thread(void *bba_priv)
 	 */
 
 	while(!kthread_should_stop()) {
-		wait_event(priv->io_waitq, priv->rx_work || priv->tx_skb);
+		/*
+		 * We want to get scheduled at least once every 2 minutes
+		 * to avoid a softlockup spurious message...
+		 * "INFO: task kbbaiod blocked for more than 120 seconds."
+		 */
+		wait_event_timeout(priv->io_waitq,
+				   priv->rx_work || priv->tx_skb, 90*HZ);
 		while (priv->rx_work || priv->tx_skb) {
 			if (priv->rx_work)
 				bba_rx(priv->dev, 0x0f);

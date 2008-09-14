@@ -321,8 +321,17 @@ config KEYBOARD_WII
 	  Say Y here if you have a Nintendo Wii console running Linux and have
 	  a keyboard attached to one of its USB ports.
 	  This driver uses the IOS interface glue to access the USB keyboard.
-
+	  
 	  To compile this driver as a module, choose M here: the
 	  module will be called rvl-stkbd.
 
+config KEYBOARD_SH_KEYSC
+	tristate "SuperH KEYSC keypad support"
+	depends on SUPERH
+	help
+	  Say Y here if you want to use a keypad attached to the KEYSC block
+	  on SuperH processors such as sh7722 and sh7343.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called sh_keysc.
 endif

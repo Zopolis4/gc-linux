@@ -253,8 +253,6 @@ static inline void gcngx_dispatch_vtrace(struct vi_ctl *ctl)
 #define Vg ((int)(-0.419*(1<<RGB2YUV_SHIFT)))
 #define Vb ((int)(-0.081*(1<<RGB2YUV_SHIFT)))
 
-#define clamp(x, y, z) ((z < x) ? x : ((z > y) ? y : z))
-
 /*
  * Converts two 16bpp rgb pixels into a dual yuy2 pixel.
  */
@@ -280,8 +278,8 @@ static inline uint32_t rgbrgb16toycbycr(uint16_t rgb1, uint16_t rgb2)
 	g1 = (g1 << 2) | (g1 >> 4);
 	b1 = (b1 << 3) | (b1 >> 2);
 
-	Y1 = clamp(16, 235, ((Yr * r1 + Yg * g1 + Yb * b1) >> RGB2YUV_SHIFT)
-		   + RGB2YUV_LUMA);
+	Y1 = clamp(((Yr * r1 + Yg * g1 + Yb * b1) >> RGB2YUV_SHIFT)
+		   + RGB2YUV_LUMA, 16, 235);
 	if (rgb1 == rgb2) {
 		/* this is just another fast path */
 		Y2 = Y1;
@@ -297,19 +295,19 @@ static inline uint32_t rgbrgb16toycbycr(uint16_t rgb1, uint16_t rgb2)
 		g2 = (g2 << 2) | (g2 >> 4);
 		b2 = (b2 << 3) | (b2 >> 2);
 
-		Y2 = clamp(16, 235,
-			   ((Yr * r2 + Yg * g2 + Yb * b2) >> RGB2YUV_SHIFT)
-			   + RGB2YUV_LUMA);
+		Y2 = clamp(((Yr * r2 + Yg * g2 + Yb * b2) >> RGB2YUV_SHIFT)
+			   + RGB2YUV_LUMA,
+			   16, 235);
 
 		r = (r1 + r2) / 2;
 		g = (g1 + g2) / 2;
 		b = (b1 + b2) / 2;
 	}
 
-	Cb = clamp(16, 240, ((Ur * r + Ug * g + Ub * b) >> RGB2YUV_SHIFT)
-		   + RGB2YUV_CHROMA);
-	Cr = clamp(16, 240, ((Vr * r + Vg * g + Vb * b) >> RGB2YUV_SHIFT)
-		   + RGB2YUV_CHROMA);
+	Cb = clamp(((Ur * r + Ug * g + Ub * b) >> RGB2YUV_SHIFT)
+		   + RGB2YUV_CHROMA, 16, 240);
+	Cr = clamp(((Vr * r + Vg * g + Vb * b) >> RGB2YUV_SHIFT)
+		   + RGB2YUV_CHROMA, 16, 240);
 
 	return (((uint8_t) Y1) << 24) | (((uint8_t) Cb) << 16) |
 	    (((uint8_t) Y2) << 8) | (((uint8_t) Cr) << 0);
