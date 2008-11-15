@@ -21,8 +21,8 @@
 
 #define DEBUG
 
-#define DBG(fmt, arg...)	pr_debug(fmt, ##arg)
-//#define DBG(fmt, arg...)	drv_printk(KERN_ERR, fmt, ##arg)
+//#define DBG(fmt, arg...)	pr_debug(fmt, ##arg)
+#define DBG(fmt, arg...)	drv_printk(KERN_ERR, fmt, ##arg)
 
 #include <linux/blkdev.h>
 #include <linux/delay.h>
@@ -45,12 +45,13 @@
 #include <linux/mmc/mmc.h>
 #include <linux/mmc/sd.h>
 #include <linux/mmc/sdio.h>
+#include "../mmc/host/sdhci.h"
 
 #define DRV_MODULE_NAME "rvl-stsd"
 #define DRV_DESCRIPTION "Block driver for the Nintendo Wii SD front slot"
 #define DRV_AUTHOR      "Albert Herranz"
 
-static char stsd_driver_version[] = "0.1i";
+static char stsd_driver_version[] = "0.2i";
 
 #define drv_printk(level, format, arg...) \
 	printk(level DRV_MODULE_NAME ": " format , ## arg)
@@ -66,21 +67,23 @@ static char stsd_driver_version[] = "0.1i";
 #define KERNEL_SECTOR_SHIFT     9
 #define KERNEL_SECTOR_SIZE      (1 << KERNEL_SECTOR_SHIFT)	/*512 */
 
+#define STSD_MAX_SECTORS	16
+
 
 /*
  * IOS-related constants.
  */
 
 /* ioctls */
-#define STSD_IOCTL_SETHCREG	1
-#define STSD_IOCTL_GETHCREG	2
+#define STSD_IOCTL_SETHSR	1
+#define STSD_IOCTL_GETHSR	2
 #define STSD_IOCTL_RESET	4
 #define STSD_IOCTL_SETCLOCK	6
 #define STSD_IOCTL_SENDCMD	7
 #define STSD_IOCTL_GETSTATUS	11
 #define STSD_IOCTL_GETOCR	12
 
-#define STSD_IOCTLV_READWRITE	7
+#define STSD_IOCTLV_SENDCMD	7
 
 /* SD command types */
 #define STSD_CMDTYPE_BC		1
@@ -99,12 +102,30 @@ static char stsd_driver_version[] = "0.1i";
 #define STSD_RSPTYPE_R6		7
 #define STSD_RSPTYPE_R7		8
 
+/* card status bits */
+#define STSD_STATUS_CARD_INSERTED	(1<<0)
+#define STSD_STATUS_CARD_INITIALIZED	(1<<16)
+
+/* IOS errors */
+#define STSD_ERR_INVALID_CARD		0xc1000020
+
 /*
  * Hardware registers.
  */
-#define STSD_HCR		0x28
-#define STSD_HCR_4BIT		(1<<1)
 
+/*
+ * Simplified SD Host Controller Specification
+ * Version 2.00
+ * February 8, 2007
+ */
+
+/*
+ * SD Host Standard Registers
+ *
+ */
+
+/* we are recycling the stuff already in "../mmc/host/sdhci.h" */
+#define STSD_TIMEOUT_CONTROL_DIV(a)	(((a)-13)&0xf)	/* TMCLK*2^a a=[13..27] */
 
 static char stsd_dev_sdio_slot0[] = "/dev/sdio/slot0";
 
@@ -116,7 +137,7 @@ struct stsd_reg_query {
 	u32	_unk1;
 	u32	_unk2;
 	u32	size;
-	void	*buf;
+	u32	data;
 	u32	_unk3;
 };
 
@@ -131,29 +152,31 @@ struct stsd_command {
 	u32 blk_count;
 	u32 blk_size;
 	dma_addr_t dma_addr;
-	u32 _unk1;
+	u32 is_dma;
 	u32 _unk2;
 };
 
-struct stsd_transfer {
-	struct stsd_command cmd;	/* must be the first member, aligned */
-
-	dma_addr_t dma_addr;
+struct stsd_xfer {
 	size_t size;
 	enum dma_data_direction direction;
 
-	struct scatterlist in[2], out[1];
+	struct starlet_ioh_sg in[2], io[1];
+	struct stsd_command *cmd;
 
 	/* one-time initialized members */
-	size_t blk_size;
 	void *reply;
 	size_t reply_len;
-	struct stsd_host *host;
+	dma_addr_t dma_addr;
+	void *bounce_buf;
+	size_t bounce_buf_size;
+	size_t blk_size;
 };
 
 enum {
 	__STSD_MEDIA_CHANGED = 0,
 	__STSD_BAD_CARD,
+	__STSD_MANUAL_SETUP,
+	__STSD_SDHC,
 };
 
 struct stsd_host {
@@ -161,6 +184,8 @@ struct stsd_host {
 	unsigned long	flags;
 #define STSD_MEDIA_CHANGED	(1<<__STSD_MEDIA_CHANGED)
 #define STSD_BAD_CARD		(1<<__STSD_BAD_CARD)
+#define STSD_MANUAL_SETUP	(1<<__STSD_MANUAL_SETUP)
+#define STSD_SDHC		(1<<__STSD_SDHC)
 
 	/* u32		ocr; */
 	unsigned int	f_max;
@@ -179,7 +204,7 @@ struct stsd_host {
 	struct gendisk 		*disk;
 	unsigned int		max_phys_segments;
 
-	struct stsd_transfer	*xfer;
+	struct stsd_xfer	*xfer;
 
 	struct task_struct	*io_thread;
 	struct mutex		io_mutex;
@@ -442,6 +467,44 @@ static void stsd_print_csd(struct mmc_csd *csd)
 		  csd->write_misalign);
 }
 
+static void stsd_dump_hs_regs(struct stsd_host *host)
+{
+        drv_printk(KERN_DEBUG, "============== REGISTER DUMP ==============\n");
+
+        drv_printk(KERN_DEBUG, "Sys addr: 0x%08x | Version:  0x%08x\n",
+		stsd_hsr_in_u32(host, SDHCI_DMA_ADDRESS),
+		stsd_hsr_in_u16(host, SDHCI_HOST_VERSION));
+        drv_printk(KERN_DEBUG, "Blk size: 0x%08x | Blk cnt:  0x%08x\n",
+		stsd_hsr_in_u16(host, SDHCI_BLOCK_SIZE),
+		stsd_hsr_in_u16(host, SDHCI_BLOCK_COUNT));
+        drv_printk(KERN_DEBUG, "Argument: 0x%08x | Trn mode: 0x%08x\n",
+		stsd_hsr_in_u32(host, SDHCI_ARGUMENT),
+		stsd_hsr_in_u16(host, SDHCI_TRANSFER_MODE));
+        drv_printk(KERN_DEBUG, "Present:  0x%08x | Host ctl: 0x%08x\n",
+		stsd_hsr_in_u32(host, SDHCI_PRESENT_STATE),
+		stsd_hsr_in_u8(host, SDHCI_HOST_CONTROL));
+        drv_printk(KERN_DEBUG, "Power:    0x%08x | Blk gap:  0x%08x\n",
+		stsd_hsr_in_u8(host, SDHCI_POWER_CONTROL),
+		stsd_hsr_in_u8(host, SDHCI_BLOCK_GAP_CONTROL));
+        drv_printk(KERN_DEBUG, "Wake-up:  0x%08x | Clock:    0x%08x\n",
+		stsd_hsr_in_u8(host, SDHCI_WAKE_UP_CONTROL),
+		stsd_hsr_in_u16(host, SDHCI_CLOCK_CONTROL));
+        drv_printk(KERN_DEBUG, "Timeout:  0x%08x | Int stat: 0x%08x\n",
+		stsd_hsr_in_u8(host, SDHCI_TIMEOUT_CONTROL),
+		stsd_hsr_in_u32(host, SDHCI_INT_STATUS));
+        drv_printk(KERN_DEBUG, "Int enab: 0x%08x | Sig enab: 0x%08x\n",
+		stsd_hsr_in_u32(host, SDHCI_INT_ENABLE),
+		stsd_hsr_in_u32(host, SDHCI_SIGNAL_ENABLE));
+        drv_printk(KERN_DEBUG, "AC12 err: 0x%08x | Slot int: 0x%08x\n",
+		stsd_hsr_in_u16(host, SDHCI_ACMD12_ERR),
+		stsd_hsr_in_u16(host, SDHCI_SLOT_INT_STATUS));
+        drv_printk(KERN_DEBUG, "Caps:     0x%08x | Max curr: 0x%08x\n",
+		stsd_hsr_in_u32(host, SDHCI_CAPABILITIES),
+		stsd_hsr_in_u32(host, SDHCI_MAX_CURRENT));
+
+        drv_printk(KERN_DEBUG, "===========================================\n");
+}
+
 #endif /* DEBUG */
 
 /*
@@ -610,7 +673,9 @@ static u32 stsd_opcode_to_rsptype(u32 opcode)
 		rsptype = STSD_RSPTYPE_R6;
 		break;
 	case SD_SEND_IF_COND:
-		rsptype = STSD_RSPTYPE_R7;
+		/* WEIRD */
+		//rsptype = STSD_RSPTYPE_R7;
+		rsptype = STSD_RSPTYPE_R6;
 		break;
 	default:
 		break;
@@ -619,63 +684,62 @@ static u32 stsd_opcode_to_rsptype(u32 opcode)
 	return rsptype;
 }
 
-static void stsd_card_set_bad(struct stsd_host *host)
+static inline void stsd_card_set_bad(struct stsd_host *host)
 {
 	set_bit(__STSD_BAD_CARD, &host->flags);
 }
 
-static int stsd_card_is_bad(struct stsd_host *host)
+static inline int stsd_card_is_bad(struct stsd_host *host)
 {
 	return test_bit(__STSD_BAD_CARD, &host->flags);
+}
+
+static inline void stsd_card_set_sdhc(struct stsd_host *host)
+{
+	set_bit(__STSD_SDHC, &host->flags);
+}
+
+static inline void stsd_card_unset_sdhc(struct stsd_host *host)
+{
+	clear_bit(__STSD_SDHC, &host->flags);
+}
+
+static inline int stsd_card_is_sdhc(struct stsd_host *host)
+{
+	return test_bit(__STSD_SDHC, &host->flags);
+}
+
+static inline void stsd_card_set_manual_setup(struct stsd_host *host)
+{
+	set_bit(__STSD_MANUAL_SETUP, &host->flags);
+}
+
+static inline void stsd_card_unset_manual_setup(struct stsd_host *host)
+{
+	clear_bit(__STSD_MANUAL_SETUP, &host->flags);
+}
+
+static inline int stsd_card_needs_manual_setup(struct stsd_host *host)
+{
+	return test_bit(__STSD_MANUAL_SETUP, &host->flags);
+}
+
+static inline int stsd_card_status_is_inserted(u32 status)
+{
+	return (status & STSD_STATUS_CARD_INSERTED)
+			 == STSD_STATUS_CARD_INSERTED;
+}
+
+static inline int stsd_card_status_is_initialized(u32 status)
+{
+	return (status & STSD_STATUS_CARD_INITIALIZED)
+			 == STSD_STATUS_CARD_INITIALIZED;
 }
 
 /*
  * Hardware.
  *
  */
-
-/*
- * @data must be aligned
- * @size must be between 1 and 4
- */
-static int __stsd_inout(struct stsd_host *host, int write,
-			u32 addr, u32 *data, size_t size)
-{
-	const unsigned int data_size = sizeof(u32);
-	struct stsd_reg_query *query;
-	int request;
-	void *buf_a, *buf_b;
-	int error;
-
-	/*
-	 * REVISIT maybe use a dma pool or small buffer for query data
-	 */
-	query = starlet_kzalloc(sizeof(*query), GFP_ATOMIC);
-	if (!query)
-		return -ENOMEM;
-
-	if (write) {
-		buf_a = NULL;
-		buf_b = data;
-		request = STSD_IOCTL_SETHCREG;
-	} else {
-		buf_a = data;
-		buf_b = NULL;
-		request = STSD_IOCTL_GETHCREG;
-	}
-
-	query->addr = addr;
-	query->size = size;
-	query->buf = buf_b; /* data to starlet */
-
-	error = starlet_ioctl(host->fd, request,
-				  query, sizeof(*query), buf_a, data_size);
-
-	starlet_kfree(query);
-
-	return error;
-}
-
 
 /*
  * Handy small buffer routines.
@@ -713,78 +777,183 @@ void stsd_small_buf_put(u32 *buf)
 
 
 /*
- * Host Controller hardware registers accessors.
+ * SD Host Standard Registers accessors.
  *
  */
 
-static int stsd_in(struct stsd_host *host, 
-		   u32 reg, void *buf, size_t size)
+/*
+ * @data must be aligned
+ * @size must be between 1 and 4
+ */
+static int __stsd_hsr_in(struct stsd_host *host,
+			 u32 addr, u32 *data, size_t size)
 {
-	void *local_buf;
+	struct stsd_reg_query *query;
+	int error;
+
+	query = starlet_kzalloc(sizeof(*query), GFP_ATOMIC);
+	if (!query)
+		return -ENOMEM;
+
+	query->addr = addr;
+	query->size = size;
+
+	error = starlet_ioctl(host->fd, STSD_IOCTL_GETHSR,
+				  query, sizeof(*query), data, sizeof(*data));
+
+	starlet_kfree(query);
+
+	if (error)
+		DBG("%s: error=%d (%08x)\n", __func__, error, error);
+
+	return error;
+}
+
+static int __stsd_hsr_out(struct stsd_host *host,
+			   u32 addr, u32 *data, size_t size)
+{
+	struct stsd_reg_query *query;
+	int error;
+
+	query = starlet_kzalloc(sizeof(*query), GFP_ATOMIC);
+	if (!query)
+		return -ENOMEM;
+
+	query->addr = addr;
+	query->size = size;
+	query->data = *data;
+
+	error = starlet_ioctl(host->fd, STSD_IOCTL_SETHSR,
+				  query, sizeof(*query), NULL, 0);
+
+	starlet_kfree(query);
+
+	if (error)
+		DBG("%s: error=%d (%08x)\n", __func__, error, error);
+
+	return error;
+}
+
+
+static int stsd_hsr_in(struct stsd_host *host, 
+		       u32 reg, void *buf, size_t size)
+{
+	u32 *local_buf;
 	int error;
 
 	/* we do 8, 16 and 32 bits reads */
-	if (size > stsd_small_buf_size)
+	if (size > 4)
 		return -EINVAL;
 
 	local_buf = stsd_small_buf_get();
 	if (!local_buf)
 		return -ENOMEM;
 
-	error = __stsd_inout(host, 0, reg, local_buf, size);
-	if (!error)
-		memcpy(buf, local_buf, size);
+	error = __stsd_hsr_in(host, reg, local_buf, size);
+	if (!error) {
+		switch(size) {
+			case 1:
+				*(u8 *)buf = *local_buf & 0xff;
+				break;
+			case 2:
+				*(u16 *)buf = *local_buf & 0xffff;
+				break;
+			case 4:
+				*(u32 *)buf = *local_buf;
+				break;
+			default:
+				BUG();
+				break;
+		}
+	}
 
 	stsd_small_buf_put(local_buf);
 
 	return error;
 }
 
-static int stsd_out(struct stsd_host *host, 
-		    u32 reg, void *buf, size_t size)
+static int stsd_hsr_out(struct stsd_host *host, 
+			u32 reg, void *buf, size_t size)
 {
-	void *local_buf;
+	u32 *local_buf;
 	int error;
 
-	/* we do 8, 16 and 32 bits writes */
-	if (size > stsd_small_buf_size)
+	/* we do 8, 16 and 32 bits reads */
+	if (size > 4)
 		return -EINVAL;
 
 	local_buf = stsd_small_buf_get();
 	if (!local_buf)
 		return -ENOMEM;
 
-	memcpy(local_buf, buf, size);
-	error = __stsd_inout(host, 1, reg, local_buf, size);
+	switch(size) {
+		case 1:
+			*local_buf = *(u8 *)buf;
+			break;
+		case 2:
+			*local_buf = *(u16 *)buf;
+			break;
+		case 4:
+			*local_buf = *(u32 *)buf;
+			break;
+		default:
+			BUG();
+			break;
+	}
+	error = __stsd_hsr_out(host, reg, local_buf, size);
 
 	stsd_small_buf_put(local_buf);
 
 	return error;
 }
 
-#define __declare_stsd_in(_type)					\
-static inline u8 stsd_in_##_type(struct stsd_host *host, u32 reg)	\
+#define __declare_stsd_hsr_wait_for_resp(_type)				\
+static int stsd_hsr_wait_for_resp_##_type(struct stsd_host *host,	\
+				  u32 reg, _type resp, _type resp_mask,	\
+				  unsigned long jiffies)		\
+{									\
+	_type val;							\
+	int error;							\
+									\
+	unsigned long cycles = 10;					\
+	while (cycles-- > 0) {						\
+		error = stsd_hsr_in(host, reg, &val, sizeof(val));	\
+		if (error)						\
+			return error;					\
+		if ((val & resp_mask) == resp)				\
+			return 0;					\
+		mdelay(10);						\
+	}								\
+	return -ENODATA;						\
+}
+
+__declare_stsd_hsr_wait_for_resp(u8);
+__declare_stsd_hsr_wait_for_resp(u16);
+
+#define __declare_stsd_hsr_in(_type)					\
+static inline _type stsd_hsr_in_##_type(struct stsd_host *host, u32 reg)	\
 {									\
 	_type val;							\
 									\
-	stsd_in(host, reg, &val, sizeof(val));				\
+	stsd_hsr_in(host, reg, &val, sizeof(val));			\
 	return val;							\
 }
 
-__declare_stsd_in(u8);
-//__declare_stsd_in(u16);
-//__declare_stsd_in(u32);
+__declare_stsd_hsr_in(u8);
+__declare_stsd_hsr_in(u16);
+__declare_stsd_hsr_in(u32);
 
-#define __declare_stsd_out(_type)					\
-static inline void stsd_out_##_type(struct stsd_host *host, u32 reg, 	\
+#define __declare_stsd_hsr_out(_type)					\
+static inline void stsd_hsr_out_##_type(struct stsd_host *host, u32 reg,\
 					 _type val)			\
 {									\
-	stsd_out(host, reg, &val, sizeof(val));				\
+	stsd_hsr_out(host, reg, &val, sizeof(val));			\
 }
 
-__declare_stsd_out(u8);
-//__declare_stsd_out(u16);
-//__declare_stsd_out(u32);
+__declare_stsd_hsr_out(u8);
+__declare_stsd_hsr_out(u16);
+__declare_stsd_hsr_out(u32);
+
 
 
 /*
@@ -871,35 +1040,18 @@ static int stsd_get_status(struct stsd_host *host, u32 *status)
 	return error;
 }
 
-#if 0
-static int stsd_get_ocr(struct stsd_host *host)
-{
-	int error;
-	u32 ocr;
-
-	error = stsd_ioctl_small_read(host, STSD_IOCTL_GETOCR,
-				       &ocr, sizeof(ocr));
-	if (error)
-		DBG("%s: error=%d (%08x)\n", __func__, error, error);
-	else
-		host->ocr = ocr;
-
-	return error;
-}
-#endif
-
 static void stsd_set_bus_width(struct stsd_host *host, int width)
 {
 	u8 hcr;
 
-	hcr = stsd_in_u8(host, STSD_HCR);
+	hcr = stsd_hsr_in_u8(host, SDHCI_HOST_CONTROL);
 	if (width == 4) {
-		hcr |= STSD_HCR_4BIT;
+		hcr |= SDHCI_CTRL_4BITBUS;
 	} else {
-		hcr &= ~STSD_HCR_4BIT;
+		hcr &= ~SDHCI_CTRL_4BITBUS;
 		width = 1;
 	}
-	stsd_out_u8(host, STSD_HCR, hcr);
+	stsd_hsr_out_u8(host, SDHCI_HOST_CONTROL, hcr);
 	host->bus_width = width;
 }
 
@@ -928,10 +1080,15 @@ static int stsd_reset_card(struct stsd_host *host)
 	int error;
 	u32 status;
 
+	stsd_card_unset_sdhc(host);
+	stsd_card_unset_manual_setup(host);
+	host->card.rca = 0;
+
 	error = stsd_ioctl_small_read(host, STSD_IOCTL_RESET,
 				       &status, sizeof(status));
 	if (error) {
-		DBG("%s: error=%d (%08x)\n", __func__, error, error);
+		if (error != STSD_ERR_INVALID_CARD)
+			DBG("%s: error=%d (%08x)\n", __func__, error, error);
 	} else {
 		host->card.rca = status >> 16;
 		host->status = status & 0xffff;
@@ -940,10 +1097,33 @@ static int stsd_reset_card(struct stsd_host *host)
 	return error;
 }
 
+#if 0
+static int stsd_get_ocr(struct stsd_host *host)
+{
+	int error;
+	u32 ocr;
+
+	error = stsd_ioctl_small_read(host, STSD_IOCTL_GETOCR,
+				       &ocr, sizeof(ocr));
+	if (error)
+		DBG("%s: error=%d (%08x)\n", __func__, error, error);
+	else
+		host->ocr = ocr;
+
+	return error;
+}
+#endif
+
+/*
+ * Command engine.
+ *
+ */
+
 static int stsd_send_command(struct stsd_host *host,
 			     u32 opcode, u32 type, u32 arg,
 			     void *buf, size_t buf_len)
 {
+	struct scatterlist in[2], io[1];
 	struct stsd_command *cmd;
 	u32 *reply;
 	size_t reply_len;
@@ -971,12 +1151,32 @@ static int stsd_send_command(struct stsd_host *host,
 	if (opcode == MMC_SELECT_CARD && arg == 0)
 		cmd->rsptype = STSD_RSPTYPE_NONE;
 
-	error = starlet_ioctl(host->fd, STSD_IOCTL_SENDCMD,
-				   cmd, sizeof(*cmd), reply, reply_len);
-	if (error) {
-		DBG("%s: error=%d (%08x)\n", __func__, error, error);
+	if (stsd_card_needs_manual_setup(host)) {
+		/*
+		 * We need to use ioctlvs, instead of ioctls, to drive
+		 * manually initialized cards.
+		 * This makes IOS "cooperative" :)
+		 */
+		sg_init_table(in, 2);
+		sg_set_buf(&in[0], cmd, sizeof(*cmd));
+		sg_set_buf(&in[1], reply, 0);
+
+		sg_init_table(io, 1);
+		sg_set_buf(&io[0], reply, reply_len);
+
+		error = starlet_ioctlv(host->fd, STSD_IOCTL_SENDCMD,
+					   2, in, 1, io);
 	} else {
-		memcpy(buf, reply, buf_len);
+		error = starlet_ioctl(host->fd, STSD_IOCTL_SENDCMD,
+				      cmd, sizeof(*cmd), reply, reply_len);
+	}
+
+	if (error) {
+		DBG("%s: error=%d (%08x), opcode=%d\n", __func__,
+		    error, error, opcode);
+	} else {
+		if (buf)
+			memcpy(buf, reply, buf_len);
 	}
 
 	starlet_kfree(reply);
@@ -985,7 +1185,29 @@ static int stsd_send_command(struct stsd_host *host,
 	return error;
 }
 
-static int stsd_read_cxd(struct stsd_host *host, int request, void *buf)
+static int stsd_send_app_command(struct stsd_host *host,
+				 u32 opcode, u32 type, u32 arg,
+				 void *buf, size_t buf_len)
+{
+	int error;
+
+	error = stsd_send_command(host, MMC_APP_CMD, STSD_CMDTYPE_AC, 
+				  host->card.rca << 16, NULL, 0);
+	if (!error) {
+		error = stsd_send_command(host, opcode, type, arg,
+					  buf, buf_len);
+	}
+	return error;
+}
+
+
+/*
+ * Command helpers.
+ *
+ */
+
+
+static int stsd_cmd_read_cxd(struct stsd_host *host, int request, void *buf)
 {
 	int error;
 	u32 *q, savedq;
@@ -997,6 +1219,7 @@ static int stsd_read_cxd(struct stsd_host *host, int request, void *buf)
 
 	if (!error) {
 		/*
+		 * WEIRD,
 		 * starlet sends CSD and CID contents in a very special way.
 		 *
 		 * If the 128 bit register value is:
@@ -1020,47 +1243,292 @@ static int stsd_read_cxd(struct stsd_host *host, int request, void *buf)
 		crc = p[0];
 		memcpy(p, p+1, size-1);
 		p[size-1] = crc;
-	} else {
-		DBG("%s: error=%d (%08x)\n", __func__, error, error);
 	}
 	return error;
 }
 
-static int stsd_read_csd(struct stsd_host *host)
+static int stsd_cmd_read_csd(struct stsd_host *host)
 {
-	return stsd_read_cxd(host, MMC_SEND_CSD, host->card.raw_csd);
+	return stsd_cmd_read_cxd(host, MMC_SEND_CSD, host->card.raw_csd);
 }
 
-static int stsd_read_cid(struct stsd_host *host)
+static int stsd_cmd_read_cid(struct stsd_host *host)
 {
-	return stsd_read_cxd(host, MMC_SEND_CID, host->card.raw_cid);
+	return stsd_cmd_read_cxd(host, MMC_SEND_CID, host->card.raw_cid);
 }
 
-static int stsd_select_card(struct stsd_host *host)
+static int stsd_cmd_all_send_cid(struct stsd_host *host)
+{
+	const size_t size = 128/8*sizeof(u8);
+
+	/* WEIRD, don't use CMDTYPE_BCR for MMC_ALL_SEND_CID */
+	return stsd_send_command(host, MMC_ALL_SEND_CID, 0, 
+				 host->card.rca << 16,
+				 host->card.raw_cid, size);
+}
+
+static int stsd_cmd_set_relative_addr(struct stsd_host *host, unsigned int rca)
+{
+	int error;
+	u32 reply;
+
+	error = stsd_send_command(host, MMC_SET_RELATIVE_ADDR, STSD_CMDTYPE_AC, 
+				  rca, &reply, sizeof(reply));
+	if (!error) {
+		host->card.rca = reply >> 16;
+		/* DBG("rca=%d, new_rca=%x\n", rca, host->card.rca); */
+	}
+	return error;
+}
+
+
+static int stsd_cmd_select_card(struct stsd_host *host)
 {
 	return stsd_send_command(host, MMC_SELECT_CARD, STSD_CMDTYPE_AC,
 				 host->card.rca << 16,
 				 NULL, 0);
 }
 
-static int stsd_deselect_card(struct stsd_host *host)
+static int stsd_cmd_deselect_card(struct stsd_host *host)
 {
 	return stsd_send_command(host, MMC_SELECT_CARD, STSD_CMDTYPE_AC,
 				 0,
 				 NULL, 0);
 }
 
-static int stsd_set_block_len(struct stsd_host *host, unsigned int len)
+static int stsd_cmd_set_block_len(struct stsd_host *host, unsigned int len)
 {
 	return stsd_send_command(host, MMC_SET_BLOCKLEN, STSD_CMDTYPE_AC,
 				 len,
 				 NULL, 0);
 }
 
+static int stsd_app_cmd_set_bus_width(struct stsd_host *host, int width)
+{
+	int error;
+	u16 val;
+
+	if (width == 4)
+		val = SD_BUS_WIDTH_4;
+	else
+		val = SD_BUS_WIDTH_1;
+
+	error = stsd_send_app_command(host, SD_APP_SET_BUS_WIDTH,
+				      STSD_CMDTYPE_AC, 
+				      val, NULL, 0);
+	if (error)
+		DBG("%s: error=%d (%08x)\n", __func__, error, error);
+
+	return error;
+}
+
+
+
+static int stsd_setup_host_controller(struct stsd_host *host)
+{
+	const u32 mask = SDHCI_INT_RESPONSE | SDHCI_INT_DATA_END |
+				SDHCI_INT_CARD_INSERT | SDHCI_INT_CARD_REMOVE |
+				SDHCI_INT_TIMEOUT | SDHCI_INT_CRC |
+				SDHCI_INT_END_BIT | SDHCI_INT_INDEX |
+				SDHCI_INT_DATA_TIMEOUT | SDHCI_INT_DATA_CRC |
+				SDHCI_INT_ACMD12ERR;
+	u8 rst, pwr, clk_idx;
+	int error;
+
+	/*
+	 * Reset host controller.
+	 */
+
+	/* write 1 to the Reset All bit in the Software Reset register ... */
+	rst = SDHCI_RESET_ALL;
+	stsd_hsr_out_u8(host, SDHCI_SOFTWARE_RESET, rst);
+
+	/* ... then wait for the Reset All bit to be cleared */
+	error = stsd_hsr_wait_for_resp_u8(host, SDHCI_SOFTWARE_RESET,
+					  0, rst,
+					  100*(HZ/1000));
+	if (error) {
+		drv_printk(KERN_ERR, "host controller didn't get out of"
+			   " reset\n");
+		goto done;
+	}
+
+	/*
+	 * Setup interrupt sources.
+	 */
+
+	/* ack the interrupt sources that IOS uses ... */
+	stsd_hsr_out_u32(host, SDHCI_INT_ENABLE, mask);
+	stsd_hsr_in_u32(host, SDHCI_INT_ENABLE);
+	/* ... then unmask them */
+	stsd_hsr_out_u32(host, SDHCI_SIGNAL_ENABLE, mask);
+	stsd_hsr_in_u32(host, SDHCI_SIGNAL_ENABLE);
+
+	/*
+	 * Setup bus power.
+	 */
+
+	/* FIXME, we should use capabilities register here */
+	/* for now use 3.3V setting */
+	pwr = SDHCI_POWER_330;
+
+	/* turn on bus power and use selected voltage setting */
+	stsd_hsr_out_u8(host, SDHCI_POWER_CONTROL, pwr & ~SDHCI_POWER_ON);
+	stsd_hsr_out_u8(host, SDHCI_POWER_CONTROL, pwr | SDHCI_POWER_ON);
+
+	/*
+	 * Initialize clocks.
+	 */
+
+	/* FIXME, we should use capabilities register here */
+	/* for now use index 01h which is base clock divided by 2 */
+	clk_idx = 1;
+
+	/* disable clock signalling... */
+	stsd_hsr_out_u16(host, SDHCI_CLOCK_CONTROL, 0);
+	/* ... then enable internal clock ... */
+	stsd_hsr_out_u16(host, SDHCI_CLOCK_CONTROL,
+				 SDHCI_CLOCK_INT_EN |
+				 (clk_idx << SDHCI_DIVIDER_SHIFT));
+	/* ... and wait until it gets stable */
+	error = stsd_hsr_wait_for_resp_u16(host, SDHCI_CLOCK_CONTROL,
+					   SDHCI_CLOCK_INT_STABLE,
+					   SDHCI_CLOCK_INT_STABLE,
+					   1*HZ);
+	if (error) {
+		drv_printk(KERN_ERR, "internal clock didn't get stable\n");
+		goto done;
+	}
+
+	/* SD clock can be enabled now */
+	stsd_hsr_out_u16(host, SDHCI_CLOCK_CONTROL,
+				 SDHCI_CLOCK_INT_EN |
+				 SDHCI_CLOCK_CARD_EN |
+				 (1 << SDHCI_DIVIDER_SHIFT));
+
+	/*
+	 * Setup timeout.
+	 */
+
+	/* setup timeout to TMCLK * 2^27 */
+	stsd_hsr_out_u8(host, SDHCI_TIMEOUT_CONTROL,
+				STSD_TIMEOUT_CONTROL_DIV(27));
+
+done:
+	if (error)
+		DBG("%s: error=%d (%08x)\n", __func__, error, error);
+
+	return error;
+}
+
+static int stsd_setup_card(struct stsd_host *host)
+{
+	const u8 check_pattern = 0xaa;
+	u32 arg;
+	u32 resp[4];
+	int i;
+	int error;
+
+	/* WEIRD, don't use CMDTYPE_BC for MMC_GO_IDLE_STATE */
+	error = stsd_send_command(host, MMC_GO_IDLE_STATE, 0, 
+				  0, NULL, 0);
+	if (error)
+		goto done;
+
+#define STSD_VHS(a)	((((a)&0x0f)<<8))
+#define STSD_VHS_27_36	STSD_VHS(0x1)
+
+	/* WEIRD, don't use CMDTYPE_BC for SD_SEND_IF_COND */
+	arg = STSD_VHS_27_36 | check_pattern;
+	error = stsd_send_command(host, SD_SEND_IF_COND, 0, 
+				  arg, &resp, sizeof(resp));
+	if (error)
+		goto done;
+
+	if ((resp[0] & 0xff) != check_pattern) {
+		DBG("arg=0x%x, resp[0]=0x%x\n", arg, resp[0]);
+		error = -ENODEV;
+		goto done;
+	}
+
+	/*
+	 * At this point we have identified a v2.00 SD Memory Card.
+	 *
+	 */
+
+	/*
+	 * Get OCR
+	 */
+
+#define STSD_OCR_HCS	(1<<30)	/* Host Capacity Support */
+#define STSD_OCR_CCS	(1<<30)	/* Card Capacity Support */
+
+	for(i=0; i<100; i++) {
+		/* WEIRD, don't use CMDTYPE_BCR for MMC_APP_CMD */
+		error = stsd_send_command(host, MMC_APP_CMD, STSD_CMDTYPE_AC, 
+					  0, NULL, 0);
+		if (error)
+			goto done;
+
+		/* WEIRD, don't use CMDTYPE_BCR for SD_APP_OP_COND */
+		error = stsd_send_command(host, SD_APP_OP_COND, 0, 
+					  STSD_OCR_HCS|
+					  MMC_VDD_32_33|MMC_VDD_33_34,
+					  &resp, sizeof(resp));
+		if (error) 
+			goto done;
+
+		if ((resp[0] & MMC_CARD_BUSY) != 0) {
+			/* card power up completed */
+			break;
+		}
+
+		error = -ETIMEDOUT;
+		mdelay(10);
+	}
+	if (error) {
+		drv_printk(KERN_ERR, "timed out while trying to get OCR\n");
+		goto done;
+	}
+
+	if ((resp[0] & STSD_OCR_CCS) != 0) {
+		/* high capacity card */
+		stsd_card_set_sdhc(host);
+	}
+
+	error = stsd_cmd_all_send_cid(host);
+	if (error) 
+		goto done;
+
+	error = stsd_cmd_set_relative_addr(host, 0);
+	if (error) 
+		goto done;
+
+done:
+	if (error)
+		DBG("%s: error=%d (%08x)\n", __func__, error, error);
+	return error;
+}
+
+static int stsd_reopen_sdio(struct stsd_host *host)
+{
+	int error = 0;
+
+	starlet_close(host->fd);
+	host->fd = starlet_open(stsd_dev_sdio_slot0, 1);
+	if (host->fd < 0) {
+		drv_printk(KERN_ERR, "unable to re-open %s\n",
+			   stsd_dev_sdio_slot0);
+		error = -ENODEV;
+	}
+	return error;
+}
+
+
 static int stsd_welcome_card(struct stsd_host *host)
 {
+	size_t block_len; /* in bytes */
 	u32 status;
-	int i;
 	int error;
 
 	mutex_lock(&host->io_mutex);
@@ -1070,24 +1538,42 @@ static int stsd_welcome_card(struct stsd_host *host)
 	 */
 	error = stsd_get_status(host, &status);
 	if (error == STARLET_EINVAL) {
-		starlet_close(host->fd);
-		host->fd = starlet_open(stsd_dev_sdio_slot0, 0);
-		if (host->fd < 0) {
-			drv_printk(KERN_ERR, "unable to re-open %s\n",
-				   stsd_dev_sdio_slot0);
-			error = -ENODEV;
+		error = stsd_reopen_sdio(host);
+		if (error)
 			goto err_bad_card;
-		}
 	}
 
-	/* reset the card, maybe several times before giving up */
-	for (i = 0; i < 3; i++) {
-		error = stsd_reset_card(host);
-		if (!error)
-			break;
-	}
-	if (error)
+	/*
+	 * Try a normal initialization sequence first, and revert to
+	 * manual mode if that fails.
+	 */
+
+	stsd_reset_card(host);
+
+	error = stsd_get_status(host, &status);
+	if (error) 
 		goto err_bad_card;
+	if (!stsd_card_status_is_inserted(status)) {
+		drv_printk(KERN_ERR, "no card found\n");
+		goto err_bad_card;
+	}
+
+	if (!stsd_card_status_is_initialized(status)) {
+		/* manual initialization, needed for SDHC support */
+		stsd_card_set_manual_setup(host);
+
+		error = stsd_reopen_sdio(host);
+		if (error)
+			goto err_bad_card;
+
+		error = stsd_setup_host_controller(host);
+		if (error)
+			goto err_bad_card;
+
+		error = stsd_setup_card(host);
+		if (error)
+			goto err_bad_card;
+	}
 
 #if 0
 	/* read Operating Conditions Register */
@@ -1096,40 +1582,51 @@ static int stsd_welcome_card(struct stsd_host *host)
 		goto err_bad_card;
 #endif
 
-	error = stsd_deselect_card(host);
+	error = stsd_cmd_deselect_card(host);
 	if (error)
 		goto err_bad_card;
 
 	/* read and decode the Card Specific Data */
-	error = stsd_read_csd(host);
+	error = stsd_cmd_read_csd(host);
 	if (error)
 		goto err_bad_card;
 	mmc_decode_csd(&host->card);
 
 	/* read and decode the Card Identification Data */
-	error = stsd_read_cid(host);
+	error = stsd_cmd_read_cid(host);
 	if (error)
 		goto err_bad_card;
 	mmc_decode_cid(&host->card);
 
-	error = stsd_select_card(host);
+	error = stsd_cmd_select_card(host);
 	if (error)
 		goto err_bad_card;
 
-	mutex_unlock(&host->io_mutex);
-
-	error = stsd_set_clock(host, host->card.csd.max_dtr);
+	stsd_set_clock(host, host->card.csd.max_dtr);
 
 	/* FIXME check if card supports 4 bit bus width */
 	stsd_set_bus_width(host, 4);
+	error = stsd_app_cmd_set_bus_width(host, 4);
+	if (error)
+		goto err_bad_card;
 
+	/* setup block length */
+	block_len = KERNEL_SECTOR_SIZE;
+	error = stsd_cmd_set_block_len(host, block_len);
+	if (error)
+		goto err_bad_card;
+
+#if 0
 	mmc_card_set_present(&host->card);
+#endif
+
+	mutex_unlock(&host->io_mutex);
 
 	drv_printk(KERN_INFO, "descr \"%s\", size %luk, block %ub,"
 		  " serial %08x\n",
 		  host->card.cid.prod_name,
-		  (unsigned long)((host->card.csd.capacity *
-			  (1 << host->card.csd.read_blkbits)) / 1024),
+		  (unsigned long)((host->card.csd.capacity / 1024) *
+			  (1 << host->card.csd.read_blkbits)),
 	          1 << host->card.csd.read_blkbits,
 		  host->card.cid.serial);
 
@@ -1153,30 +1650,38 @@ static int stsd_do_block_transfer(struct stsd_host *host, int write,
 				  unsigned long start,
 				  void *buf, size_t nr_blocks)
 {
-	struct stsd_transfer *xfer = host->xfer;
-	struct stsd_command *cmd = &xfer->cmd;
-	struct scatterlist *sgl;
+	struct stsd_xfer *xfer = host->xfer;
+	struct stsd_command *cmd = xfer->cmd;
 	int error;
+
+	xfer->direction = (write)?DMA_TO_DEVICE:DMA_FROM_DEVICE;
+	xfer->size = nr_blocks * xfer->blk_size;
+
+	if (xfer->size > xfer->bounce_buf_size) {
+		drv_printk(KERN_ERR, "oops, request size %d > %d\n",
+				xfer->size, xfer->bounce_buf_size);
+		return -ENOMEM;
+	}
 
 	/*
 	 * This is stupid.
 	 * Starlet expects the buffer to be an input iovec (from starlet
 	 * point of view) even for reads. Thus, map the buffer explicitly here.
 	 */
-
-	xfer->direction = (write)?DMA_TO_DEVICE:DMA_FROM_DEVICE;
-	xfer->size = nr_blocks * xfer->blk_size;
+	if (write)
+		memcpy(xfer->bounce_buf, buf, xfer->size);
+	__dma_sync(xfer->bounce_buf, xfer->size, xfer->direction);
+/*
 	xfer->dma_addr = dma_map_single(host->dev, buf,
 					xfer->size, xfer->direction);
+*/
 
-	sgl = xfer->in;
-	sg_init_table(sgl, 2);
-	sg_set_buf(sgl, cmd, sizeof(*cmd));
-	sg_set_buf(sgl+1, buf, xfer->size);
+	starlet_ioh_sg_init_table(xfer->in, 2);
+	starlet_ioh_sg_set_buf(&xfer->in[0], cmd, sizeof(*cmd));
+	starlet_ioh_sg_set_buf(&xfer->in[1], xfer->bounce_buf, xfer->size);
 
-	sgl = xfer->out;
-	sg_init_table(sgl, 1);
-	sg_set_buf(sgl, xfer->reply, xfer->reply_len);
+	starlet_ioh_sg_init_table(xfer->io, 1);
+	starlet_ioh_sg_set_buf(&xfer->io[0], xfer->reply, xfer->reply_len);
 
 	cmd->opcode = (write)?MMC_WRITE_MULTIPLE_BLOCK:MMC_READ_MULTIPLE_BLOCK;
 	cmd->arg = start;
@@ -1184,14 +1689,18 @@ static int stsd_do_block_transfer(struct stsd_host *host, int write,
 	cmd->rsptype = stsd_opcode_to_rsptype(cmd->opcode);
 	cmd->blk_count = nr_blocks;
 	cmd->blk_size = xfer->blk_size;
-	cmd->dma_addr = xfer->dma_addr;
-	cmd->_unk1 = 1;
+	cmd->dma_addr = xfer->dma_addr; /* bounce buf */
+	cmd->is_dma = 1;
 
-	error = starlet_ioctlv(host->fd, STSD_IOCTLV_READWRITE,
-				    2, xfer->in, 1, xfer->out);
-
-	dma_unmap_single(xfer->host->dev,
+	error = starlet_ioh_ioctlv(host->fd, STSD_IOCTLV_SENDCMD,
+				   2, xfer->in, 1, xfer->io);
+/*
+	dma_unmap_single(host->dev,
 			 xfer->dma_addr, xfer->size, xfer->direction);
+*/
+
+	if (!write)
+		memcpy(buf, xfer->bounce_buf, xfer->size);
 
 	if (error)
 		DBG("%s: error=%d (%08x)\n", __func__, error, error);
@@ -1231,7 +1740,6 @@ static int stsd_check_request(struct stsd_host *host, struct request *req)
 static int stsd_do_request(struct stsd_host *host, struct request *req)
 {
 	unsigned long nr_blocks; /* in card blocks */
-	size_t block_len; /* in bytes */
 	unsigned long start;
 	int write;
 	int uptodate;
@@ -1243,17 +1751,16 @@ static int stsd_do_request(struct stsd_host *host, struct request *req)
 
 	write = (rq_data_dir(req) == READ)?0:1;
 
-	block_len = KERNEL_SECTOR_SIZE;
-	stsd_set_block_len(host, block_len);
-
-	start = req->sector << KERNEL_SECTOR_SHIFT;
+	start = req->sector;
+	if (!stsd_card_is_sdhc(host))
+		start <<= KERNEL_SECTOR_SHIFT;
 	nr_blocks = req->current_nr_sectors;
 
 	uptodate = 1;
 	error = stsd_do_block_transfer(host, write,
 					start, req->buffer, nr_blocks);
 	if (error) {
-		DBG("%s: error=%d (%08x)\n", __func__, error, error);
+		DBG("%s: error=%d (%08x), start=%lu, \n", __func__, error, error, start);
 		uptodate = error;
 	}
 
@@ -1394,11 +1901,11 @@ static int stsd_media_changed(struct gendisk *disk)
 
 	/* check if the serial number of the card changed */
 	last_serial = host->card.cid.serial;
-	error = stsd_deselect_card(host);
+	error = stsd_cmd_deselect_card(host);
 	if (!error) {
-		error = stsd_read_cid(host);
+		error = stsd_cmd_read_cid(host);
 		if (!error)
-			error = stsd_select_card(host);
+			error = stsd_cmd_select_card(host);
 	}
 
 	mutex_unlock(&host->io_mutex);
@@ -1491,20 +1998,34 @@ static struct block_device_operations stsd_fops = {
 
 static int stsd_init_xfer(struct stsd_host *host)
 {
-	struct stsd_transfer *xfer;
+	struct stsd_xfer *xfer;
 
 	xfer = starlet_kzalloc(sizeof(*xfer), GFP_KERNEL);
 	if (!xfer)
 		return -ENOMEM;
 
 	xfer->reply_len = 4 * sizeof(u32);
-	xfer->reply = starlet_kzalloc(xfer->reply_len, GFP_KERNEL);
+	xfer->reply = starlet_ioh_kzalloc(xfer->reply_len);
 	if (!xfer->reply) {
 		starlet_kfree(xfer);
 		return -ENOMEM;
 	}
+	xfer->cmd = starlet_ioh_kzalloc(sizeof(*xfer->cmd));
+	if (!xfer->cmd) {
+		starlet_ioh_kfree(xfer->reply);
+		starlet_kfree(xfer);
+		return -ENOMEM;
+	}
+	xfer->bounce_buf_size = STSD_MAX_SECTORS * KERNEL_SECTOR_SIZE;
+	xfer->bounce_buf = starlet_ioh_kzalloc(xfer->bounce_buf_size);
+	if (!xfer->bounce_buf) {
+		starlet_ioh_kfree(xfer->cmd);
+		starlet_ioh_kfree(xfer->reply);
+		starlet_kfree(xfer);
+		return -ENOMEM;
+	}
+	xfer->dma_addr = starlet_ioh_virt_to_phys(xfer->bounce_buf);
 
-	xfer->host = host;
 	xfer->blk_size = KERNEL_SECTOR_SIZE;
 
 	host->xfer = xfer;
@@ -1514,9 +2035,10 @@ static int stsd_init_xfer(struct stsd_host *host)
 
 static void stsd_exit_xfer(struct stsd_host *host)
 {
-	struct stsd_transfer *xfer = host->xfer;
+	struct stsd_xfer *xfer = host->xfer;
 
-	starlet_kfree(xfer->reply);
+	starlet_ioh_kfree(xfer->cmd);
+	starlet_ioh_kfree(xfer->reply);
 	starlet_kfree(host->xfer);
 }
 
@@ -1539,7 +2061,7 @@ static int stsd_init_blk_dev(struct stsd_host *host)
 	host->max_phys_segments = 1;
 	blk_queue_max_phys_segments(queue, host->max_phys_segments);
 	blk_queue_max_hw_segments(queue, host->max_phys_segments);
-	blk_queue_max_sectors(queue, 16); /* 16 * 512 = 8K */
+	blk_queue_max_sectors(queue, STSD_MAX_SECTORS); /* 16 * 512 = 8K */
 	blk_queue_dma_alignment(queue, STARLET_IPC_DMA_ALIGN);
 	queue->queuedata = host;
 	host->queue = queue;

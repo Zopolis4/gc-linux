@@ -26,6 +26,7 @@
 #include <asm/udbg.h>
 
 #include "flipper-pic.h"
+#include "gcnvi_udbg.h"
 #include "usbgecko_udbg.h"
 
 
@@ -65,6 +66,7 @@ static void wii_setup_arch(void)
 static void __init wii_init_early(void)
 {
 	ug_udbg_init();
+	gcnvi_udbg_init();
 }
 
 static int __init wii_probe(void)

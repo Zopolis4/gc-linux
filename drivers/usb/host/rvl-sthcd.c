@@ -20,6 +20,10 @@
  *
  */
 
+#ifdef CONFIG_HIGHMEM
+#error Sorry, this driver cannot currently work if HIGHMEM is y
+#endif
+
 #define DBG(fmt, arg...)	drv_printk(KERN_DEBUG, fmt, ##arg)
 
 #include <linux/device.h>
@@ -73,6 +77,9 @@ static char sthcd_driver_version[] = "0.4i";
  */
 #define STHCD_MAX_CHUNK_SIZE	(2048)
 
+#define STHCD_PORT_MAX_RESETS	2	/* maximum number of consecutive
+					 * allowed for a port */
+#define STHCD_RESCAN_INTERVAL	5	/* seconds */
 
 #define starlet_ioh_sg_entry(sg, ptr) \
 	starlet_ioh_sg_set_buf((sg), (ptr), sizeof(*(ptr)))
@@ -82,31 +89,21 @@ struct sthcd_hcd;
 struct sthcd_port;
 struct sthcd_oh;
 
-enum {
-	__STHCD_UDEV_REOPEN = 0,
-	__STHCD_UDEV_ISAHUB,
-};
-
 /*
  * starlet USB device abstraction (udev).
  *
  */
 struct sthcd_udev {
-	unsigned long flags;
-#define STHCD_UDEV_ISAHUB	(1 << __STHCD_UDEV_ISAHUB)
-	/* REVISIT, not finally used */
-#define STHCD_UDEV_REOPEN	(1 << __STHCD_UDEV_REOPEN)
-
 	u16 idVendor;
 	u16 idProduct;
-	int fd;
+	int fd;				/* starlet file descriptor */
 
 	u16 devnum;			/* USB address set by kernel */
 
 	struct list_head node;		/* in list of connected devices */
-	struct sthcd_oh *oh;
+	struct sthcd_oh *oh;		/* parent Open Host controller */
 
-	struct list_head pep_list;	/* list of peps */
+	struct list_head pep_list;	/* list of private endpoints */
 };
 
 /*
@@ -121,6 +118,7 @@ struct sthcd_devid {
 
 enum {
 	__STHCD_PORT_INUSE = 0,
+	__STHCD_PORT_DOOMED,
 };
 
 
@@ -131,8 +129,10 @@ enum {
 struct sthcd_port {
 	unsigned long flags;
 #define STHCD_PORT_INUSE	(1 << __STHCD_PORT_INUSE)
+#define STHCD_PORT_DOOMED	(1 << __STHCD_PORT_DOOMED)
 
 	u32 status_change;
+	unsigned nr_resets;
 
 	struct sthcd_udev udev;	/* one udev per port */
 };
@@ -143,14 +143,14 @@ struct sthcd_port {
  */
 struct sthcd_oh {
 	unsigned int index;
-	int fd;
+	int fd;					/* starlet file descriptor */
 
 	unsigned int max_devids;
 	struct sthcd_devid *new_devids;
 	struct sthcd_devid *devids;
-	unsigned int nr_devids;
+	unsigned int nr_devids;			/* actual no of devices */
 
-	struct sthcd_hcd *hcd;
+	struct sthcd_hcd *hcd;			/* parent Host Controller */
 };
 
 /*
@@ -162,11 +162,12 @@ struct sthcd_hcd {
 
 	struct sthcd_oh oh[2];
 
-	struct sthcd_port *ports;
+	struct sthcd_port *ports;	/* array of ports */
 	unsigned int nr_ports;
+
 	struct list_head device_list;	/* list of connected devices */
 
-	wait_queue_head_t rescan_waitq;
+	wait_queue_head_t rescan_waitq;	/* wait queue for the rescan task */
 	struct task_struct *rescan_task;
 };
 
@@ -224,8 +225,6 @@ struct sthcd_pep {
 	void *io_buf;			/* data buffer */
 	size_t io_buf_len;		/* length of io_buf */
 
-	unsigned long serial;		/* transfer serial number */
-
 	int request;			/* ioctlv request */
 	union {
 		struct sthcd_bulk_intr_xfer_ctx *bulk_intr;
@@ -243,6 +242,7 @@ struct sthcd_pep {
  *
  */
 
+#if 0
 static inline void print_buffer(void *buf, u32 size)
 {
 	int i;
@@ -253,7 +253,7 @@ static inline void print_buffer(void *buf, u32 size)
 			);
 	}
 }
-
+#endif
 
 /*
  * Type conversion routines.
@@ -570,7 +570,7 @@ static int sthcd_pep_takein_urb(struct sthcd_pep *pep, struct urb *urb)
 	int error = 0;
 
 	if (!pep_is_enabled(pep)) {
-		error = -ENOSPC;
+		error = -ESHUTDOWN;
 		goto done;
 	}
 
@@ -647,7 +647,6 @@ static void sthcd_pep_setup_bulk_intr_xfer(struct sthcd_pep *pep)
  */
 static int sthcd_pep_setup_xfer(struct sthcd_pep *pep)
 {
-	static atomic_t serial;
 	struct urb *urb = pep->urb;
 	int request;
 	int error = 0;
@@ -674,9 +673,6 @@ static int sthcd_pep_setup_xfer(struct sthcd_pep *pep)
 		pep->request = request;
 		starlet_ioh_sg_set_buf(&pep->io[0],
 					pep->io_buf, pep->io_buf_len);
-
-		atomic_inc(&serial);
-		pep->serial = atomic_read(&serial);
 	}
 
 	if (error < 0)
@@ -758,8 +754,9 @@ static void sthcd_pep_finish_xfer(struct sthcd_pep *pep, int xfer_len)
 	 */
 	if (usb_urb_dir_in(urb)) {
 		/* device -> host */
+		BUG_ON(!urb->transfer_buffer);
 		memcpy(urb->transfer_buffer + pep->io_xfer_offset,
-		       pep->io_buf, xfer_len);
+			       pep->io_buf, xfer_len);
 	}
 
 	pep->io_xfer_offset += xfer_len;
@@ -789,7 +786,7 @@ static int sthcd_pep_start_xfer(struct sthcd_pep *pep)
 	}
 
 	if (!pep_is_enabled(pep)) {
-		error = -ENOSPC;
+		error = -ESHUTDOWN;
 		goto done;
 	}
 
@@ -797,11 +794,13 @@ static int sthcd_pep_start_xfer(struct sthcd_pep *pep)
 	if (pep->io_buf_len > 0) {
 		if (usb_urb_dir_out(urb)) {
 			/* host -> device */
+			BUG_ON(!urb->transfer_buffer);
 			memcpy(pep->io_buf,
 			       urb->transfer_buffer + pep->io_xfer_offset,
 			       pep->io_buf_len);
 		}
 	}
+
 	starlet_ioh_sg_set_buf(&pep->io[0],
 				pep->io_buf, pep->io_buf_len);
 
@@ -827,9 +826,6 @@ static int sthcd_giveback_urb(struct sthcd_hcd *sthcd,
 __releases(sthcd->lock) __acquires(sthcd->lock)
 {
 	struct usb_hcd *hcd = sthcd_to_hcd(sthcd);
-
-	if (status < 0)
-		DBG("%s: urb %p: status = %d\n", __func__, urb, status);
 	
 	/*
 	 * Release the hcd lock here as the callback may need to
@@ -889,12 +885,31 @@ done:
  */
 static int sthcd_pep_send_urb(struct sthcd_pep *pep, struct urb *urb)
 {
+	struct sthcd_port *port = NULL;
+	struct sthcd_hcd *sthcd;
 	struct usb_ctrlrequest *req;
 	u16 typeReq, wValue;
 	int retval, fake;
 	int error;
 
+	/*
+	 * Unconditionally fail urbs targetted at doomed ports.
+	 */
+	if (pep->udev) {
+		port = udev_to_port(pep->udev);
+		if (test_bit(__STHCD_PORT_DOOMED, &port->flags)) {
+			error = -ENODEV;
+			goto done;
+		}
+	}
+
 	if (test_and_set_bit(__STHCD_PEP_XFERBUSY, &pep->flags)) {
+		/*
+		 * There is a pep xfer in progress.
+		 * Our urb is already queued on the usb device, so do nothing
+		 * here and rely on the pep xfer callback to do the actual
+		 * work when it's done with the current urb in flight.
+		 */
 		error = 0;
 		goto done;
 	}
@@ -926,9 +941,23 @@ static int sthcd_pep_send_urb(struct sthcd_pep *pep, struct urb *urb)
 					   "address change %u->%u\n",
 					   urb->dev->devnum, wValue);
 	                }
-			/* we have an udev because the takein was successful */
+			/*
+			 * We are guaranteed to have an udev because the takein
+			 * was successful.
+			 */
 	                pep->udev->devnum = wValue;
 			urb->actual_length = 0;
+
+			/* clear the port reset count, we have an address */
+			if (wValue) {
+				/*
+				 * We need to retrieve the port again
+				 * as we might have entered the function
+				 * without an udev assigned to the pep.
+				 */
+				port = udev_to_port(pep->udev);
+				port->nr_resets = 0;
+			}
 			fake = 1;
 			break;
 		default:
@@ -937,9 +966,10 @@ static int sthcd_pep_send_urb(struct sthcd_pep *pep, struct urb *urb)
 	}
 
 	if (fake) {
+		sthcd = pep->sthcd;
 		/* finish this fake urb synchronously... */
-		usb_hcd_unlink_urb_from_ep(sthcd_to_hcd(pep->sthcd), urb);
-		sthcd_giveback_urb(pep->sthcd, urb, 0);
+		usb_hcd_unlink_urb_from_ep(sthcd_to_hcd(sthcd), urb);
+		sthcd_giveback_urb(sthcd, urb, 0);
 		/* ... and proceed with the next urb, if applicable */
 		sthcd_pep_cond_send_next_urb(pep);
 	} else {
@@ -970,9 +1000,21 @@ done:
 
 static void sthcd_pep_print(struct sthcd_pep *pep)
 {
-	DBG("%s: req %lu: io_buf=%p, io_buf_len=%u, io_xfer_offset=%u\n",
-		__func__,
-		pep->serial,
+	struct usb_device *udev;
+	u16 idVendor, idProduct;
+
+	idVendor = idProduct = 0xffff;
+	if (pep->urb) {
+		udev = pep->urb->dev;
+		if (udev) {
+			idVendor = le16_to_cpu(udev->descriptor.idVendor);
+			idProduct = le16_to_cpu(udev->descriptor.idProduct);
+		}
+	}
+	DBG("(%04X:%04X) request=%d,"
+	    " io_buf=%p, io_buf_len=%u, io_xfer_offset=%u\n",
+		idVendor, idProduct,
+		pep->request,
 		pep->io_buf,
 		pep->io_buf_len,
 		pep->io_xfer_offset);
@@ -987,6 +1029,7 @@ static int sthcd_pep_xfer_callback(struct starlet_ipc_request *req)
 	int xfer_len = req->result;
 	struct sthcd_pep *pep = req->done_data;
 	int status = 0;
+	struct sthcd_port *port;
 	struct sthcd_hcd *sthcd;
 	struct usb_hcd *hcd;
 	struct urb *urb;
@@ -1004,10 +1047,9 @@ static int sthcd_pep_xfer_callback(struct starlet_ipc_request *req)
 
 	urb = pep->urb;
 	if (!urb) {
-		/* urb was already dequeued */
-		drv_printk(KERN_INFO, "pep %p: request %lu already dequeued\n",
-			   pep, pep->serial);
 		/*
+		 * starlet completed an URB that was already dequeued.
+		 *
 		 * We must free here the memory used by the pep, including
 		 * I/O buffers, avoiding dereferencing any USB stack data
 		 * pointed by the pep, as it may be invalid now.
@@ -1022,28 +1064,42 @@ static int sthcd_pep_xfer_callback(struct starlet_ipc_request *req)
 		status = xfer_len;
 		xfer_len = 0;
 
-		if (status != -7004 && status != 7003) {
-			drv_printk(KERN_ERR, "req %lu: completed with"
-				   " error %d\n", pep->serial, status);
+		if (status != -7004 && status != -7003) {
+			drv_printk(KERN_ERR, "request completed"
+				   " with error %d\n", status);
+			sthcd_pep_print(pep);
 		}
 
 		switch(status) {
-		case -7005:
-			status = -ESHUTDOWN;
-			break;
 		case -7003:
 		case -7004:
 			/* endpoint stall */
 			status = -EPIPE;
 			break;
+		case -7005:
+			/* endpoint shutdown? */
+			status = -ESHUTDOWN;
+			break;
 		case -7008:
+		case -7022:
 		case -4:
-			set_bit(__STHCD_PEP_DISABLED, &pep->flags);
 			/* FALL-THROUGH */
 		default:
-			status = -EPIPE;
+			/*
+			 * We got an unknown, probably un-retryable, error.
+			 * Flag the port as unuseable. The associated
+			 * device will be disconnected ASAP.
+			 */
+			port = udev_to_port(pep->udev);
+			set_bit(__STHCD_PORT_DOOMED, &port->flags);
+			DBG("%s: error %d on port %d, doomed!\n", __func__,
+			    status, port - pep->sthcd->ports + 1);
+
+			/* also, do not use the pep for xfers anymore */
+			set_bit(__STHCD_PEP_DISABLED, &pep->flags);
+			status = -ENODEV;
+			break;
 		}
-		sthcd_pep_print(pep);
 	} else {
 		if (usb_pipecontrol(urb->pipe)) {
 			/*
@@ -1054,10 +1110,9 @@ static int sthcd_pep_xfer_callback(struct starlet_ipc_request *req)
 			 */
 			xfer_len -= sizeof(struct usb_ctrlrequest);
 			if (xfer_len < 0) {
-				drv_printk(KERN_ERR, "request %lu"
-					   " incomplete,"
+				drv_printk(KERN_ERR, "request incomplete,"
 					   " %d bytes short\n",
-					   pep->serial, -xfer_len);
+					   -xfer_len);
 				status = -EPIPE;
 				xfer_len = 0;
 			}
@@ -1414,20 +1469,32 @@ sthcd_hub_control_port(struct usb_hcd *hcd, u16 typeReq, u16 wValue,
 
 	switch (typeReq) {
 	case GetPortStatus:	/* 0xA300 */
+		if (test_bit(__STHCD_PORT_DOOMED, &port->flags)) {
+			/* disconnect */
+			if (!!(port->status_change & USB_PORT_STAT_CONNECTION))
+				port->status_change |= 
+					(USB_PORT_STAT_C_CONNECTION<<16);
+			port->status_change &= ~USB_PORT_STAT_CONNECTION;
+		}
 		/* REVISIT wait 50ms before clearing the RESET state */
 		if (port->status_change & USB_PORT_STAT_RESET) {
-			spin_unlock_irqrestore(&sthcd->lock, flags);
-			
-			spin_lock_irqsave(&sthcd->lock, flags);
-			port->status_change = (USB_PORT_STAT_POWER |
-						USB_PORT_STAT_ENABLE |
-						USB_PORT_STAT_C_RESET << 16);
+			port->nr_resets++;
+			if (port->nr_resets > 2) {
+				DBG("%s: port %d was reset %u time(s),"
+				    " doomed!\n", __func__,
+				    wIndex+1, port->nr_resets);
+				set_bit(__STHCD_PORT_DOOMED, &port->flags);
+			}
+			if (!(port->status_change & USB_PORT_STAT_ENABLE))
+				port->status_change |= 
+						(USB_PORT_STAT_C_ENABLE << 16);
+			port->status_change &= ~USB_PORT_STAT_RESET;
+			port->status_change |= (USB_PORT_STAT_ENABLE |
+						(USB_PORT_STAT_C_RESET << 16));
 			port->udev.devnum = 0;
 		}
-		if (port->udev.oh)
-			port->status_change |= USB_PORT_STAT_CONNECTION;
-		((__le32 *) buf)[0] = cpu_to_le32(port->status_change);
 		retval = 4;
+		((__le32 *) buf)[0] = cpu_to_le32(port->status_change);
 		break;
 	case ClearPortFeature:	/* 0x2301 */
 		switch (wValue) {
@@ -1527,20 +1594,40 @@ static int sthcd_hub_control(struct usb_hcd *hcd, u16 typeReq, u16 wValue,
 static int sthcd_hub_status_data(struct usb_hcd *hcd, char *buf)
 {
 	struct sthcd_hcd *sthcd = hcd_to_sthcd(hcd);
-	struct sthcd_port *port;
 	u16 *p = (u16 *)buf;
-	int i;
+	struct sthcd_port *port;
+	unsigned long flags;
+	int i, result;
+
+	if (!HC_IS_RUNNING(hcd->state))
+		return -ESHUTDOWN;
+
+#if 0
+	if (timer_pending(&hcd->rh_timer))
+		return 0;
+#endif
 
 	/* FIXME, this code assumes at least 9 and no more than 15 ports */
 	BUG_ON(sthcd->nr_ports > 15 || sthcd->nr_ports < 8);
 
+	spin_lock_irqsave(&sthcd->lock, flags);
+
 	port = sthcd->ports;
 	for(i = 0, *p = 0; i < sthcd->nr_ports; i++, port++) {
-		if ((port->status_change & 0xffff0000) != 0)
+		if ((port->status_change & 0xffff0000) != 0) {
 			*p |= 1 << (i+1);
+			/* REVISIT */
+			//break;
+		}
 	}
 	*p = le16_to_cpu(*p);
-	return (*p != 0)?2:0;
+	result = (*p != 0)?2:0;
+
+	spin_unlock_irqrestore(&sthcd->lock, flags);
+
+//	DBG("%s: poll cycle, changes=%04x\n", __func__, *p);
+
+	return result;
 }
 
 
@@ -1552,11 +1639,16 @@ static int sthcd_hub_status_data(struct usb_hcd *hcd, char *buf)
 static int sthcd_oh_insert_udev(struct sthcd_oh *oh,
 				u16 idVendor, u16 idProduct)
 {
+	struct sthcd_hcd *sthcd = oh->hcd;
 	struct sthcd_udev *udev;
 	struct sthcd_port *port;
+	unsigned long flags;
 	int error;
+	
+	drv_printk(KERN_INFO, "inserting device %04X.%04X\n",
+		   idVendor, idProduct);
 
-	udev = sthcd_get_free_udev(oh->hcd);
+	udev = sthcd_get_free_udev(sthcd);
 	if (!udev) {
 		drv_printk(KERN_ERR, "no free udevs!\n");
 		return -EBUSY;
@@ -1564,11 +1656,15 @@ static int sthcd_oh_insert_udev(struct sthcd_oh *oh,
 
 	error = sthcd_udev_init(udev, oh, idVendor, idProduct);
 	if (!error) {
+		spin_lock_irqsave(&sthcd->lock, flags);
+
 		port = udev_to_port(udev);
-		/* connect */
-		port->status_change |= (USB_PORT_STAT_CONNECTION |
-					USB_PORT_STAT_C_CONNECTION << 16);
-		usb_hcd_poll_rh_status(sthcd_to_hcd(oh->hcd));
+		/* notify a connection event */
+		port->status_change = USB_PORT_STAT_POWER |
+					USB_PORT_STAT_CONNECTION |
+					(USB_PORT_STAT_C_CONNECTION<<16);
+
+		spin_unlock_irqrestore(&sthcd->lock, flags);
 	}
 	return error;
 }
@@ -1576,24 +1672,35 @@ static int sthcd_oh_insert_udev(struct sthcd_oh *oh,
 static int sthcd_oh_remove_udev(struct sthcd_oh *oh,
 				u16 idVendor, u16 idProduct)
 {
+	struct sthcd_hcd *sthcd = oh->hcd;
 	struct sthcd_udev *udev;
 	struct sthcd_port *port;
+	u32 old_status;
+	unsigned long flags;
 	int error = 0;
 
-	udev = sthcd_find_udev_by_ids(oh->hcd, idVendor, idProduct);
+	udev = sthcd_find_udev_by_ids(sthcd, idVendor, idProduct);
 	if (!udev) {
 		/* normally reached for ignored hubs */
 		error = -ENODEV;
 	} else {
+		drv_printk(KERN_INFO, "removing device %04X.%04X\n",
+			   idVendor, idProduct);
 		sthcd_udev_exit(udev);
+
+		spin_lock_irqsave(&sthcd->lock, flags);
+
 		port = udev_to_port(udev);
 		clear_bit(__STHCD_PORT_INUSE, &port->flags);
-		/* disconnect */
-		port->status_change = (USB_PORT_STAT_POWER |
-					USB_PORT_STAT_RESET |
-					USB_PORT_STAT_C_RESET << 16);
-		port->status_change |= (USB_PORT_STAT_C_CONNECTION << 16);
-		usb_hcd_poll_rh_status(sthcd_to_hcd(oh->hcd));
+		clear_bit(__STHCD_PORT_DOOMED, &port->flags);
+		port->nr_resets = 0;
+		/* notify a disconnection event */
+		old_status = port->status_change;
+		port->status_change = USB_PORT_STAT_POWER;
+		if ((old_status & USB_PORT_STAT_CONNECTION) != 0)
+			port->status_change |= (USB_PORT_STAT_C_CONNECTION<<16);
+
+		spin_unlock_irqrestore(&sthcd->lock, flags);
 	}
 	return error;
 }
@@ -1779,8 +1886,11 @@ static int sthcd_devid_find(struct sthcd_devid *haystack, size_t count,
 
 static int sthcd_oh_rescan(struct sthcd_oh *oh)
 {
+	static unsigned int poll_cycles = 0;
+	struct usb_hcd *hcd = sthcd_to_hcd(oh->hcd);
 	struct sthcd_devid *p;
 	int nr_new_devids, i;
+	int changes;
 	int error;
 
 	error = sthcd_get_device_list(oh->hcd, oh->fd, oh->new_devids,
@@ -1789,14 +1899,16 @@ static int sthcd_oh_rescan(struct sthcd_oh *oh)
 		return error;
 
 	nr_new_devids = error;
+	changes = 0;
 
 	for(i = 0; i < oh->nr_devids; i++) {
 		p = &oh->devids[i];
 		if (!sthcd_devid_find(oh->new_devids, nr_new_devids, p)) {
 			/* removal */
-			drv_printk(KERN_INFO, "removing device %04X.%04X\n",
-				   p->idVendor, p->idProduct);
-			sthcd_oh_remove_udev(oh, p->idVendor, p->idProduct);
+			error = sthcd_oh_remove_udev(oh, p->idVendor,
+						     p->idProduct);
+			if (!error)
+				changes++;
 		}
 	}
 
@@ -1808,11 +1920,10 @@ static int sthcd_oh_rescan(struct sthcd_oh *oh)
 						   p->idProduct);
 			if (error == 0) {
 				/* not a hub, register the usb device */
-				drv_printk(KERN_INFO,
-					   "inserting device %04X.%04X\n",
-					   p->idVendor, p->idProduct);
-				sthcd_oh_insert_udev(oh, p->idVendor,
-						     p->idProduct);
+				error = sthcd_oh_insert_udev(oh, p->idVendor,
+							     p->idProduct);
+				if (!error)
+					changes++;
 			} else {
 				drv_printk(KERN_INFO,
 					   "ignoring hub %04X.%04X\n",
@@ -1823,6 +1934,33 @@ static int sthcd_oh_rescan(struct sthcd_oh *oh)
 
 	memcpy(oh->devids, oh->new_devids, nr_new_devids * sizeof(*p));
 	oh->nr_devids = nr_new_devids;
+
+	/*
+	 * FIXME
+	 * We ask here the USB layer to explicitly poll for root hub changes
+	 * until we get at least two complete rescan cycles without changes.
+	 *
+	 * Otherwise, for unknown reasons, we end up missing the detection of
+	 * some devices, even if the insertion/removal of these devices is
+	 * properly signaled in port->status_change.
+	 */
+	if (changes) {
+#if 1
+		if (!poll_cycles) {
+			hcd->poll_rh = 1;
+			usb_hcd_poll_rh_status(hcd);
+		}
+		poll_cycles = 2;
+	} else {
+		if (!poll_cycles) {
+			hcd->poll_rh = 0;
+		} else {
+			poll_cycles--;
+		}
+#else
+		usb_hcd_poll_rh_status(hcd);
+#endif
+	}
 
 	return 0;
 }
@@ -1868,22 +2006,6 @@ static void sthcd_oh_exit(struct sthcd_oh *oh)
 	oh->devids = NULL;
 }
 
-#if 0
-static void sthcd_oh_cond_reopen(struct sthcd_oh *oh)
-{
-	struct sthcd_hcd *sthcd = oh->hcd;
-	struct sthcd_udev *udev;
-
-	list_for_each_entry(udev, &sthcd->device_list, node) {
-		if (test_and_clear_bit(__STHCD_UDEV_REOPEN, &udev->flags)) {
-			sthcd_udev_open(udev);
-			sthcd_udev_resume(udev);
-			sthcd_udev_suspend(udev);
-		}
-	}
-}
-#endif
-
 static int sthcd_rescan_thread(void *arg)
 {
 	struct sthcd_hcd *sthcd = arg;
@@ -1902,10 +2024,9 @@ static int sthcd_rescan_thread(void *arg)
 	while(!kthread_should_stop()) {
 		sthcd_oh_rescan(oh);
 
-		/* sthcd_oh_cond_reopen(oh); */
-
-		/* re-check every 5 seconds */
-		sleep_on_timeout(&sthcd->rescan_waitq, 5*HZ);
+		/* re-check again after the configured interval */
+		sleep_on_timeout(&sthcd->rescan_waitq,
+				 STHCD_RESCAN_INTERVAL*HZ);
 	}
 	return 0;
 }
@@ -2046,8 +2167,6 @@ static int sthcd_urb_dequeue(struct usb_hcd *hcd, struct urb *urb, int status)
 	ep = urb->ep;
 	pep = ep_to_pep(ep);
 	if (pep && pep->urb == urb) {
-		DBG("%s: (pep %p, sn %lu, urb %p) urb in transit!\n", __func__,
-		    pep, pep->serial, urb);
 		/*
 		 * There is an urb in flight.
 		 *
@@ -2065,8 +2184,10 @@ static int sthcd_urb_dequeue(struct usb_hcd *hcd, struct urb *urb, int status)
 done:
 	spin_unlock_irqrestore(&sthcd->lock, flags);
 
+#if 0
 	if (error < 0)
 		DBG("%s: error=%d (%x)\n", __func__, error, error);
+#endif
 	return error;
 }
 
@@ -2090,7 +2211,7 @@ static void sthcd_endpoint_disable(struct usb_hcd *hcd,
 		 *
 		 * Disable the private endpoint and take the urb out of it.
 		 * The callback function will take care of freeing the pep
-		 * when the IOS call completes.
+		 * when the starlet call completes.
 		 */
 		set_bit(__STHCD_PEP_DISABLED, &pep->flags);
 		sthcd_pep_takeout_urb(pep);

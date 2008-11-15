@@ -19,7 +19,7 @@
 	#size-cells = <1>;
 
 	chosen {
-		bootargs = "root=/dev/ram0 video=gcn-vifb:tv=auto ip=on force_keyboard_port=4";
+		bootargs = "root=/dev/nfs nfsroot=192.168.001.253:/nfsroot/cube,nfsvers=3,udp ip=on video=gcn-vifb:tv=auto force_keyboard_port=4";
 		linux,stdout-path = "/exi@0c006800/usbgecko@0c006814";
 	};
 

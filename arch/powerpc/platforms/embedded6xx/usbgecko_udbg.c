@@ -176,7 +176,7 @@ static int ug_getc(void)
 /*
  * Transmits a character.
  */
-static void ug_udbg_putc(char ch)
+void ug_udbg_putc(char ch)
 {
 	ug_putc(ch);
 }
@@ -253,6 +253,7 @@ void __init ug_udbg_init(void)
 		udbg_putc = ug_udbg_putc;
 		udbg_getc = ug_udbg_getc;
 		udbg_getc_poll = ug_udbg_getc_poll;
+		printk(KERN_INFO "usbgecko_udbg: ready\n");
 	}
 
 	of_node_put(np);

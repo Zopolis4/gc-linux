@@ -12,6 +12,11 @@
  *
  */
 
+
+/memreserve/ 01698000-017fffff;	/* framebuffer, see video@0c002000 */
+/memreserve/ 01800000-0fffffff;	/* memory hole */
+/memreserve/ 10000000-10003fff;	/* DSP */
+
 / {
 	model = "NintendoWii";
 	compatible = "nintendo,wii";
@@ -19,30 +24,21 @@
 	#size-cells = <1>;
 
 	chosen {
+		/* ramdisk */
+		/* bootargs = "nobats root=/dev/ram0 video=gcnfb:tv=NTSC ip=on force_keyboard_port=4"; */
 
-/*
+		/* nfsroot */
+		/* bootargs = "nobats root=/dev/nfs nfsroot=192.168.001.253:/nfsroot/cube ip=on video=gcnfb:tv=NTSC force_keyboard_port=4"; */
 
-1. ramdisk command-line example
-bootargs = "root=/dev/ram0 video=gcnfb:tv=NTSC ip=on force_keyboard_port=4";
-
-2. nfsroot command-line example
-bootargs = "root=/dev/nfs nfsroot=192.168.001.253:/nfsroot/cube ip=on video=gcnfb:tv=NTSC force_keyboard_port=4";
-
-3. root filesystem on second partition of front SD card example
-bootargs = "root=/dev/rvlsda2 video=gcnfb:tv=NTSC force_keyboard_port=4 placeholder_for_additional_kernel_options_targetted_at_hexedit_lovers";
-
-*/
-
-		bootargs = "root=/dev/rvlsda2 video=gcnfb:tv=NTSC force_keyboard_port=4 placeholder_for_additional_kernel_options_targetted_at_hexedit_lovers";
-
+		/* root filesystem on 2nd partition of SD card, whiite style  */
+		bootargs = "nobats root=/dev/rvlsda2 video=gcnfb:tv=NTSC force_keyboard_port=4 placeholder_for_additional_kernel_options_targetted_at_hexedit_lovers";
 		linux,stdout-path = "/exi@0d006800/usbgecko@0d006814";
 	};
 
 	memory {
 		device_type = "memory";
-		/* 24M minus framebuffer memory area (640*576*2*2) */
-		reg = <00000000 01698000	/* only 1st range is used */
-		       10000000 04000000>;
+		/* mem1 + hole + mem2 - ioh */
+		reg = <00000000 133e0000>;
 	};
 
 	cpus {
@@ -71,12 +67,6 @@ bootargs = "root=/dev/rvlsda2 video=gcnfb:tv=NTSC force_keyboard_port=4 placehol
 		interrupt-controller;
 	};
 
-	/* MEM2 memory, discontiguous */
-	mem2 {
-		compatible = "nintendo,hollywood-mem2";
-		reg = <10000000 33e0000>; /* ~51.8M of MEM2 RAM */
-	};
-
 	/* External Interface bus */
 	exi@0d006800 {
 		#address-cells = <1>;
@@ -103,6 +93,7 @@ bootargs = "root=/dev/rvlsda2 video=gcnfb:tv=NTSC force_keyboard_port=4 placehol
 		clock-frequency = <e7be2c0>; /* 243MHz */
 		ranges = <0c000000 0c000000 00010000 
 			  0d000000 0d000000 00010000
+			  0d800000 0d800000 00001000
 			  133e0000 133e0000 00020000>;
 
 		video@0c002000 {
@@ -110,7 +101,7 @@ bootargs = "root=/dev/rvlsda2 video=gcnfb:tv=NTSC force_keyboard_port=4 placehol
 			reg = <0c002000 100>;
 			interrupts = <08>;
 			interrupt-parent = <&pic>;
-			xfb-start = <01698000>; /* end-of-ram - xfb-size */
+			xfb-start = <01698000>; /* end-of-mem1 - xfb-size */
 			xfb-size = <168000>;
 		};
 
@@ -129,10 +120,24 @@ bootargs = "root=/dev/rvlsda2 video=gcnfb:tv=NTSC force_keyboard_port=4 placehol
 			interrupt-parent = <&pic>;
 		};
 
+		serial@0d006400 {
+			compatible = "nintendo,hollywood-serial";
+			reg = <0d006400 100>;
+			interrupts = <03>;
+			interrupt-parent = <&pic>;
+		};
+
+		gpio0: starlet-gpio@0d8000c0 {
+			compatible = "nintendo,starlet-gpio";
+			reg = <0d8000c0 4>;
+			gpio-controller;
+			#gpio-cells = <2>;
+		};
+
 		starlet-ipc@0d000000 {
 			compatible = "nintendo,starlet-ipc";
-			reg = <0d000000 40	 /* IPC */
-			       133e0000 20000>; /* MEM2 ioh 128K */
+			reg = <0d000000 40	/* IPC */
+			       133e0000 20000>;	/* MEM2 ioh 128K */
 			interrupts = <0e>;
 			interrupt-parent = <&pic>;
 
@@ -153,13 +158,12 @@ bootargs = "root=/dev/rvlsda2 video=gcnfb:tv=NTSC force_keyboard_port=4 placehol
 		starlet-hcd {
 			compatible = "nintendo,starlet-hcd";
 		};
+	};
 
-		serial@0d006400 {
-			compatible = "nintendo,hollywood-serial";
-			reg = <0d006400 100>;
-			interrupts = <03>;
-			interrupt-parent = <&pic>;
-		};
+	led {
+		compatible = "gpio-led";
+		label = "tray";
+		gpios = <&gpio0 5 0>;
 	};
 };
 

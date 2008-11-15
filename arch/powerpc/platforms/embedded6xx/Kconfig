@@ -59,22 +59,15 @@ config PPC_PRPMC2800
 	help
 	  This option enables support for the Motorola PrPMC2800 board
 
-config GAMECUBE
-	bool "Nintendo-GameCube"
+config PPC_C2K
+	bool "SBS/GEFanuc C2K board"
 	depends on EMBEDDED6xx
-	select GAMECUBE_COMMON
+	select MV64X60
+	select NOT_COHERENT_CACHE
+	select MTD_CFI_I4
 	help
-	 Select GAMECUBE if configuring for the Nintendo GameCube.
-	 More information at: <http://gc-linux.sourceforge.net/>
-
-config WII
-	bool "Nintendo-Wii"
-	depends on EMBEDDED6xx
-	select GAMECUBE_COMMON
-	select PPC_LIB_RHEAP
-	help
-	 Select WII if configuring for the Nintendo Wii.
-	 More information at: <http://gc-linux.sourceforge.net/>
+	  This option enables support for the GE Fanuc C2K board (formerly
+	  an SBS board).
 
 config TSI108_BRIDGE
 	bool
@@ -98,6 +91,23 @@ config MPC10X_STORE_GATHERING
 	bool "Enable MPC10x store gathering"
 	depends on MPC10X_BRIDGE
 
+config GAMECUBE
+	bool "Nintendo-GameCube"
+	depends on EMBEDDED6xx
+	select GAMECUBE_COMMON
+	help
+	 Select GAMECUBE if configuring for the Nintendo GameCube.
+	 More information at: <http://gc-linux.sourceforge.net/>
+
+config WII
+	bool "Nintendo-Wii"
+	depends on EMBEDDED6xx
+	select GAMECUBE_COMMON
+	select PPC_LIB_RHEAP
+	help
+	 Select WII if configuring for the Nintendo Wii.
+	 More information at: <http://gc-linux.sourceforge.net/>
+
 config FLIPPER_PIC
 	bool
 	default n
@@ -118,10 +128,22 @@ config GAMECUBE_RSW
 	  
 	  If in doubt, say Y here.
 
-config USBGECKO_UDBG
-	bool "USB Gecko udbg console for the Nintendo GameCube/Wii"
+config GAMECUBE_UDBG
+	bool "Nintendo GameCube/Wii udbg support"
 	depends on GAMECUBE_COMMON
 	default n
+	help
+	  If you say yes to this option, you will be able to choose between
+	  several udbg drivers available for the Nintendo GameCube/Wii.
+	  
+	  If in doubt, say N here.
+
+choice
+	prompt "Nintendo GameCube/Wii udbg drivers"
+	depends on GAMECUBE_UDBG
+	  
+config USBGECKO_UDBG
+	bool "USB Gecko udbg console for the Nintendo GameCube/Wii"
 	help
 	  If you say yes to this option, support will be included for the
 	  USB Gecko adapter as an udbg console.
@@ -132,4 +154,26 @@ config USBGECKO_UDBG
 	  
 	  If in doubt, say N here.
 
+config GAMECUBE_VIDEO_UDBG
+	bool "Nintendo GameCube/Wii framebuffer udbg console"
+	select FONTS
+	select FONT_8x16
+	help
+	  If you say yes to this option, support will be included for a
+	  framebuffer based udbg console for the Nintendo GameCube/Wii.
+	  
+	  If in doubt, say N here.
+
+endchoice
+
+config WII_GPIO
+	bool "Nintendo Wii GPIO support"
+	depends on GPIOLIB
+	default y
+	help
+	  If you say yes to this option, support will be included for the
+	  Nintendo Wii GPIO lines that control, for example, the sensor
+	  bar IR leds, the front led, or the eject switch of the disk unit.
+	  
+	  If in doubt, say Y here.
 

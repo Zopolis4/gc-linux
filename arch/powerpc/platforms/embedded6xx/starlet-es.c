@@ -23,7 +23,7 @@
 #define DRV_DESCRIPTION		"Nintendo Wii starlet ES driver"
 #define DRV_AUTHOR		"Albert Herranz"
 
-static const char starlet_es_driver_version[] = "0.1i";
+static const char starlet_es_driver_version[] = "0.2i";
 
 #define DBG(fmt, arg...)	pr_debug(fmt, ##arg)
 
@@ -344,7 +344,7 @@ int starlet_es_launch_title_view(u64 title, struct starlet_es_ticket_view *view)
  */
 
 #define STARLET_ES_IOS_MIN 30
-#define STARLET_ES_IOS_MAX 35
+#define STARLET_ES_IOS_MAX 36
 
 static int starlet_es_find_newest_title(struct starlet_es_device *es_dev,
 					u64 *title,
