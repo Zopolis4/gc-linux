@@ -2044,6 +2044,25 @@ config FB_PS3_DEFAULT_SIZE_M
 	  The default value can be overridden on the kernel command line
 	  using the "ps3fb" option (e.g. "ps3fb=9M");
 
+config FB_GAMECUBE
+	bool "Nintendo GameCube/Wii frame buffer"
+	depends on FB && GAMECUBE_COMMON
+	select FB_CFB_FILLRECT
+	select FB_CFB_COPYAREA
+	select FB_CFB_IMAGEBLIT
+	help
+	  This is the frame buffer device driver for the Nintendo GameCube.
+
+config WII_AVE_RVL
+	bool "Nintendo Wii audio/video encoder support"
+	depends on FB_GAMECUBE && WII
+	select I2C_GPIO
+	select I2C
+	default y
+	help
+	  Say Y here to support the audio/video encoder found in the
+	  Nintendo Wii video game console.
+
 config FB_XILINX
 	tristate "Xilinx frame buffer support"
 	depends on FB && (XILINX_VIRTEX || MICROBLAZE)
