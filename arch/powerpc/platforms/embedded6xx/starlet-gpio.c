@@ -24,7 +24,7 @@ struct stgpio_chip {
 };
 
 struct stgpio_regs {
-	__be32 data, dir;
+	__be32 out, dir, in;
 };
 
 
@@ -41,7 +41,7 @@ static int stgpio_get(struct gpio_chip *gc, unsigned int gpio)
 	u32 pin_mask = 1 << (31 - gpio);
 	unsigned int val;
 
-	val = !!(in_be32(&regs->data) & pin_mask);
+	val = !!(in_be32(&regs->in) & pin_mask);
 
 	pr_debug("%s: gpio: %d val: %d\n", __func__, gpio, val);
 
@@ -58,10 +58,10 @@ static void stgpio_set(struct gpio_chip *gc, unsigned int gpio, int val)
 	unsigned long flags;
 
 	spin_lock_irqsave(&st_gc->lock, flags);
-	data = in_be32(&regs->data) & ~pin_mask;
+	data = in_be32(&regs->in) & ~pin_mask;
 	if (val)
 		data |= pin_mask;
-	out_be32(&regs->data, data);
+	out_be32(&regs->out, data);
 	spin_unlock_irqrestore(&st_gc->lock, flags);
 
 	pr_debug("%s: gpio: %d val: %d\n", __func__, gpio, val);
@@ -90,7 +90,7 @@ static int stgpio_dir_out(struct gpio_chip *gc, unsigned int gpio, int val)
 	return 0;
 }
 
-static int stgpio_add32(struct device_node *np)
+int stgpio_add32(struct device_node *np)
 {
 	struct of_mm_gpio_chip *mm_gc;
 	struct of_gpio_chip *of_gc;
