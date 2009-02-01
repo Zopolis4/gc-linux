@@ -2,8 +2,8 @@
  * drivers/rtc/rtc-gcn.c
  *
  * Nintendo GameCube/Wii RTC/SRAM driver
- * Copyright (C) 2004-2008 The GameCube Linux Team
- * Copyright (C) 2005,2008 Albert Herranz
+ * Copyright (C) 2004-2009 The GameCube Linux Team
+ * Copyright (C) 2005,2008,2009 Albert Herranz
  *
  * Based on gamecube_time.c from Torben Nielsen.
  *
@@ -290,17 +290,17 @@ static void gcnrtc_remove(struct exi_device *dev)
 
 
 static struct exi_device_id gcnrtc_eid_table[] = {
-        {
-                .channel = RTC_EXI_CHANNEL,
-                .device  = RTC_EXI_DEVICE,
-                .id      = RTC_EXI_GCN_ID
-        },
-        {
-                .channel = RTC_EXI_CHANNEL,
-                .device  = RTC_EXI_DEVICE,
-                .id      = RTC_EXI_RVL_ID
-        },
-        { },
+	{
+		.channel = RTC_EXI_CHANNEL,
+		.device  = RTC_EXI_DEVICE,
+		.id      = RTC_EXI_GCN_ID
+	},
+	{
+		.channel = RTC_EXI_CHANNEL,
+		.device  = RTC_EXI_DEVICE,
+		.id      = RTC_EXI_RVL_ID
+	},
+	{ },
 };
 
 static struct exi_driver gcnrtc_driver = {

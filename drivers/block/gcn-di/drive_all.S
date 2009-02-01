@@ -1,7 +1,7 @@
 /*
  * DVD+/-R compatible "cactus" firmware extensions
- * Copyright (C) 2005-2006 The GameCube Linux Team
- * Copyright (C) 2005,2006 Albert Herranz
+ * Copyright (C) 2005-2009 The GameCube Linux Team
+ * Copyright (C) 2005,2006,2009 Albert Herranz
  *
  * Originally based on analysis of Cobra 1.0 drive code released by tmbinc
  * on dextrose.com.
@@ -282,7 +282,7 @@ done:
  *  1e| PSW    |            |        |
  *  20| PC lo  |            | PC lo  | <- a3
  *  22| PC hi  |            | PC hi  |
- *    :        :            | old a3 | 
+ *    :        :            | old a3 |
  *    | ...    |            |        |
  *    +--------+            +--------+ <- (0x8ea1c) for drive 04
  *    normal context stack  interrupt context stack

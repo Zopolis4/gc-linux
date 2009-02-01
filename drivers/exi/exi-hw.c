@@ -2,9 +2,9 @@
  * drivers/exi/exi-hw.c
  *
  * Nintendo GameCube EXpansion Interface support. Hardware routines.
- * Copyright (C) 2004-2008 The GameCube Linux Team
+ * Copyright (C) 2004-2009 The GameCube Linux Team
  * Copyright (C) 2004,2005 Todd Jeffreys <todd@voidpointer.org>
- * Copyright (C) 2005,2006,2007,2008 Albert Herranz
+ * Copyright (C) 2005,2006,2007,2008,2009 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -43,28 +43,29 @@
  * softirq context from the EXI event handlers.
  *
  * "take" operations in user context will sleep if necessary until the
- * channel is "given". 
+ * channel is "given".
  *
  *
  * 2. Transfers
- * 
+ *
  * The EXI Layer provides a transfer API to perform read and write
  * operations.
  * By default, transfers partially or totally suitable for DMA will be
- * partially or totally processed through DMA. The EXI Layer takes care of 
+ * partially or totally processed through DMA. The EXI Layer takes care of
  * splitting a transfer in several pieces so the best transfer method is
  * used each time.
  *
  * (1) A immediate mode transfer is atomic, but a DMA transfer is not.
  */
 
-//#define EXI_DEBUG 1
+/*#define EXI_DEBUG 1*/
 
 #include <linux/types.h>
 #include <linux/dma-mapping.h>
 #include <linux/wait.h>
 #include <linux/delay.h>
-#include <asm/io.h>
+#include <linux/io.h>
+#include <linux/spinlock.h>
 
 #include <linux/exi.h>
 #include "exi-hw.h"
@@ -75,19 +76,14 @@
 
 #ifdef EXI_DEBUG
 #  define DBG(fmt, args...) \
-	  printk(KERN_ERR "%s: " fmt, __FUNCTION__ , ## args)
+	   printk(KERN_ERR "%s: " fmt, __func__ , ## args)
 #else
 #  define DBG(fmt, args...)
 #endif
 
 
-extern wait_queue_head_t exi_bus_waitq;
-
 static void exi_tasklet(unsigned long param);
 
-
-/* for compatibility with the old exi-lite framework */
-unsigned long exi_running = 0;
 
 /* io memory base for EXI */
 static void __iomem *exi_io_mem;
@@ -99,22 +95,22 @@ static void __iomem *exi_io_mem;
 static struct exi_channel exi_channels[EXI_MAX_CHANNELS] = {
 	[0] = {
 		.channel = 0,
-		.lock = SPIN_LOCK_UNLOCKED,
-		.io_lock = SPIN_LOCK_UNLOCKED,
+		.lock = __SPIN_LOCK_UNLOCKED(exi_channels[0].lock),
+		.io_lock = __SPIN_LOCK_UNLOCKED(exi_channels[0].io_lock),
 		.wait_queue = __WAIT_QUEUE_HEAD_INITIALIZER(
 				exi_channels[0].wait_queue),
 	},
 	[1] = {
 		.channel = 1,
-		.lock = SPIN_LOCK_UNLOCKED,
-		.io_lock = SPIN_LOCK_UNLOCKED,
+		.lock = __SPIN_LOCK_UNLOCKED(exi_channels[1].lock),
+		.io_lock = __SPIN_LOCK_UNLOCKED(exi_channels[1].io_lock),
 		.wait_queue = __WAIT_QUEUE_HEAD_INITIALIZER(
 				exi_channels[1].wait_queue),
 	},
 	[2] = {
 		.channel = 2,
-		.lock = SPIN_LOCK_UNLOCKED,
-		.io_lock = SPIN_LOCK_UNLOCKED,
+		.lock = __SPIN_LOCK_UNLOCKED(exi_channels[2].lock),
+		.io_lock = __SPIN_LOCK_UNLOCKED(exi_channels[2].io_lock),
 		.wait_queue = __WAIT_QUEUE_HEAD_INITIALIZER(
 				exi_channels[2].wait_queue),
 	},
@@ -122,7 +118,7 @@ static struct exi_channel exi_channels[EXI_MAX_CHANNELS] = {
 
 /* handy iterator for exi channels */
 #define exi_channel_for_each(pos) \
-	for(pos = &exi_channels[0]; pos < &exi_channels[EXI_MAX_CHANNELS]; \
+	for (pos = &exi_channels[0]; pos < &exi_channels[EXI_MAX_CHANNELS]; \
 		pos++)
 
 /* conversions between channel numbers and exi channel structures */
@@ -142,6 +138,7 @@ struct exi_channel *to_exi_channel(unsigned int channel)
 
 	return __to_exi_channel(channel);
 }
+EXPORT_SYMBOL(to_exi_channel);
 
 /**
  *	to_channel  -  returns a channel number given an exi channel
@@ -155,6 +152,7 @@ unsigned int to_channel(struct exi_channel *exi_channel)
 
 	return __to_channel(exi_channel);
 }
+EXPORT_SYMBOL(to_channel);
 
 /**
  *	exi_channel_owner  -  returns the owner of the given channel
@@ -202,6 +200,7 @@ void exi_select_raw(struct exi_channel *exi_channel, unsigned int device,
 	out_be32(csr_reg, csr);
 	spin_unlock_irqrestore(&exi_channel->io_lock, flags);
 }
+EXPORT_SYMBOL(exi_select_raw);
 
 
 /**
@@ -226,6 +225,7 @@ void exi_deselect_raw(struct exi_channel *exi_channel)
 	out_be32(csr_reg, csr);
 	spin_unlock_irqrestore(&exi_channel->io_lock, flags);
 }
+EXPORT_SYMBOL(exi_deselect_raw);
 
 /**
  *	exi_transfer_raw  -  performs an exi transfer using immediate mode
@@ -240,14 +240,14 @@ void exi_deselect_raw(struct exi_channel *exi_channel)
 void exi_transfer_raw(struct exi_channel *exi_channel,
 		      void *data, size_t len, int mode)
 {
-	while(len >= 4) {
+	while (len >= 4) {
 		__exi_transfer_raw_u32(exi_channel, data, mode);
 		exi_channel->stats_xfers++;
 		data += 4;
 		len -= 4;
 	}
 
-	switch(len) {
+	switch (len) {
 	case 1:
 		__exi_transfer_raw_u8(exi_channel, data, mode);
 		exi_channel->stats_xfers++;
@@ -267,6 +267,7 @@ void exi_transfer_raw(struct exi_channel *exi_channel,
 		break;
 	}
 }
+EXPORT_SYMBOL(exi_transfer_raw);
 
 /*
  * Internal. Start a transfer using "interrupt-driven immediate" mode.
@@ -285,22 +286,22 @@ static void exi_start_idi_transfer_raw(struct exi_channel *exi_channel,
 	exi_channel->stats_xfers++;
 
 	if ((mode & EXI_OP_WRITE)) {
-		switch(len) {
-			case 1:
-				val = *((u8*)data) << 24;
-				break;
-			case 2:
-				val = *((u16*)data) << 16;
-				break;
-			case 3:
-				val = *((u16*)data) << 16;
-				val |= *((u8*)data+2) << 8;
-				break;
-			case 4:
-				val = *((u32*)data);
-				break;
-			default:
-				break;
+		switch (len) {
+		case 1:
+			val = *((u8 *)data) << 24;
+			break;
+		case 2:
+			val = *((u16 *)data) << 16;
+			break;
+		case 3:
+			val = *((u16 *)data) << 16;
+			val |= *((u8 *)data+2) << 8;
+			break;
+		case 4:
+			val = *((u32 *)data);
+			break;
+		default:
+			break;
 		}
 	}
 
@@ -312,7 +313,8 @@ static void exi_start_idi_transfer_raw(struct exi_channel *exi_channel,
 	spin_unlock_irqrestore(&exi_channel->io_lock, flags);
 
 	/* start the transfer */
-	out_be32(io_base + EXI_CR, EXI_CR_TSTART | EXI_CR_TLEN(len) | (mode&0xf));
+	out_be32(io_base + EXI_CR,
+		 EXI_CR_TSTART | EXI_CR_TLEN(len) | (mode&0xf));
 }
 
 /*
@@ -328,22 +330,22 @@ static void exi_end_idi_transfer_raw(struct exi_channel *exi_channel,
 
 	if ((mode&0xf) != EXI_OP_WRITE) {
 		val = in_be32(io_base + EXI_DATA);
-		switch(len) {
-			case 1:
-				*((u8*)data) = (u8)(val >> 24);
-				break;
-			case 2:
-				*((u16*)data) = (u16)(val >> 16);
-				break;
-			case 3:
-				*((u16*)data) = (u16)(val >> 16);
-				*((u8*)data+2) = (u8)(val >> 8);
-				break;
-			case 4:
-				*((u32*)data) = (u32)(val);
-				break;
-			default:
-				break;
+		switch (len) {
+		case 1:
+			*((u8 *)data) = (u8)(val >> 24);
+			break;
+		case 2:
+			*((u16 *)data) = (u16)(val >> 16);
+			break;
+		case 3:
+			*((u16 *)data) = (u16)(val >> 16);
+			*((u8 *)data+2) = (u8)(val >> 8);
+			break;
+		case 4:
+			*((u32 *)data) = (u32)(val);
+			break;
+		default:
+			break;
 		}
 	}
 }
@@ -402,7 +404,7 @@ static void exi_wait_for_transfer_raw(struct exi_channel *exi_channel)
 	spin_unlock_irqrestore(&exi_channel->io_lock, flags);
 
 	/* busy-wait for transfer complete */
-	while((in_be32(cr_reg)&EXI_CR_TSTART) && !borked) {
+	while ((in_be32(cr_reg)&EXI_CR_TSTART) && !borked) {
 		cpu_relax();
 		borked = time_after(jiffies, deadline);
 	}
@@ -455,9 +457,8 @@ static void exi_check_pending_work(void)
 	struct exi_channel *exi_channel;
 
 	exi_channel_for_each(exi_channel) {
-		if (exi_channel->csr) {
+		if (exi_channel->csr)
 			tasklet_schedule(&exi_channel->tasklet);
-		}
 	}
 }
 
@@ -476,8 +477,8 @@ static void exi_end_dma_transfer(struct exi_channel *exi_channel)
 		exi_channel->flags &= ~EXI_DMABUSY;
 		dma_unmap_single(&exi_channel->owner->dev,
 				 cmd->dma_addr, cmd->dma_len,
-				 (cmd->opcode == EXI_OP_READ)?
-				 DMA_FROM_DEVICE:DMA_TO_DEVICE);
+				 (cmd->opcode == EXI_OP_READ) ?
+				 DMA_FROM_DEVICE : DMA_TO_DEVICE);
 
 		exi_channel->queued_cmd = NULL;
 	}
@@ -487,7 +488,7 @@ static void exi_end_dma_transfer(struct exi_channel *exi_channel)
  * Internal. Finish an "interrupt-driven immediate" transfer.
  * Caller holds the channel lock.
  *
- * If more data is pending transfer, schedules a new transfer.
+ * If more data is pending transfer, it schedules a new transfer.
  * Returns zero if no more transfers are required, non-zero otherwise.
  *
  */
@@ -501,7 +502,7 @@ static int exi_end_idi_transfer(struct exi_channel *exi_channel)
 	if (cmd) {
 		BUG_ON((exi_channel->flags & EXI_DMABUSY));
 
-		len = (cmd->bytes_left > 4)?4:cmd->bytes_left;
+		len = (cmd->bytes_left > 4) ? 4 : cmd->bytes_left;
 		offset = cmd->len - cmd->bytes_left;
 		exi_end_idi_transfer_raw(exi_channel,
 					 cmd->data + offset, len,
@@ -510,8 +511,8 @@ static int exi_end_idi_transfer(struct exi_channel *exi_channel)
 
 		if (balance && cmd->bytes_left > 0) {
 			offset += len;
-			len = (cmd->bytes_left > balance)?
-					balance:cmd->bytes_left;
+			len = (cmd->bytes_left > balance) ?
+					balance : cmd->bytes_left;
 			exi_transfer_raw(exi_channel,
 					 cmd->data + offset, len, cmd->opcode);
 			cmd->bytes_left -= len;
@@ -519,7 +520,7 @@ static int exi_end_idi_transfer(struct exi_channel *exi_channel)
 
 		if (cmd->bytes_left > 0) {
 			offset = cmd->len - cmd->bytes_left;
-			len = (cmd->bytes_left > 4)?4:cmd->bytes_left;
+			len = (cmd->bytes_left > 4) ? 4 : cmd->bytes_left;
 
 			exi_start_idi_transfer_raw(exi_channel,
 						   cmd->data + offset, len,
@@ -529,7 +530,7 @@ static int exi_end_idi_transfer(struct exi_channel *exi_channel)
 		}
 	}
 
-	return (exi_channel->queued_cmd)?1:0;
+	return (exi_channel->queued_cmd) ? 1 : 0;
 }
 
 /*
@@ -573,7 +574,7 @@ out:
  */
 static void exi_wait_for_transfer(struct exi_channel *exi_channel)
 {
-	while(exi_wait_for_transfer_one(exi_channel))
+	while (exi_wait_for_transfer_one(exi_channel))
 		cpu_relax();
 }
 #endif
@@ -584,9 +585,8 @@ static void exi_wait_for_transfer(struct exi_channel *exi_channel)
 static void exi_command_done(struct exi_command *cmd)
 {
 	/* if specified, call the completion routine */
-	if (cmd->done) {
+	if (cmd->done)
 		cmd->done(cmd);
-	}
 }
 
 /*
@@ -601,7 +601,7 @@ static int exi_take_channel(struct exi_channel *exi_channel,
 	BUG_ON(!exi_device);
 
 	spin_lock_irqsave(&exi_channel->lock, flags);
-	while(exi_channel->owner) {
+	while (exi_channel->owner) {
 		spin_unlock_irqrestore(&exi_channel->lock, flags);
 		if (!wait)
 			return -EBUSY;
@@ -660,7 +660,7 @@ static void exi_cmd_post_transfer(struct exi_command *cmd)
 static int exi_cmd_transfer(struct exi_command *cmd)
 {
 	static u8 exi_aligned_transfer_buf[EXI_DMA_ALIGN+1]
-				 __attribute__ ((aligned (EXI_DMA_ALIGN+1)));
+				 __attribute__ ((aligned(EXI_DMA_ALIGN+1)));
 	struct exi_channel *exi_channel = cmd->exi_channel;
 	struct exi_command *post_cmd = &exi_channel->post_cmd;
 	void *pre_data, *data, *post_data;
@@ -685,7 +685,7 @@ static int exi_cmd_transfer(struct exi_command *cmd)
 		exi_channel->flags &= ~EXI_DMABUSY;
 
 		cmd->bytes_left = cmd->len;
-		len = (cmd->bytes_left > 4)?4:cmd->bytes_left;
+		len = (cmd->bytes_left > 4) ? 4 : cmd->bytes_left;
 		exi_start_idi_transfer_raw(exi_channel, data, len, opcode);
 
 		result = 1; /* wait */
@@ -735,7 +735,7 @@ static int exi_cmd_transfer(struct exi_command *cmd)
 		 * DMA transfer using a specially aligned temporary buffer,
 		 * followed by a non-DMA transfer for the remaining bytes.
 		 */
-		if ( pre_len + post_len > EXI_DMA_ALIGN ) {
+		if (pre_len + post_len > EXI_DMA_ALIGN) {
 			post_len = pre_len + post_len - (EXI_DMA_ALIGN+1);
 			post_data = pre_data + EXI_DMA_ALIGN+1;
 			len = EXI_DMA_ALIGN+1;
@@ -781,8 +781,8 @@ static int exi_cmd_transfer(struct exi_command *cmd)
 	cmd->dma_len = len;
 	cmd->dma_addr = dma_map_single(&exi_channel->owner->dev,
 				       data, len,
-				       (cmd->opcode == EXI_OP_READ)?
-				       DMA_FROM_DEVICE:DMA_TO_DEVICE);
+				       (cmd->opcode == EXI_OP_READ) ?
+				       DMA_FROM_DEVICE : DMA_TO_DEVICE);
 
 	exi_start_dma_transfer_raw(exi_channel, cmd->dma_addr, len, opcode);
 
@@ -812,7 +812,7 @@ static int exi_run_command(struct exi_command *cmd)
 	if (cmd->opcode != EXI_OP_TAKE)
 		WARN_ON(exi_channel->owner != exi_device);
 
-	switch(cmd->opcode) {
+	switch (cmd->opcode) {
 	case EXI_OP_NOP:
 		break;
 	case EXI_OP_TAKE:
@@ -896,6 +896,7 @@ int exi_take(struct exi_device *exi_device, int wait)
 		cmd.flags |= EXI_CMD_NOWAIT;
 	return exi_run_command(&cmd);
 }
+EXPORT_SYMBOL(exi_take);
 
 /**
  *	exi_give  -  releases an exi channel
@@ -910,6 +911,7 @@ int exi_give(struct exi_device *exi_device)
 	exi_op_give(&cmd, exi_device->exi_channel);
 	return exi_run_command(&cmd);
 }
+EXPORT_SYMBOL(exi_give);
 
 /**
  *	exi_select  -  selects a exi device
@@ -924,6 +926,7 @@ void exi_select(struct exi_device *exi_device)
 	exi_op_select(&cmd, exi_device);
 	exi_run_command(&cmd);
 }
+EXPORT_SYMBOL(exi_select);
 
 /**
  *	exi_deselect  -  deselects all devices on an exi channel
@@ -939,6 +942,7 @@ void exi_deselect(struct exi_channel *exi_channel)
 	exi_op_deselect(&cmd, exi_channel);
 	exi_run_command(&cmd);
 }
+EXPORT_SYMBOL(exi_deselect);
 
 /**
  *	exi_transfer  -  Performs a read or write EXI transfer.
@@ -958,7 +962,7 @@ void exi_transfer(struct exi_channel *exi_channel, void *data, size_t len,
 	cmd.flags |= flags;
 	exi_run_command_and_wait(&cmd);
 }
-
+EXPORT_SYMBOL(exi_transfer);
 
 /*
  * Internal. Release several previously reserved channels, according to a
@@ -969,7 +973,8 @@ static void __give_some_channels(unsigned int channel_mask)
 	struct exi_channel *exi_channel;
 	unsigned int channel;
 
-	for(channel=0; channel_mask && channel < EXI_MAX_CHANNELS; channel++) {
+	for (channel = 0; channel_mask && channel < EXI_MAX_CHANNELS;
+	     channel++) {
 		if ((channel_mask & (1<<channel))) {
 			channel_mask &= ~(1<<channel);
 			exi_channel = __to_exi_channel(channel);
@@ -990,7 +995,8 @@ static inline int __try_take_some_channels(unsigned int channel_mask,
 	unsigned long flags;
 	int result = 0;
 
-	for(channel=0; channel_mask && channel < EXI_MAX_CHANNELS; channel++) {
+	for (channel = 0; channel_mask && channel < EXI_MAX_CHANNELS;
+	     channel++) {
 		if ((channel_mask & (1<<channel))) {
 			channel_mask &= ~(1<<channel);
 			exi_channel = __to_exi_channel(channel);
@@ -1082,11 +1088,11 @@ static void exi_tasklet(unsigned long param)
 	}
 
 	/*
-	 * We won't lauch event handlers if any of the channels we 
+	 * We won't lauch event handlers if any of the channels we
 	 * provided on event registration is in use.
 	 */
 
-	//exi_cond_trigger_event(exi_channel, EXI_EVENT_TC, EXI_CSR_TCINT);
+	/*exi_cond_trigger_event(exi_channel, EXI_EVENT_TC, EXI_CSR_TCINT);*/
 	exi_cond_trigger_event(exi_channel, EXI_EVENT_IRQ, EXI_CSR_EXIINT);
 	exi_cond_trigger_event(exi_channel, EXI_EVENT_INSERT, EXI_CSR_EXTIN);
 }
@@ -1126,20 +1132,17 @@ static irqreturn_t exi_irq_handler(int irq, void *dev_id)
 		    exi_channel->csr);
 
 		/* ack all for this channel */
-                out_be32(csr_reg, csr | status);
+		out_be32(csr_reg, csr | status);
 
 		spin_unlock_irqrestore(&exi_channel->io_lock, flags);
 
-		if ((status & EXI_CSR_TCINT)) {
+		if ((status & EXI_CSR_TCINT))
 			exi_wait_for_transfer_one(exi_channel);
-		}
-		if ((status & EXI_CSR_EXTIN)) {
+		if ((status & EXI_CSR_EXTIN))
 			wake_up(&exi_bus_waitq);
-		}
 
-		if (exi_channel->csr && !exi_is_taken(exi_channel)) {
+		if (exi_channel->csr && !exi_is_taken(exi_channel))
 			tasklet_schedule(&exi_channel->tasklet);
-		}
 	}
 	return IRQ_HANDLED;
 }
@@ -1163,7 +1166,8 @@ static int exi_enable_event(struct exi_channel *exi_channel,
 		out_be32(csr_reg, csr | (EXI_CSR_EXTIN | EXI_CSR_EXTINMASK));
 		break;
 	case EXI_EVENT_TC:
-		//out_be32(csr_reg, csr | (EXI_CSR_TCINT | EXI_CSR_TCINTMASK));
+		/*out_be32(csr_reg,
+			   csr | (EXI_CSR_TCINT | EXI_CSR_TCINTMASK));*/
 		break;
 	case EXI_EVENT_IRQ:
 		out_be32(csr_reg, csr | (EXI_CSR_EXIINT | EXI_CSR_EXIINTMASK));
@@ -1192,7 +1196,8 @@ static int exi_disable_event(struct exi_channel *exi_channel,
 		out_be32(csr_reg, (csr | EXI_CSR_EXTIN) & ~EXI_CSR_EXTINMASK);
 		break;
 	case EXI_EVENT_TC:
-		//out_be32(csr_reg, (csr | EXI_CSR_TCINT) & ~EXI_CSR_TCINTMASK);
+		/*out_be32(csr_reg,
+			   (csr | EXI_CSR_TCINT) & ~EXI_CSR_TCINTMASK);*/
 		break;
 	case EXI_EVENT_IRQ:
 		out_be32(csr_reg, (csr | EXI_CSR_EXIINT) & ~EXI_CSR_EXIINTMASK);
@@ -1201,7 +1206,6 @@ static int exi_disable_event(struct exi_channel *exi_channel,
 	spin_unlock_irqrestore(&exi_channel->io_lock, flags);
 	return 0;
 }
-
 
 /**
  *	exi_event_register  -  Registers an event on a given channel.
@@ -1240,7 +1244,7 @@ out:
 	spin_unlock(&exi_channel->lock);
 	return result;
 }
-
+EXPORT_SYMBOL(exi_event_register);
 
 /**
  *	exi_event_unregister  -  Unregisters an event on a given channel.
@@ -1268,6 +1272,7 @@ int exi_event_unregister(struct exi_channel *exi_channel, unsigned int event_id)
 
 	return result;
 }
+EXPORT_SYMBOL(exi_event_unregister);
 
 /*
  * Internal. Quiesce a channel.
@@ -1324,20 +1329,20 @@ u32 exi_get_id(struct exi_device *exi_device)
 	/*
 	 * We return a EXI_ID_NONE if there is some unidentified device
 	 * inserted in memcard slot A or memcard slot B.
-	 * This, for example, allows the SD/MMC driver to see cards.
+	 * This, for example, allows the SD/MMC driver to see inserted cards.
 	 */
 	if (id == EXI_ID_INVALID) {
 		if ((__to_channel(exi_channel) == 0 ||
 		     __to_channel(exi_channel) == 1)
 		    && exi_device->eid.device == 0) {
-			if (in_be32(csr_reg) & EXI_CSR_EXT) {
+			if (in_be32(csr_reg) & EXI_CSR_EXT)
 				id = EXI_ID_NONE;
-			}
-		} 
+		}
 	}
 
 	return id;
 }
+EXPORT_SYMBOL(exi_get_id);
 
 /*
  * Tells if there is a device inserted in one of the memory card slots.
@@ -1345,7 +1350,7 @@ u32 exi_get_id(struct exi_device *exi_device)
 int exi_get_ext_line(struct exi_channel *exi_channel)
 {
 	u32 __iomem *csr_reg = exi_channel->io_base + EXI_CSR;
-	return (in_be32(csr_reg) & EXI_CSR_EXT)?1:0;
+	return (in_be32(csr_reg) & EXI_CSR_EXT) ? 1 : 0;
 }
 
 /*
@@ -1353,11 +1358,10 @@ int exi_get_ext_line(struct exi_channel *exi_channel)
  */
 void exi_update_ext_status(struct exi_channel *exi_channel)
 {
-	if (exi_get_ext_line(exi_channel)) {
+	if (exi_get_ext_line(exi_channel))
 		exi_channel->flags |= EXI_EXT;
-	} else {
+	else
 		exi_channel->flags &= ~EXI_EXT;
-	}
 }
 
 /*
@@ -1375,7 +1379,7 @@ int exi_hw_init(char *module_name, struct resource *mem, unsigned int irq)
 		return -ENOMEM;
 	}
 
-	for(channel = 0; channel < EXI_MAX_CHANNELS; channel++) {
+	for (channel = 0; channel < EXI_MAX_CHANNELS; channel++) {
 		exi_channel = __to_exi_channel(channel);
 
 		/* initialize a channel structure */
@@ -1386,16 +1390,15 @@ int exi_hw_init(char *module_name, struct resource *mem, unsigned int irq)
 	exi_quiesce_all_channels(EXI_CSR_EXTINMASK);
 
 	/* register the exi interrupt handler */
-        result = request_irq(irq, exi_irq_handler, 0, module_name, NULL);
-        if (result) {
+	result = request_irq(irq, exi_irq_handler, 0, module_name, NULL);
+	if (result)
 		drv_printk(KERN_ERR, "failed to register IRQ %d\n", irq);
-        }
 
 	return result;
 }
 
 /*
- * Pseudo-Internal. 
+ * Pseudo-Internal.
  */
 void exi_hw_exit(struct resource *mem, unsigned int irq)
 {
@@ -1403,22 +1406,3 @@ void exi_hw_exit(struct resource *mem, unsigned int irq)
 	iounmap(exi_io_mem);
 	free_irq(irq, NULL);
 }
-
-
-EXPORT_SYMBOL(to_exi_channel);
-EXPORT_SYMBOL(to_channel);
-
-EXPORT_SYMBOL(exi_select_raw);
-EXPORT_SYMBOL(exi_deselect_raw);
-EXPORT_SYMBOL(exi_transfer_raw);
-
-EXPORT_SYMBOL(exi_take);
-EXPORT_SYMBOL(exi_give);
-EXPORT_SYMBOL(exi_select);
-EXPORT_SYMBOL(exi_deselect);
-EXPORT_SYMBOL(exi_transfer);
-
-EXPORT_SYMBOL(exi_get_id);
-EXPORT_SYMBOL(exi_event_register);
-EXPORT_SYMBOL(exi_event_unregister);
-

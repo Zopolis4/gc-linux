@@ -2,8 +2,8 @@
  * arch/powerpc/platforms/embedded6xx/gamecube_dev.c
  *
  * Nintendo GameCube platform device setup.
- * Copyright (C) 2008 The GameCube Linux Team
- * Copyright (C) 2008 Albert Herranz
+ * Copyright (C) 2008-2009 The GameCube Linux Team
+ * Copyright (C) 2008,2009 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -32,4 +32,3 @@ static int __init gamecube_device_probe(void)
 	return 0;
 }
 device_initcall(gamecube_device_probe);
-

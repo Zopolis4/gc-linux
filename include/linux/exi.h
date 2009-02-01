@@ -2,10 +2,10 @@
  * include/linux/exi.h
  *
  * Nintendo GameCube EXpansion Interface definitions
- * Copyright (C) 2004-2008 The GameCube Linux Team
+ * Copyright (C) 2004-2009 The GameCube Linux Team
  * Copyright (C) 2004 Arthur Othieno <a.othieno@bluewin.ch>
  * Copyright (C) 2004,2005 Todd Jeffreys <todd@voidpointer.org>
- * Copyright (C) 2005,2007,2008 Albert Herranz
+ * Copyright (C) 2005,2007,2008,2009 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -18,7 +18,7 @@
 #define __EXI_H
 
 #include <linux/device.h>
-#include <asm/io.h>
+#include <linux/io.h>
 
 
 struct exi_channel;
@@ -32,7 +32,7 @@ struct exi_device_id {
 
 	unsigned int		device;
 #define	EXI_DEVICE_ANY	(~0)
-	
+
 	u32			id;
 #define	EXI_ID_INVALID	(~0)
 #define	EXI_ID_NONE	(EXI_ID_INVALID-1)
@@ -53,7 +53,7 @@ struct exi_device {
 	struct device		dev;
 };
 
-#define to_exi_device(n) container_of(n,struct exi_device,dev)
+#define to_exi_device(n) container_of(n, struct exi_device, dev)
 
 struct exi_device *exi_get_exi_device(struct exi_channel *exi_channel,
 				      int device);
@@ -65,14 +65,14 @@ struct exi_driver {
 	char			*name;
 	struct exi_device_id	*eid_table;
 	int			frequency;
-	
+
 	int  (*probe)  (struct exi_device *dev);
 	void (*remove) (struct exi_device *dev);
 
 	struct device_driver driver;
 };
 
-#define to_exi_driver(n) container_of(n,struct exi_driver,driver)
+#define to_exi_driver(n) container_of(n, struct exi_driver, driver)
 
 
 /*
@@ -89,7 +89,7 @@ static inline void *exi_get_drvdata(struct exi_device *exi_dev)
 {
 	return dev_get_drvdata(&exi_dev->dev);
 }
-                                                                                
+
 static inline void exi_set_drvdata(struct exi_device *exi_dev, void *data)
 {
 	dev_set_drvdata(&exi_dev->dev, data);
@@ -117,6 +117,9 @@ extern u32 exi_get_id(struct exi_device *exi_device);
  *
  */
 
+extern void exi_channel_init(struct exi_channel *exi_channel,
+			     unsigned int channel);
+
 extern struct exi_channel *to_exi_channel(unsigned int channel);
 extern unsigned int to_channel(struct exi_channel *exi_channel);
 
@@ -128,7 +131,7 @@ static inline struct exi_channel *exi_get_exi_channel(struct exi_device *dev)
 #define EXI_EVENT_IRQ     0
 #define EXI_EVENT_INSERT  1
 #define EXI_EVENT_TC      2
-                                                                                
+
 typedef int (*exi_event_handler_t)(struct exi_channel *exi_channel,
 				   unsigned int event_id, void *data);
 
@@ -241,7 +244,7 @@ static inline void exi_op_transfer(struct exi_command *cmd,
  *
  */
 
-/* 
+/*
  * Raw.
  */
 extern void exi_select_raw(struct exi_channel *exi_channel,
@@ -257,7 +260,7 @@ extern void exi_transfer_raw(struct exi_channel *exi_channel,
 extern void exi_dma_transfer_raw(struct exi_channel *channel,
 				 dma_addr_t data, size_t len, int mode);
 
-/* 
+/*
  * Standard.
  */
 

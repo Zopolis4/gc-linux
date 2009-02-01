@@ -2,8 +2,8 @@
  * arch/powerpc/platforms/embedded6xx/starlet-es.c
  *
  * Nintendo Wii starlet ES routines
- * Copyright (C) 2008 The GameCube Linux Team
- * Copyright (C) 2008 Albert Herranz
+ * Copyright (C) 2008-2009 The GameCube Linux Team
+ * Copyright (C) 2008,2009 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -28,7 +28,7 @@ static const char starlet_es_driver_version[] = "0.2i";
 #define DBG(fmt, arg...)	pr_debug(fmt, ##arg)
 
 #define drv_printk(level, format, arg...) \
-        printk(level DRV_MODULE_NAME ": " format , ## arg)
+	 printk(level DRV_MODULE_NAME ": " format , ## arg)
 
 struct starlet_es_device {
 	int fd;
@@ -56,7 +56,7 @@ struct starlet_es_ticket_view {
 #if 0
 struct starlet_es_ticket {
 	char issuer[0x40];
-	u8 fill[63]; //TODO: not really fill
+	u8 fill[63]; /* TODO: not really fill */
 	u8 title_key[16];
 	u8 fill2;
 	u64 ticketid;
@@ -124,7 +124,7 @@ static void es_small_buf_dump(void)
 	size_t nelems = sizeof(es_small_buf) / sizeof(u32);
 
 	drv_printk(KERN_INFO, "es_small_buf[%d]= {\n", nelems);
-	for(i=0; i < nelems; i++)
+	for (i = 0; i < nelems; i++)
 		drv_printk(KERN_INFO, "%08x, ", es_small_buf[i]);
 	drv_printk(KERN_INFO, "\n}\n");
 
@@ -171,11 +171,10 @@ int starlet_es_get_title_count(unsigned long *count)
 
 	error = starlet_ioctlv(es_dev->fd, ES_IOCTLV_GETTITLECOUNT,
 				   0, NULL, 1, io);
-	if (error) {
+	if (error)
 		DBG("%s: error=%d (%08x)\n", __func__, error, error);
-	} else {
+	else
 		*count = *count_buf;
-	}
 
 	es_small_buf_put(count_buf);
 
@@ -205,9 +204,8 @@ int starlet_es_get_titles(u64 *titles, unsigned long count)
 
 	error = starlet_ioctlv(es_dev->fd, ES_IOCTLV_GETTITLES,
 				   1, in, 1, io);
-	if (error) {
+	if (error)
 		DBG("%s: error=%d (%08x)\n", __func__, error, error);
-	}
 
 	es_small_buf_put(count_buf);
 
@@ -244,11 +242,10 @@ int starlet_es_get_ticket_view_count(u64 title, unsigned long *count)
 
 	error = starlet_ioctlv(es_dev->fd, ES_IOCTLV_GETTICKETVIEWCOUNT,
 				   1, in, 1, io);
-	if (error) {
+	if (error)
 		DBG("%s: error=%d (%08x)\n", __func__, error, error);
-	} else {
+	else
 		*count = *count_buf;
-	}
 
 	starlet_kfree(title_buf);
 	es_small_buf_put(count_buf);
@@ -292,9 +289,8 @@ int starlet_es_get_ticket_views(u64 title,
 
 	error = starlet_ioctlv(es_dev->fd, ES_IOCTLV_GETTICKETVIEWS,
 				   2, in, 1, io);
-	if (error) {
+	if (error)
 		DBG("%s: error=%d (%08x)\n", __func__, error, error);
-	}
 
 	es_small_buf_put(count_buf);
 	starlet_kfree(title_buf);
@@ -327,9 +323,8 @@ int starlet_es_launch_title_view(u64 title, struct starlet_es_ticket_view *view)
 	error = starlet_ioctlv_and_reboot(es_dev->fd,
 					      ES_IOCTLV_LAUNCHTITLE,
 					      2, in, 0, NULL);
-	if (error) {
+	if (error)
 		DBG("%s: error=%d (%08x)\n", __func__, error, error);
-	}
 
 	starlet_kfree(title_buf);
 

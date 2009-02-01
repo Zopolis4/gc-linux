@@ -2,8 +2,8 @@
  * arch/powerpc/platforms/embedded6xx/usbgecko_udbg.c
  *
  * udbg serial input/output routines for the USB Gecko adapter.
- * Copyright (C) 2008 The GameCube Linux Team
- * Copyright (C) 2008 Albert Herranz
+ * Copyright (C) 2008-2009 The GameCube Linux Team
+ * Copyright (C) 2008,2009 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -48,29 +48,29 @@ static void __iomem *ug_io_base;
  */
 static u32 ug_io_transaction(u32 in)
 {
-        u32 __iomem *csr_reg = ug_io_base + EXI_CSR;
-        u32 __iomem *data_reg = ug_io_base + EXI_DATA;
-        u32 __iomem *cr_reg = ug_io_base + EXI_CR;
-        u32 csr, data, cr;
+	u32 __iomem *csr_reg = ug_io_base + EXI_CSR;
+	u32 __iomem *data_reg = ug_io_base + EXI_DATA;
+	u32 __iomem *cr_reg = ug_io_base + EXI_CR;
+	u32 csr, data, cr;
 
-        /* select */
-        csr = EXI_CSR_CLK_32MHZ | EXI_CSR_CS_0;
-        out_be32(csr_reg, csr);
+	/* select */
+	csr = EXI_CSR_CLK_32MHZ | EXI_CSR_CS_0;
+	out_be32(csr_reg, csr);
 
-        /* read/write */
-        data = in;
-        out_be32(data_reg, data);
-        cr = EXI_CR_TLEN(2) | EXI_CR_READ_WRITE | EXI_CR_TSTART;
-        out_be32(cr_reg, cr);
+	/* read/write */
+	data = in;
+	out_be32(data_reg, data);
+	cr = EXI_CR_TLEN(2) | EXI_CR_READ_WRITE | EXI_CR_TSTART;
+	out_be32(cr_reg, cr);
 
-        while(in_be32(cr_reg) & EXI_CR_TSTART)
-                barrier();
+	while (in_be32(cr_reg) & EXI_CR_TSTART)
+		barrier();
 
-        /* deselect */
-        out_be32(csr_reg, 0);
+	/* deselect */
+	out_be32(csr_reg, 0);
 
 	/* result */
-        data = in_be32(data_reg);
+	data = in_be32(data_reg);
 
 	return data;
 }
@@ -83,7 +83,7 @@ static int ug_is_adapter_present(void)
 	if (!ug_io_base)
 		return 0;
 
-	return (ug_io_transaction(0x90000000) == 0x04700000);
+	return ug_io_transaction(0x90000000) == 0x04700000;
 }
 
 /*
@@ -91,7 +91,7 @@ static int ug_is_adapter_present(void)
  */
 static int ug_is_txfifo_ready(void)
 {
-	return (ug_io_transaction(0xc0000000) & 0x04000000);
+	return ug_io_transaction(0xc0000000) & 0x04000000;
 }
 
 /*
@@ -117,10 +117,10 @@ static void ug_putc(char ch)
 	if (ch == '\n')
 		ug_putc('\r');
 
-        while(!ug_is_txfifo_ready() && count--) 
-                barrier();
+	while (!ug_is_txfifo_ready() && count--)
+		barrier();
 	if (count)
-	        ug_raw_putc(ch);
+		ug_raw_putc(ch);
 }
 
 #if 0
@@ -129,7 +129,7 @@ static void ug_putc(char ch)
  */
 static void ug_puts(char *s)
 {
-	while(*s)
+	while (*s)
 		ug_putc(*s++);
 }
 #endif
@@ -139,7 +139,7 @@ static void ug_puts(char *s)
  */
 static int ug_is_rxfifo_ready(void)
 {
-	return (ug_io_transaction(0xd0000000) & 0x04000000);
+	return ug_io_transaction(0xd0000000) & 0x04000000;
 }
 
 /*
@@ -166,9 +166,9 @@ static int ug_getc(void)
 	if (!ug_io_base)
 		return -1;
 
-        while(!ug_is_rxfifo_ready() && count--) 
-                barrier();
-        return ug_raw_getc();
+	while (!ug_is_rxfifo_ready() && count--)
+		barrier();
+	return ug_raw_getc();
 }
 
 /*
@@ -191,7 +191,7 @@ static int ug_udbg_getc(void)
 {
 	int ch;
 
-	while((ch = ug_getc()) == -1)
+	while ((ch = ug_getc()) == -1)
 		barrier();
 	return ch;
 }
@@ -203,7 +203,7 @@ static int ug_udbg_getc_poll(void)
 {
 	if (!ug_is_rxfifo_ready())
 		return -1;
-        return ug_getc();
+	return ug_getc();
 }
 
 /*
@@ -255,8 +255,8 @@ void __init ug_udbg_init(void)
 		goto done;
 	}
 
-	for(np = NULL;
-	    (np = of_find_compatible_node(np, NULL, "usbgecko,usbgecko")); )
+	for (np = NULL;
+	    (np = of_find_compatible_node(np, NULL, "usbgecko,usbgecko"));)
 		if (np == stdout)
 			break;
 
@@ -293,7 +293,7 @@ done:
  * USB Gecko early debug support initialization for udbg.
  *
  */
-void __init udbg_init_debug_usbgecko(void)
+void __init udbg_init_usbgecko(void)
 {
 	unsigned long vaddr, paddr;
 
@@ -316,4 +316,3 @@ void __init udbg_init_debug_usbgecko(void)
 }
 
 #endif /* CONFIG_PPC_EARLY_DEBUG_USBGECKO */
-

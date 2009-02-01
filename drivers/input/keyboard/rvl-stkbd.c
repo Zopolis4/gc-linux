@@ -2,8 +2,8 @@
  * drivers/input/keyboard/rvl-stkbd.c
  *
  * Nintendo Wii starlet keyboard driver.
- * Copyright (C) 2008 The GameCube Linux Team
- * Copyright (C) 2008 Albert Herranz
+ * Copyright (C) 2008-2009 The GameCube Linux Team
+ * Copyright (C) 2008,2009 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -37,7 +37,7 @@
 static char stkbd_driver_version[] = "0.1i";
 
 #define drv_printk(level, format, arg...) \
-        printk(level DRV_MODULE_NAME ": " format , ## arg)
+	 printk(level DRV_MODULE_NAME ": " format , ## arg)
 
 /*
  * Keyboard events from IOS.
@@ -64,7 +64,7 @@ struct stkbd_event {
  */
 
 enum {
-	__STKBD_RUNNING=1,		/* device is opened and running */
+	__STKBD_RUNNING = 1,		/* device is opened and running */
 	__STKBD_WAITING_REPORT		/* waiting for IOS report */
 };
 
@@ -236,7 +236,7 @@ static int stkbd_dispatch_ipc_request(struct starlet_ipc_request *req)
 	} else {
 		event = kbd->event;
 
-		switch(event->type) {
+		switch (event->type) {
 		case STKBD_EV_CONNECT:
 			drv_printk(KERN_INFO, "keyboard connected\n");
 			break;
@@ -253,7 +253,7 @@ static int stkbd_dispatch_ipc_request(struct starlet_ipc_request *req)
 	}
 	return error;
 }
-	
+
 static int stkbd_wait_for_events(struct stkbd_keyboard *kbd)
 {
 	struct stkbd_event *event = kbd->event;
@@ -271,7 +271,7 @@ static int stkbd_wait_for_events(struct stkbd_keyboard *kbd)
 	}
 	return error;
 }
-	
+
 /*
  * Input driver hooks.
  *
@@ -326,7 +326,7 @@ static int stkbd_init_input_dev(struct stkbd_keyboard *kbd)
 	struct input_dev *idev;
 	int error;
 
-	idev = input_allocate_device();		
+	idev = input_allocate_device();
 	if (!idev) {
 		drv_printk(KERN_ERR, "failed to allocate input_dev\n");
 		return -ENOMEM;
@@ -344,7 +344,7 @@ static int stkbd_init_input_dev(struct stkbd_keyboard *kbd)
 
 	idev->open = stkbd_open;
 	idev->close = stkbd_close;
-		
+
 	error = input_register_device(kbd->idev);
 	if (error) {
 		input_free_device(kbd->idev);
@@ -420,36 +420,36 @@ static void stkbd_exit(struct stkbd_keyboard *kbd)
 
 static int stkbd_do_probe(struct device *dev)
 {
-        struct stkbd_keyboard *kbd;
-        int error;
+	struct stkbd_keyboard *kbd;
+	int error;
 
-        kbd = kzalloc(sizeof(*kbd), GFP_KERNEL);
-        if (!kbd) {
-                drv_printk(KERN_ERR, "failed to allocate stkbd_keyboard\n");
-                return -ENOMEM;
-        }
-        dev_set_drvdata(dev, kbd);
-        kbd->dev = dev;
+	kbd = kzalloc(sizeof(*kbd), GFP_KERNEL);
+	if (!kbd) {
+		drv_printk(KERN_ERR, "failed to allocate stkbd_keyboard\n");
+		return -ENOMEM;
+	}
+	dev_set_drvdata(dev, kbd);
+	kbd->dev = dev;
 
-        error = stkbd_init(kbd);
-        if (error) {
-                dev_set_drvdata(dev, NULL);
-                kfree(kbd);
-        }
-        return error;
+	error = stkbd_init(kbd);
+	if (error) {
+		dev_set_drvdata(dev, NULL);
+		kfree(kbd);
+	}
+	return error;
 }
 
 static int stkbd_do_remove(struct device *dev)
 {
-        struct stkbd_keyboard *kbd = dev_get_drvdata(dev);
+	struct stkbd_keyboard *kbd = dev_get_drvdata(dev);
 
-        if (kbd) {
-                stkbd_exit(kbd);
-                dev_set_drvdata(dev, NULL);
-                kfree(kbd);
-                return 0;
-        }
-        return -ENODEV;
+	if (kbd) {
+		stkbd_exit(kbd);
+		dev_set_drvdata(dev, NULL);
+		kfree(kbd);
+		return 0;
+	}
+	return -ENODEV;
 }
 
 
@@ -459,30 +459,30 @@ static int stkbd_do_remove(struct device *dev)
  */
 
 static int __init stkbd_of_probe(struct of_device *odev,
-        		      const struct of_device_id *match)
+				  const struct of_device_id *match)
 {
-        return stkbd_do_probe(&odev->dev);
+	return stkbd_do_probe(&odev->dev);
 }
 
 static int __exit stkbd_of_remove(struct of_device *odev)
 {
-        return stkbd_do_remove(&odev->dev);
+	return stkbd_do_remove(&odev->dev);
 }
 
 static struct of_device_id stkbd_of_match[] = {
-        { .compatible = "nintendo,starlet-keyboard" },
-        { },
+	{ .compatible = "nintendo,starlet-keyboard" },
+	{ },
 };
 
 
 MODULE_DEVICE_TABLE(of, stkbd_of_match);
 
 static struct of_platform_driver stkbd_of_driver = {
-        .owner = THIS_MODULE,
-        .name = DRV_MODULE_NAME,
-        .match_table = stkbd_of_match,
-        .probe = stkbd_of_probe,
-        .remove = stkbd_of_remove,
+	.owner = THIS_MODULE,
+	.name = DRV_MODULE_NAME,
+	.match_table = stkbd_of_match,
+	.probe = stkbd_of_probe,
+	.remove = stkbd_of_remove,
 };
 
 
@@ -493,15 +493,15 @@ static struct of_platform_driver stkbd_of_driver = {
 
 static int __init stkbd_init_module(void)
 {
-        drv_printk(KERN_INFO, "%s - version %s\n", DRV_DESCRIPTION,
-                   stkbd_driver_version);
+	drv_printk(KERN_INFO, "%s - version %s\n", DRV_DESCRIPTION,
+		   stkbd_driver_version);
 
-        return of_register_platform_driver(&stkbd_of_driver);
+	return of_register_platform_driver(&stkbd_of_driver);
 }
 
 static void __exit stkbd_exit_module(void)
 {
-        of_unregister_platform_driver(&stkbd_of_driver);
+	of_unregister_platform_driver(&stkbd_of_driver);
 }
 
 module_init(stkbd_init_module);
@@ -510,4 +510,3 @@ module_exit(stkbd_exit_module);
 MODULE_DESCRIPTION(DRV_DESCRIPTION);
 MODULE_AUTHOR(DRV_AUTHOR);
 MODULE_LICENSE("GPL");
-

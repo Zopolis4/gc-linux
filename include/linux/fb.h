@@ -39,7 +39,7 @@ struct dentry;
 #define FBIOGET_DISPINFO        0x4618
 
 #define FBIOWAITRETRACE         0x4619
-#define FBIOWAITPEFINISH        0x4620 
+#define FBIOWAITPEFINISH        0x4620
 #define FBIOVIRTTOPHYS          0x4621
 #define FBIOFLIP                0x4622
 #define FBIOFLIPHACK            0x4623 /* libsdl */
@@ -813,6 +813,7 @@ struct fb_tile_ops {
 struct fb_info {
 	int node;
 	int flags;
+	struct mutex lock;		/* Lock for open/release/ioctl funcs */
 	struct fb_var_screeninfo var;	/* Current var */
 	struct fb_fix_screeninfo fix;	/* Current fix */
 	struct fb_monspecs monspecs;	/* Current Monitor specs */
@@ -904,8 +905,8 @@ struct fb_info {
 #  define fb_writel __raw_writel
 #else
    extern unsigned int vifb_writel(unsigned int, void *);
-#  define fb_writel(b,addr) vifb_writel(b,addr)
-#  define fb_writel_real(b,addr) /* __raw_writel */ (*(volatile u32 __iomem *) (addr) = (b))
+#  define fb_writel(b, addr) vifb_writel(b, addr)
+#  define fb_writel_real(b, addr) (*(/*volatile*/ u32 __iomem *)(addr) = (b))
 #endif
 #define fb_writeq __raw_writeq
 #define fb_memset memset_io

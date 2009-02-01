@@ -2,8 +2,8 @@
  * drivers/block/gcn-di/gcn-di.c
  *
  * Nintendo GameCube Disk Interface (DI) driver
- * Copyright (C) 2005-2007 The GameCube Linux Team
- * Copyright (C) 2005,2006,2007 Albert Herranz
+ * Copyright (C) 2005-2009 The GameCube Linux Team
+ * Copyright (C) 2005,2006,2007,2009 Albert Herranz
  *
  * Portions based on previous work by Scream|CT.
  *
@@ -28,7 +28,7 @@
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
 #include <linux/timer.h>
-#include <asm/io.h>
+#include <linux/io.h>
 
 #define DI_DEBUG
 
@@ -43,7 +43,7 @@ static char di_driver_version[] = "1.0i";
 
 #ifdef DI_DEBUG
 #  define DBG(fmt, args...) \
-          printk(KERN_ERR "%s: " fmt, __FUNCTION__ , ## args)
+	   printk(KERN_ERR "%s: " fmt, __func__ , ## args)
 #else
 #  define DBG(fmt, args...)
 #endif
@@ -164,7 +164,7 @@ struct di_disk_id {
  */
 struct di_opcode {
 	u16				op;
-#define DI_OP(id,flags)		(((u8)(id)<<8)|((u8)(flags)))
+#define DI_OP(id, flags)		(((u8)(id)<<8)|((u8)(flags)))
 #define DI_OP_ID(op)		((u8)((op)>>8))
 #define DI_OP_FLAGS(op)		((u8)(op))
 
@@ -277,15 +277,15 @@ struct di_device {
 
 
 static struct di_drive_info di_drive_info
-		 __attribute__ ((aligned (DI_DMA_ALIGN+1)));
+		 __attribute__ ((aligned(DI_DMA_ALIGN+1)));
 
 /*
  * We do not accept original media with this driver, as there is currently no
  * general need for that.
  * If you ever develop an application (a media player for example) which works
- * with original media, just change di_accept_gods and recompile. 
+ * with original media, just change di_accept_gods and recompile.
  */
-static const int di_accept_gods = 0;
+static const int di_accept_gods;
 
 /*
  * Drive firmware extensions.
@@ -349,7 +349,7 @@ static struct di_drive_code drive_20010831 = {
  * We just include here some of the available functions, in no particular
  * order.
  */
-#define CMDBUF(a,b,c,d) (((a)<<24)|((b)<<16)|((c)<<8)|(d))
+#define CMDBUF(a, b, c, d) (((a)<<24)|((b)<<16)|((c)<<8)|(d))
 
 static struct di_opcode di_opcodes[] = {
 
@@ -485,11 +485,10 @@ static inline struct di_opcode *di_get_opcode(struct di_command *cmd)
 {
 	BUG_ON(cmd->opidx > DI_OP_MAXOP && cmd->opidx != DI_OP_CUSTOM);
 
-	if (cmd->opidx == DI_OP_CUSTOM) {
+	if (cmd->opidx == DI_OP_CUSTOM)
 		return cmd->data;
-	} else {
+	else
 		return &di_opcodes[cmd->opidx];
-	}
 }
 
 /*
@@ -689,25 +688,25 @@ static char *di_printable_status(u32 drive_status)
 {
 	char *s = "unknown";
 
-	switch(DI_STATUS(drive_status)) {
-		case DI_STATUS_READY:
-			s = "ready";
-			break;
-		case DI_STATUS_COVER_OPENED:
-			s = "cover opened";
-			break;
-		case DI_STATUS_DISK_CHANGE:
-			s = "disk change";
-			break;
-		case DI_STATUS_NO_DISK:
-			s = "no disk";
-			break;
-		case DI_STATUS_MOTOR_STOP:
-			s = "motor stop";
-			break;
-		case DI_STATUS_DISK_ID_NOT_READ:
-			s = "disk id not read";
-			break;
+	switch (DI_STATUS(drive_status)) {
+	case DI_STATUS_READY:
+		s = "ready";
+		break;
+	case DI_STATUS_COVER_OPENED:
+		s = "cover opened";
+		break;
+	case DI_STATUS_DISK_CHANGE:
+		s = "disk change";
+		break;
+	case DI_STATUS_NO_DISK:
+		s = "no disk";
+		break;
+	case DI_STATUS_MOTOR_STOP:
+		s = "motor stop";
+		break;
+	case DI_STATUS_DISK_ID_NOT_READ:
+		s = "disk id not read";
+		break;
 	}
 	return s;
 }
@@ -719,37 +718,37 @@ static char *di_printable_error(u32 drive_status)
 {
 	char *s = "unknown";
 
-	switch(DI_ERROR(drive_status)) {
-		case DI_ERROR_NO_ERROR:
-			s = "no error";
-			break;
-		case DI_ERROR_MOTOR_STOPPED:
-			s = "motor stopped";
-			break;
-		case DI_ERROR_DISK_ID_NOT_READ:
-			s = "disk id not read";
-			break;
-		case DI_ERROR_MEDIUM_NOT_PRESENT:
-			s = "medium not present";
-			break;
-		case DI_ERROR_SEEK_INCOMPLETE:
-			s = "seek incomplete";
-			break;
-		case DI_ERROR_UNRECOVERABLE_READ:
-			s = "unrecoverable read";
-			break;
-		case DI_ERROR_INVALID_COMMAND:
-			s = "invalid command";
-			break;
-		case DI_ERROR_BLOCK_OUT_OF_RANGE:
-			s = "block out of range";
-			break;
-		case DI_ERROR_INVALID_FIELD:
-			s = "invalid field";
-			break;
-		case DI_ERROR_MEDIUM_CHANGED:
-			s = "medium changed";
-			break;
+	switch (DI_ERROR(drive_status)) {
+	case DI_ERROR_NO_ERROR:
+		s = "no error";
+		break;
+	case DI_ERROR_MOTOR_STOPPED:
+		s = "motor stopped";
+		break;
+	case DI_ERROR_DISK_ID_NOT_READ:
+		s = "disk id not read";
+		break;
+	case DI_ERROR_MEDIUM_NOT_PRESENT:
+		s = "medium not present";
+		break;
+	case DI_ERROR_SEEK_INCOMPLETE:
+		s = "seek incomplete";
+		break;
+	case DI_ERROR_UNRECOVERABLE_READ:
+		s = "unrecoverable read";
+		break;
+	case DI_ERROR_INVALID_COMMAND:
+		s = "invalid command";
+		break;
+	case DI_ERROR_BLOCK_OUT_OF_RANGE:
+		s = "block out of range";
+		break;
+	case DI_ERROR_INVALID_FIELD:
+		s = "invalid field";
+		break;
+	case DI_ERROR_MEDIUM_CHANGED:
+		s = "medium changed";
+		break;
 	}
 
 	return s;
@@ -796,11 +795,10 @@ enum dma_data_direction di_opidx_to_dma_dir(struct di_command *cmd)
 {
 	u16 op = di_op(cmd);
 
-	if ((op & DI_DIR_WRITE)) {
+	if ((op & DI_DIR_WRITE))
 		return DMA_TO_DEVICE;
-	} else {
+	else
 		return DMA_FROM_DEVICE;
-	}
 }
 
 /*
@@ -838,11 +836,11 @@ static int __wait_for_dma_transfer_or_timeout(u32 __iomem *cr_reg,
 	unsigned long timeout = jiffies + secs*HZ;
 
 	/* busy-wait for transfer complete */
-	while((in_be32(cr_reg) & DI_CR_TSTART) && time_before(jiffies, timeout)) {
+	while ((in_be32(cr_reg) & DI_CR_TSTART) &&
+			time_before(jiffies, timeout))
 		cpu_relax();
-	}
 
-	return (in_be32(cr_reg) & DI_CR_TSTART)?-EBUSY:0;
+	return (in_be32(cr_reg) & DI_CR_TSTART) ? -EBUSY : 0;
 }
 
 /*
@@ -925,9 +923,8 @@ static void di_prepare_command(struct di_command *cmd, int tstart)
 
 	cmd->ddev->drive_status = 0;
 
-	if (tstart) {
+	if (tstart)
 		out_be32(io_base + DI_CR, DI_CR_TSTART | (opcode->op & 0x6));
-	}
 }
 
 static void di_command_done(struct di_command *cmd);
@@ -1073,7 +1070,7 @@ static void di_complete_transfer(struct di_device *ddev, u32 result)
 				DBG("command %s failed, %d retries left\n",
 				    opcode->name, cmd->retries);
 				di_debug_print_drive_status(drive_status);
-				
+
 				cmd->retries--;
 				di_run_command(cmd);
 				goto out;
@@ -1094,14 +1091,14 @@ static void di_complete_transfer(struct di_device *ddev, u32 result)
 		di_command_done(cmd);
 
 		/* update the driver status */
-		switch(DI_ERROR(drive_status)) {
-			case DI_ERROR_MOTOR_STOPPED:
-			case DI_ERROR_MEDIUM_NOT_PRESENT:
-			case DI_ERROR_MEDIUM_CHANGED:
-				set_bit(__DI_MEDIA_CHANGED, &ddev->flags);
-				break;
-			default:
-				break;
+		switch (DI_ERROR(drive_status)) {
+		case DI_ERROR_MOTOR_STOPPED:
+		case DI_ERROR_MEDIUM_NOT_PRESENT:
+		case DI_ERROR_MEDIUM_CHANGED:
+			set_bit(__DI_MEDIA_CHANGED, &ddev->flags);
+			break;
+		default:
+			break;
 		}
 
 	} else {
@@ -1125,9 +1122,8 @@ out:
 static void di_command_done(struct di_command *cmd)
 {
 	/* if specified, call the completion routine */
-	if (cmd->done) {
+	if (cmd->done)
 		cmd->done(cmd);
-	}
 }
 
 /*
@@ -1149,11 +1145,10 @@ static int di_run_command(struct di_command *cmd)
 	if (cmd->retries > cmd->max_retries)
 		cmd->retries = cmd->max_retries;
 
-	if (!(opcode->op & DI_MODE_DMA)) {
+	if (!(opcode->op & DI_MODE_DMA))
 		retval = di_start_command(cmd);
-	} else {
+	else
 		retval = di_start_dma_command(cmd);
-	}
 	return retval;
 }
 
@@ -1167,9 +1162,8 @@ static int di_run_command_and_wait(struct di_command *cmd)
 
 	cmd->done_data = &complete;
 	cmd->done = di_wait_done;
-	if (di_run_command(cmd) > 0) {
+	if (di_run_command(cmd) > 0)
 		wait_for_completion(&complete);
-	}
 	return cmd->result;
 }
 
@@ -1194,16 +1188,14 @@ static irqreturn_t di_irq_handler(int irq, void *dev0)
 		out_be32(sr_reg, sr | reason);
 		spin_unlock_irqrestore(&ddev->io_lock, flags);
 
-		if (reason & DI_SR_TCINT) {
+		if (reason & DI_SR_TCINT)
 			di_complete_transfer(ddev, DI_SR_TCINT);
-		}
 		if (reason & DI_SR_BRKINT) {
 			DBG("BRKINT\n");
 			di_complete_transfer(ddev, DI_SR_BRKINT);
 		}
-		if (reason & DI_SR_DEINT) {
+		if (reason & DI_SR_DEINT)
 			di_complete_transfer(ddev, DI_SR_DEINT);
-		}
 
 		spin_lock_irqsave(&ddev->io_lock, flags);
 	}
@@ -1257,7 +1249,7 @@ static void di_reset(struct di_device *ddev)
 
 /*
  * Misc routines.
- * 
+ *
  */
 
 /*
@@ -1363,7 +1355,7 @@ static void di_fw_patch_mem(struct di_device *ddev, u32 address,
 	int chunk_size;
 	const int max_chunk_size = 3 * sizeof(cmd.cmdbuf0);
 
-	while(len > 0) {
+	while (len > 0) {
 		/* we can write in groups of 12 bytes at max */
 		if (len > max_chunk_size)
 			chunk_size = max_chunk_size;
@@ -1407,7 +1399,7 @@ static void di_fw_patch_mem(struct di_device *ddev, u32 address,
 static void di_fw_patch(struct di_device *ddev,
 			struct di_drive_code *section, int nr_sections)
 {
-	while(nr_sections > 0) {
+	while (nr_sections > 0) {
 		di_fw_patch_mem(ddev, section->address,
 				section->code, section->len);
 		section++;
@@ -1422,31 +1414,31 @@ static int di_select_drive_code(struct di_device *ddev)
 {
 	ddev->drive_code = NULL;
 
-	switch(ddev->model) {
-		case 0x20020402:
-			ddev->drive_code = &drive_20020402;
-			break;
-		case 0x20010608:
-			ddev->drive_code = &drive_20010608;
-			break;
-		case 0x20020823:
-			ddev->drive_code = &drive_20020823;
-			break;
-		case 0x20010831:
-			ddev->drive_code = &drive_20010831;
-			break;
-		default:
-			drv_printk(KERN_ERR, "sorry, drive %x is not yet"
-				   " supported\n",
-				   di_drive_info.date);
-			break;
+	switch (ddev->model) {
+	case 0x20020402:
+		ddev->drive_code = &drive_20020402;
+		break;
+	case 0x20010608:
+		ddev->drive_code = &drive_20010608;
+		break;
+	case 0x20020823:
+		ddev->drive_code = &drive_20020823;
+		break;
+	case 0x20010831:
+		ddev->drive_code = &drive_20010831;
+		break;
+	default:
+		drv_printk(KERN_ERR, "sorry, drive %x is not yet"
+			   " supported\n",
+			   di_drive_info.date);
+		break;
 	}
 
-	return (ddev->drive_code)?0:-EINVAL;
+	return (ddev->drive_code) ? 0 : -EINVAL;
 }
 
 /*
- * 
+ *
  */
 static u8 parking_code[] = {
 	0xa0,				/* sub	d0, d0 */
@@ -1468,10 +1460,10 @@ static u32 di_park_firmware(struct di_device *ddev)
 
 	/* calculate an appropiate load address for the parking code */
 	irq_handler = le32_to_cpu(di_fw_get_irq_handler(ddev));
-	load_address = (irq_handler >= 0x400000)?0x008502:0x40c600;
+	load_address = (irq_handler >= 0x400000) ? 0x008502 : 0x40c600;
 
 	/* get the original interrupt handler */
-	irq_handler = (ddev->model != 0x20010831)?0x00080A74:0x00080AA4;
+	irq_handler = (ddev->model != 0x20010831) ? 0x00080A74 : 0x00080AA4;
 	original_irq_handler = irq_handler;
 
 	/* fix the parking code to match our drive model */
@@ -1623,7 +1615,7 @@ static int di_probe_debug_features(struct di_device *ddev)
 		result = di_enable_debug_commands(ddev);
 	}
 
-	return di_result_ok(result)?0:-EINVAL;
+	return di_result_ok(result) ? 0 : -EINVAL;
 }
 
 /*
@@ -1660,10 +1652,10 @@ static void di_motor_off(unsigned long ddev0)
 	/* postpone a bit the motor off if there are pending commands */
 	spin_lock_irqsave(&ddev->lock, flags);
 	if (!ddev->cmd) {
-	        ddev->cmd = cmd = &ddev->status;
+		ddev->cmd = cmd = &ddev->status;
 		spin_unlock_irqrestore(&ddev->lock, flags);
 		di_op_stopmotor(cmd, ddev);
-	        di_prepare_command(cmd, 1);
+		di_prepare_command(cmd, 1);
 	} else {
 		spin_unlock_irqrestore(&ddev->lock, flags);
 		mod_timer(&ddev->motor_off_timer, jiffies + 1*HZ);
@@ -1706,7 +1698,7 @@ static void di_spin_up_drive(struct di_device *ddev, u8 enable_extensions)
 		/* don't use debug commands, let's hope a drivechip is there */
 		di_reset(ddev);
 	} else {
-		while(attempts-- > 0) {
+		while (attempts-- > 0) {
 			if (!test_bit(__DI_INTEROPERABLE, &ddev->flags))
 				di_make_interoperable(ddev);
 
@@ -1755,7 +1747,7 @@ out:
 static int di_read_toc(struct di_device *ddev)
 {
 	static struct di_disk_id disk_id
-			 __attribute__ ((aligned (DI_DMA_ALIGN+1)));
+			 __attribute__ ((aligned(DI_DMA_ALIGN+1)));
 	struct di_command cmd;
 	int accepted_media = 0;
 	int retval = 0;
@@ -1764,9 +1756,8 @@ static int di_read_toc(struct di_device *ddev)
 	di_cancel_motor_off(ddev);
 
 	/* spin up the drive if needed */
-	if ((ddev->flags & DI_MEDIA_CHANGED)) {
+	if ((ddev->flags & DI_MEDIA_CHANGED))
 		di_spin_up_drive(ddev, enable_extensions);
-	}
 
 	/* check that disk id can be read and that the media is appropiate */
 	memset(&disk_id, 0, sizeof(disk_id));
@@ -1827,7 +1818,7 @@ static void di_request_done(struct di_command *cmd)
 	struct di_device *ddev = cmd->ddev;
 	struct request *req;
 	unsigned long flags;
-	int error = (cmd->result & DI_SR_TCINT)?0:-EIO;
+	int error = (cmd->result & DI_SR_TCINT) ? 0 : -EIO;
 
 	spin_lock_irqsave(&ddev->lock, flags);
 
@@ -1880,9 +1871,8 @@ static void di_do_request(struct request_queue *q)
 		/* we can schedule just a single request each time */
 		if (ddev->req || ddev->cmd) {
 			blk_stop_queue(q);
-			if (ddev->cmd) {
+			if (ddev->cmd)
 				set_bit(__DI_START_QUEUE, &ddev->flags);
-			}
 			spin_unlock_irqrestore(&ddev->lock, flags);
 			break;
 		}
@@ -1918,23 +1908,17 @@ static void di_do_request(struct request_queue *q)
  *
  */
 
-static int di_open(struct inode *inode, struct file *filp)
+static int di_open(struct block_device *bdev, fmode_t mode)
 {
-	struct di_device *ddev = inode->i_bdev->bd_disk->private_data;
+	struct di_device *ddev = bdev->bd_disk->private_data;
 	struct di_command *cmd;
 	DECLARE_COMPLETION(complete);
 	unsigned long flags;
 	int retval = 0;
 
 	/* this is a read only device */
-	if (filp->f_mode & FMODE_WRITE) {
+	if (mode & FMODE_WRITE) {
 		retval = -EROFS;
-		goto out;
-	}
-
-	/* only allow a minor of 0 to be opened */
-	if (iminor(inode)) {
-		retval =  -ENODEV;
 		goto out;
 	}
 
@@ -1954,22 +1938,22 @@ static int di_open(struct inode *inode, struct file *filp)
 	}
 
 	/* this will take care of validating the media */
-	check_disk_change(inode->i_bdev);
+	check_disk_change(bdev);
 	if (!ddev->nr_sectors) {
 		retval = -ENOMEDIUM;
 		goto out;
 	}
 
-        spin_lock_irqsave(&ddev->queue_lock, flags);
+	spin_lock_irqsave(&ddev->queue_lock, flags);
 
 	/* honor exclusive open mode */
 	if (ddev->ref_count == -1 ||
-	    (ddev->ref_count && (filp->f_flags & O_EXCL))) {
+	    (ddev->ref_count && (mode & FMODE_EXCL))) {
 		retval = -EBUSY;
 		goto out_unlock;
 	}
 
-	if ((filp->f_flags & O_EXCL))
+	if ((mode & FMODE_EXCL))
 		ddev->ref_count = -1;
 	else
 		ddev->ref_count++;
@@ -1981,9 +1965,9 @@ out:
 
 }
 
-static int di_release(struct inode *inode, struct file *filp)
+static int di_release(struct gendisk *disk, fmode_t mode)
 {
-	struct di_device *ddev = inode->i_bdev->bd_disk->private_data;
+	struct di_device *ddev = disk->private_data;
 	unsigned long flags;
 
 	spin_lock_irqsave(&ddev->queue_lock, flags);
@@ -2022,7 +2006,7 @@ static int di_media_changed(struct gendisk *disk)
 	return (ddev->flags & DI_MEDIA_CHANGED) ? 1 : 0;
 }
 
-static int di_ioctl(struct inode *inode, struct file *filp,
+static int di_ioctl(struct block_device *bdev, fmode_t mode,
 		    unsigned int cmd, unsigned long arg)
 {
 	switch (cmd) {
@@ -2060,7 +2044,7 @@ static int di_ioctl(struct inode *inode, struct file *filp,
 	case BLKGETSIZE:
 	case BLKGETSIZE64:
 	case BLKFLSBUF:
-		return ioctl_by_bdev(inode->i_bdev,cmd,arg);
+		return ioctl_by_bdev(bdev, cmd, arg);
 	default:
 		return -EINVAL;
 	}
@@ -2195,9 +2179,9 @@ static int di_init_blk_dev(struct di_device *ddev)
 	goto out;
 
 err_alloc_disk:
-        blk_cleanup_queue(ddev->queue);
+	blk_cleanup_queue(ddev->queue);
 err_blk_init_queue:
-        unregister_blkdev(DI_MAJOR, DI_NAME);
+	unregister_blkdev(DI_MAJOR, DI_NAME);
 err_register_blkdev:
 out:
 	return retval;
@@ -2237,19 +2221,18 @@ static int di_init(struct di_device *ddev, struct resource *mem, int irq)
 	retval = di_init_blk_dev(ddev);
 	if (!retval) {
 		retval = di_init_irq(ddev);
-		if (retval) {
+		if (retval)
 			di_exit_blk_dev(ddev);
-		} else {
+		else
 			di_init_proc(ddev);
-		}
 	}
 	return retval;
 }
 
 static void di_exit(struct di_device *ddev)
 {
-        di_exit_blk_dev(ddev);
-        di_exit_irq(ddev);
+	di_exit_blk_dev(ddev);
+	di_exit_irq(ddev);
 	di_exit_proc(ddev);
 	if (ddev->io_base) {
 		iounmap(ddev->io_base);
@@ -2369,7 +2352,7 @@ static int __init di_init_module(void)
 
 static void __exit di_exit_module(void)
 {
-        of_unregister_platform_driver(&di_of_driver);
+	of_unregister_platform_driver(&di_of_driver);
 }
 
 module_init(di_init_module);
@@ -2378,4 +2361,3 @@ module_exit(di_exit_module);
 MODULE_AUTHOR(DRV_AUTHOR);
 MODULE_DESCRIPTION(DRV_DESCRIPTION);
 MODULE_LICENSE("GPL");
-

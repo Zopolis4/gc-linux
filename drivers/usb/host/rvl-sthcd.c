@@ -2,9 +2,9 @@
  * drivers/usb/host/rvl-sthcd.c
  *
  * USB Host Controller driver for the Nintendo Wii
- * Copyright (C) 2008 The GameCube Linux Team
+ * Copyright (C) 2008-2009 The GameCube Linux Team
  * Copyright (C) 2008 Maarten ter Huurne
- * Copyright (C) 2008 Albert Herranz
+ * Copyright (C) 2008,2009 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -69,7 +69,7 @@ static char sthcd_driver_version[] = "0.4i";
  * we need additional ports here.
  */
 #define STHCD_MAX_DEVIDS	15
-#define STHCD_MAX_PORTS		STHCD_MAX_DEVIDS 
+#define STHCD_MAX_PORTS		STHCD_MAX_DEVIDS
 
 /*
  * We get error -7008 after performing large transfers.
@@ -247,7 +247,7 @@ static inline void print_buffer(void *buf, u32 size)
 {
 	int i;
 	for (i = 0; i < (size + 3) / 4; i += 4) {
-		u32 *data = &((u32*)buf)[i];
+		u32 *data = &((u32 *)buf)[i];
 		printk(KERN_INFO "  %08X %08X %08X %08X\n",
 			data[0], data[1], data[2], data[3]
 			);
@@ -399,7 +399,7 @@ static int sthcd_pep_alloc_xfer_ctx(struct sthcd_pep *pep)
 					 USB_ENDPOINT_XFERTYPE_MASK;
 	int error;
 
-	switch(xfer_type) {
+	switch (xfer_type) {
 	case USB_ENDPOINT_XFER_CONTROL:
 		error = sthcd_pep_alloc_ctrl_xfer_ctx(pep);
 		break;
@@ -422,7 +422,7 @@ static void sthcd_pep_free_xfer_ctx(struct sthcd_pep *pep)
 	unsigned int xfer_type = pep->bmAttributes &
 					 USB_ENDPOINT_XFERTYPE_MASK;
 
-	switch(xfer_type) {
+	switch (xfer_type) {
 	case USB_ENDPOINT_XFER_CONTROL:
 		sthcd_pep_free_ctrl_xfer_ctx(pep);
 		break;
@@ -642,7 +642,7 @@ static void sthcd_pep_setup_bulk_intr_xfer(struct sthcd_pep *pep)
 }
 
 /*
- * 
+ *
  * Context: interrupts disabled, hcd lock held
  */
 static int sthcd_pep_setup_xfer(struct sthcd_pep *pep)
@@ -768,7 +768,7 @@ done:
 static int sthcd_pep_xfer_callback(struct starlet_ipc_request *req);
 
 /*
- * 
+ *
  * Context: interrupts disabled, hcd lock held
  */
 static int sthcd_pep_start_xfer(struct sthcd_pep *pep)
@@ -826,7 +826,7 @@ static int sthcd_giveback_urb(struct sthcd_hcd *sthcd,
 __releases(sthcd->lock) __acquires(sthcd->lock)
 {
 	struct usb_hcd *hcd = sthcd_to_hcd(sthcd);
-	
+
 	/*
 	 * Release the hcd lock here as the callback may need to
 	 * hold it again.
@@ -927,25 +927,25 @@ static int sthcd_pep_send_urb(struct sthcd_pep *pep, struct urb *urb)
 		goto err_setup_xfer;
 	}
 
-	fake = 0;	
+	fake = 0;
 	if (pep->request == STHCD_IOCTLV_CONTROLREQ) {
 		req = (struct usb_ctrlrequest *)urb->setup_packet;
 		typeReq = (req->bRequestType << 8) | req->bRequest;
 		wValue = le16_to_cpu(req->wValue);
 
-		switch(typeReq) {
+		switch (typeReq) {
 		case DeviceOutRequest | USB_REQ_SET_ADDRESS: /* 0005 */
-	                if (urb->dev->devnum != 0) {
+			if (urb->dev->devnum != 0) {
 				/* REVISIT, never reached */
-	                        drv_printk(KERN_WARNING,
+				drv_printk(KERN_WARNING,
 					   "address change %u->%u\n",
 					   urb->dev->devnum, wValue);
-	                }
+			}
 			/*
 			 * We are guaranteed to have an udev because the takein
 			 * was successful.
 			 */
-	                pep->udev->devnum = wValue;
+			pep->udev->devnum = wValue;
 			urb->actual_length = 0;
 
 			/* clear the port reset count, we have an address */
@@ -1035,6 +1035,7 @@ static int sthcd_pep_xfer_callback(struct starlet_ipc_request *req)
 	struct urb *urb;
 	int retval;
 	unsigned long flags;
+	int error;
 
 	starlet_ipc_free_request(req);
 
@@ -1070,7 +1071,7 @@ static int sthcd_pep_xfer_callback(struct starlet_ipc_request *req)
 			sthcd_pep_print(pep);
 		}
 
-		switch(status) {
+		switch (status) {
 		case -7003:
 		case -7004:
 			/* endpoint stall */
@@ -1130,9 +1131,9 @@ static int sthcd_pep_xfer_callback(struct starlet_ipc_request *req)
 		sthcd_pep_finish_xfer(pep, xfer_len);
 
 		/*
-	 	 * Only schedule the next chunk if we didn't get a short xfer
-	 	 * and the pep is still active
-	 	 */
+		 * Only schedule the next chunk if we didn't get a short xfer
+		 * and the pep is still active
+		 */
 		if (xfer_len == pep->io_buf_len && pep_is_enabled(pep)) {
 			retval = sthcd_pep_setup_next_xfer(pep);
 			if (retval <= 0) {
@@ -1157,7 +1158,7 @@ static int sthcd_pep_xfer_callback(struct starlet_ipc_request *req)
 	BUG_ON(!sthcd);
 	BUG_ON(!urb);
 
-	int error = usb_hcd_check_unlink_urb(hcd, urb, status);
+	error = usb_hcd_check_unlink_urb(hcd, urb, status);
 	if (!error) {
 		usb_hcd_unlink_urb_from_ep(hcd, urb);
 
@@ -1192,7 +1193,7 @@ static struct sthcd_udev *sthcd_get_free_udev(struct sthcd_hcd *sthcd)
 	int i;
 
 	port = sthcd->ports;
-	for(i = 0; i < sthcd->nr_ports; i++, port++) {
+	for (i = 0; i < sthcd->nr_ports; i++, port++) {
 		udev = &port->udev;
 		if (!test_and_set_bit(__STHCD_PORT_INUSE, &port->flags))
 			return udev;
@@ -1258,7 +1259,7 @@ static int sthcd_udev_open(struct sthcd_udev *udev)
 	}
 
 	snprintf(pathname, sizeof(pathname), "/dev/usb/oh%u/%04x/%04x",
-	         oh->index, udev->idVendor, udev->idProduct);
+		 oh->index, udev->idVendor, udev->idProduct);
 	error = starlet_open(pathname, 0);
 	if (error < 0) {
 		drv_printk(KERN_ERR, "open %s failed\n", pathname);
@@ -1403,7 +1404,7 @@ sthcd_hub_control_hub(struct usb_hcd *hcd, u16 typeReq, u16 wValue,
 		}
 		break;
 	case GetHubDescriptor:	/* 0xA006 */
-		/* 
+		/*
 		 * For the DeviceRemovable and PortPwrCtrlMask fields:
 		 *  bit 0 is reserved.
 		 *  bit 1 is the internal (oh1) port, which is non-removable.
@@ -1442,7 +1443,7 @@ sthcd_hub_control_hub(struct usb_hcd *hcd, u16 typeReq, u16 wValue,
 		break;
 	}
 
-	if (retval < 0)	
+	if (retval < 0)
 		DBG("%s: retval=%d (%x)\n", __func__, retval, retval);
 	return retval;
 }
@@ -1472,7 +1473,7 @@ sthcd_hub_control_port(struct usb_hcd *hcd, u16 typeReq, u16 wValue,
 		if (test_bit(__STHCD_PORT_DOOMED, &port->flags)) {
 			/* disconnect */
 			if (!!(port->status_change & USB_PORT_STAT_CONNECTION))
-				port->status_change |= 
+				port->status_change |=
 					(USB_PORT_STAT_C_CONNECTION<<16);
 			port->status_change &= ~USB_PORT_STAT_CONNECTION;
 		}
@@ -1486,7 +1487,7 @@ sthcd_hub_control_port(struct usb_hcd *hcd, u16 typeReq, u16 wValue,
 				set_bit(__STHCD_PORT_DOOMED, &port->flags);
 			}
 			if (!(port->status_change & USB_PORT_STAT_ENABLE))
-				port->status_change |= 
+				port->status_change |=
 						(USB_PORT_STAT_C_ENABLE << 16);
 			port->status_change &= ~USB_PORT_STAT_RESET;
 			port->status_change |= (USB_PORT_STAT_ENABLE |
@@ -1586,7 +1587,7 @@ static int sthcd_hub_control(struct usb_hcd *hcd, u16 typeReq, u16 wValue,
 
 	if (retval > 0)
 		retval = 0;
-	if (retval < 0)	
+	if (retval < 0)
 		DBG("%s: retval=%d (%x)\n", __func__, retval, retval);
 	return retval;
 }
@@ -1613,19 +1614,18 @@ static int sthcd_hub_status_data(struct usb_hcd *hcd, char *buf)
 	spin_lock_irqsave(&sthcd->lock, flags);
 
 	port = sthcd->ports;
-	for(i = 0, *p = 0; i < sthcd->nr_ports; i++, port++) {
+	for (i = 0, *p = 0; i < sthcd->nr_ports; i++, port++) {
 		if ((port->status_change & 0xffff0000) != 0) {
 			*p |= 1 << (i+1);
 			/* REVISIT */
-			//break;
 		}
 	}
 	*p = le16_to_cpu(*p);
-	result = (*p != 0)?2:0;
+	result = (*p != 0) ? 2 : 0;
 
 	spin_unlock_irqrestore(&sthcd->lock, flags);
 
-//	DBG("%s: poll cycle, changes=%04x\n", __func__, *p);
+/*	DBG("%s: poll cycle, changes=%04x\n", __func__, *p); */
 
 	return result;
 }
@@ -1644,7 +1644,7 @@ static int sthcd_oh_insert_udev(struct sthcd_oh *oh,
 	struct sthcd_port *port;
 	unsigned long flags;
 	int error;
-	
+
 	drv_printk(KERN_INFO, "inserting device %04X.%04X\n",
 		   idVendor, idProduct);
 
@@ -1726,7 +1726,7 @@ static int sthcd_usb_control_msg(int fd,
 		goto done;
 	}
 
-	params_in->req.bRequestType= requesttype;
+	params_in->req.bRequestType = requesttype;
 	params_in->req.bRequest = request;
 	params_in->req.wValue = cpu_to_le16p(&value);
 	params_in->req.wIndex = cpu_to_le16p(&index);
@@ -1778,7 +1778,7 @@ static int sthcd_oh_check_hub(struct sthcd_oh *oh, u16 idVendor, u16 idProduct)
 	}
 
 	snprintf(pathname, sizeof(pathname), "/dev/usb/oh%u/%04x/%04x",
-	         oh->index, idVendor, idProduct);
+		 oh->index, idVendor, idProduct);
 	retval = starlet_open(pathname, 0);
 	if (retval < 0) {
 		drv_printk(KERN_ERR, "open %s failed\n", pathname);
@@ -1787,7 +1787,7 @@ static int sthcd_oh_check_hub(struct sthcd_oh *oh, u16 idVendor, u16 idProduct)
 	}
 	fd = retval;
 
-	for (i=0; i < 3; i++) {
+	for (i = 0; i < 3; i++) {
 		retval = sthcd_usb_control_msg(fd, USB_REQ_GET_DESCRIPTOR,
 					      USB_DIR_IN,
 					      USB_DT_DEVICE << 8, 0,
@@ -1803,7 +1803,7 @@ static int sthcd_oh_check_hub(struct sthcd_oh *oh, u16 idVendor, u16 idProduct)
 
 	if (retval >= USB_DT_DEVICE_SIZE) {
 		/* tell if a hub was found */
-		retval = (descriptor->bDeviceClass == USB_CLASS_HUB)?1:0;
+		retval = (descriptor->bDeviceClass == USB_CLASS_HUB) ? 1 : 0;
 	} else {
 		if (retval >= 0)
 			retval = -EINVAL;	/* short descriptor */
@@ -1854,7 +1854,7 @@ static int sthcd_get_device_list(struct sthcd_hcd *sthcd, int fd,
 	starlet_ioh_sg_init_table(in, 2);
 	starlet_ioh_sg_entry(&in[0], &params_in->devid_count);
 	starlet_ioh_sg_entry(&in[1], &params_in->_type);
-	
+
 	starlet_ioh_sg_init_table(io, 2);
 	starlet_ioh_sg_entry(&io[0], &params_io->devid_count);
 	starlet_ioh_sg_set_buf(&io[1], &params_io->devids, size);
@@ -1895,7 +1895,7 @@ static int sthcd_devid_find(struct sthcd_devid *haystack, size_t count,
 
 static int sthcd_oh_rescan(struct sthcd_oh *oh)
 {
-	static unsigned int poll_cycles = 0;
+	static unsigned int poll_cycles;
 	struct usb_hcd *hcd = sthcd_to_hcd(oh->hcd);
 	struct sthcd_devid *p;
 	int nr_new_devids, i;
@@ -1910,7 +1910,7 @@ static int sthcd_oh_rescan(struct sthcd_oh *oh)
 	nr_new_devids = error;
 	changes = 0;
 
-	for(i = 0; i < oh->nr_devids; i++) {
+	for (i = 0; i < oh->nr_devids; i++) {
 		p = &oh->devids[i];
 		if (!sthcd_devid_find(oh->new_devids, nr_new_devids, p)) {
 			/* removal */
@@ -1921,7 +1921,7 @@ static int sthcd_oh_rescan(struct sthcd_oh *oh)
 		}
 	}
 
-	for(i = 0; i < nr_new_devids; i++) {
+	for (i = 0; i < nr_new_devids; i++) {
 		p = &oh->new_devids[i];
 		if (!sthcd_devid_find(oh->devids, oh->nr_devids, p)) {
 			/* insertion */
@@ -1961,11 +1961,10 @@ static int sthcd_oh_rescan(struct sthcd_oh *oh)
 		}
 		poll_cycles = 2;
 	} else {
-		if (!poll_cycles) {
+		if (!poll_cycles)
 			hcd->poll_rh = 0;
-		} else {
+		else
 			poll_cycles--;
-		}
 #else
 		usb_hcd_poll_rh_status(hcd);
 #endif
@@ -2030,7 +2029,7 @@ static int sthcd_rescan_thread(void *arg)
 
 	oh = &sthcd->oh[0];
 
-	while(!kthread_should_stop()) {
+	while (!kthread_should_stop()) {
 		sthcd_oh_rescan(oh);
 
 		/* re-check again after the configured interval */
@@ -2083,9 +2082,8 @@ static int sthcd_start(struct usb_hcd *hcd)
 
 	/* device insertion/removal is managed by the rescan thread */
 	sthcd->rescan_task = kthread_run(sthcd_rescan_thread, sthcd, "ksthcd");
-	if (IS_ERR(sthcd->rescan_task)) {
+	if (IS_ERR(sthcd->rescan_task))
 		drv_printk(KERN_ERR, "failed to start rescan thread\n");
-	}
 
 	return 0;
 }
@@ -2170,7 +2168,7 @@ static int sthcd_urb_dequeue(struct usb_hcd *hcd, struct urb *urb, int status)
 	spin_lock_irqsave(&sthcd->lock, flags);
 
 	error = usb_hcd_check_unlink_urb(hcd, urb, status);
-	if (error) 
+	if (error)
 		goto done;
 
 	ep = urb->ep;
@@ -2355,7 +2353,7 @@ static int __init sthcd_module_init(void)
 	if (usb_disabled())
 		return -ENODEV;
 
-        drv_printk(KERN_INFO, "%s - version %s\n", DRV_DESCRIPTION,
+	drv_printk(KERN_INFO, "%s - version %s\n", DRV_DESCRIPTION,
 		   sthcd_driver_version);
 
 	return of_register_platform_driver(&sthcd_of_driver);

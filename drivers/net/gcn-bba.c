@@ -2,9 +2,9 @@
  * drivers/net/gcn-bba.c
  *
  * Nintendo GameCube Broadband Adapter (BBA) driver
- * Copyright (C) 2004-2008 The GameCube Linux Team
+ * Copyright (C) 2004-2009 The GameCube Linux Team
  * Copyright (C) 2005 Todd Jeffreys
- * Copyright (C) 2004,2005,2006,2007,2008 Albert Herranz
+ * Copyright (C) 2004,2005,2006,2007,2008,2009 Albert Herranz
  *
  * Based on previous work by Stefan Esser, Franz Lehner, Costis and tmbinc.
  *
@@ -34,9 +34,9 @@
 #include <linux/spinlock.h>
 #include <linux/kthread.h>
 #include <linux/wait.h>
+#include <linux/io.h>
 #include <linux/exi.h>
 #include <asm/system.h>
-#include <asm/io.h>
 
 
 #define DRV_MODULE_NAME	"gcn-bba"
@@ -48,11 +48,11 @@ static char bba_driver_version[] = "1.4i";
 
 
 #define bba_printk(level, format, arg...) \
-        printk(level DRV_MODULE_NAME ": " format , ## arg)
+	 printk(level DRV_MODULE_NAME ": " format , ## arg)
 
 #ifdef BBA_DEBUG
 #  define DBG(fmt, args...) \
-          printk(KERN_ERR "%s: " fmt, __FUNCTION__ , ## args)
+	   printk(KERN_ERR "%s: " fmt, __func__ , ## args)
 #else
 #  define DBG(fmt, args...)
 #endif
@@ -166,7 +166,7 @@ static inline void bba_out16(int reg, u16 val)
 }
 
 #define bba_in12(reg)      (bba_in16(reg) & 0x0fff)
-#define bba_out12(reg,val) do { bba_out16((reg),(val)&0x0fff); } while(0)
+#define bba_out12(reg, val) do { bba_out16(reg, (val)&0x0fff); } while (0)
 
 static inline void bba_ins_nosel(int reg, void *val, int len)
 {
@@ -254,11 +254,11 @@ static void bba_outs(int reg, void *val, int len)
 
 #define BBA_BP   0x0a/*+0x0b*/	/* Boundary Page Pointer Register */
 #define BBA_TLBP 0x0c/*+0x0d*/	/* TX Low Boundary Page Pointer Register */
-#define BBA_TWP  0x0e/*+0x0f*/	/* Transmit Buffer Write Page Pointer Register */
-#define BBA_TRP  0x12/*+0x13*/	/* Transmit Buffer Read Page Pointer Register */
+#define BBA_TWP  0x0e/*+0x0f*/	/* Transmit Buf Write Page Pointer Register */
+#define BBA_TRP  0x12/*+0x13*/	/* Transmit Buf Read Page Pointer Register */
 #define BBA_RWP  0x16/*+0x17*/	/* Receive Buffer Write Page Pointer Register */
 #define BBA_RRP  0x18/*+0x19*/	/* Receive Buffer Read Page Pointer Register */
-#define BBA_RHBP 0x1a/*+0x1b*/	/* Receive High Boundary Page Pointer Register */
+#define BBA_RHBP 0x1a/*+0x1b*/	/* Receive High Boundary Page Ptr Register */
 
 #define BBA_RXINTT    0x14/*+0x15*/	/* Receive Interrupt Timer Register */
 
@@ -277,7 +277,7 @@ static void bba_outs(int reg, void *val, int len)
 #define   BBA_NWAYC_LTE		(1<<7)	/* LTE, Link Test Enable */
 
 #define BBA_GCA 0x32		/* GMAC Configuration A Register, RW, 00h */
-#define   BBA_GCA_ARXERRB	(1<<3)	/* ARXERRB, Accept RX packet with error */
+#define   BBA_GCA_ARXERRB	(1<<3)	/* ARXERRB, Accept RX pkt with error */
 
 #define BBA_MISC 0x3d		/* MISC Control Register 1, RW, 3ch */
 #define   BBA_MISC_BURSTDMA	(1<<0)
@@ -340,18 +340,20 @@ static void bba_outs(int reg, void *val, int len)
 #define BBA_INIT_RWP	BBA_INIT_BP
 #define BBA_INIT_RRP	BBA_INIT_BP
 
-#if defined(__BIG_ENDIAN_BITFIELD)
-#define X(a,b)  b,a
-#else
-#define X(a,b)  a,b
-#endif
-
 enum {
 	__BBA_RBFIM_OFF = 0,
 };
 
 struct bba_descr {
-	u32 X(X(next_packet_ptr:12, packet_len:12), status:8);
+#if defined(__BIG_ENDIAN_BITFIELD)
+	__u32	status:8,
+		packet_len : 12,
+		next_packet_ptr : 12;
+#else
+	__u32	next_packet_ptr:12,
+		packet_len : 12,
+		status : 8;
+#endif
 } __attribute((packed));
 
 
@@ -539,19 +541,19 @@ static int bba_tx(struct net_device *dev)
 	unsigned long flags;
 	int retval = NETDEV_TX_OK;
 
-	static u8 pad[ETH_ZLEN] __attribute__ ((aligned (EXI_DMA_ALIGN+1)));
+	static u8 pad[ETH_ZLEN] __attribute__ ((aligned(EXI_DMA_ALIGN+1)));
 	int pad_len;
 
 	exi_dev_take(priv->exi_device);
 
 	/* if the TXFIFO is in use, we'll try it later when free */
-        if (bba_in8(BBA_NCRA) & (BBA_NCRA_ST0 | BBA_NCRA_ST1)) {
+	if (bba_in8(BBA_NCRA) & (BBA_NCRA_ST0 | BBA_NCRA_ST1)) {
 		retval = NETDEV_TX_BUSY;
 		goto out;
-        }
+	}
 
 	spin_lock_irqsave(&priv->lock, flags);
- 	skb = priv->tx_skb;
+	skb = priv->tx_skb;
 	priv->tx_skb = NULL;
 	spin_unlock_irqrestore(&priv->lock, flags);
 
@@ -659,7 +661,7 @@ static int bba_rx(struct net_device *dev, int budget)
 
 	while (netif_running(dev) && received < budget && rrp != rwp) {
 		bba_ins(rrp << 8, &descr, sizeof(descr));
-		le32_to_cpus((u32 *) & descr);
+		le32_to_cpus((u32 *) &descr);
 
 		size = descr.packet_len - 4;	/* ignore CRC */
 		lrps = descr.status;
@@ -725,9 +727,8 @@ static int bba_rx(struct net_device *dev, int budget)
 		priv->rx_work = 0;
 
 	/* re-enable RBFI if it was disabled before */
-	if (test_and_clear_bit(__BBA_RBFIM_OFF, &priv->flags)) {
+	if (test_and_clear_bit(__BBA_RBFIM_OFF, &priv->flags))
 		bba_out8(BBA_IMR, bba_in8(BBA_IMR) | BBA_IMR_RBFIM);
-	}
 
 	exi_dev_give(priv->exi_device);
 
@@ -740,10 +741,10 @@ static int bba_rx(struct net_device *dev, int budget)
 static int bba_io_thread(void *bba_priv)
 {
 	struct bba_private *priv = bba_priv;
-//	struct task_struct *me = current;
-//	struct sched_param param = { .sched_priority = MAX_RT_PRIO-1 };
+/*	struct task_struct *me = current; */
+/*	struct sched_param param = { .sched_priority = MAX_RT_PRIO-1 }; */
 
-//	sched_setscheduler(me, SCHED_FIFO, &param);
+/*	sched_setscheduler(me, SCHED_FIFO, &param); */
 
 	set_user_nice(current, -20);
 	current->flags |= PF_NOFREEZE;
@@ -754,7 +755,7 @@ static int bba_io_thread(void *bba_priv)
 	 * The bba is often used to access the root filesystem.
 	 */
 
-	while(!kthread_should_stop()) {
+	while (!kthread_should_stop()) {
 		/*
 		 * We want to get scheduled at least once every 2 minutes
 		 * to avoid a softlockup spurious message...
@@ -776,7 +777,7 @@ static int bba_io_thread(void *bba_priv)
  * Handles interrupt work from the network device.
  * Caller has already taken the exi channel.
  */
-static void inline bba_interrupt(struct net_device *dev)
+static void bba_interrupt(struct net_device *dev)
 {
 	struct bba_private *priv = (struct bba_private *)dev->priv;
 	u8 ir, imr, status, lrps, ltps;
@@ -791,7 +792,7 @@ static void inline bba_interrupt(struct net_device *dev)
 		bba_out8(BBA_IR, status);
 		bba_out8(BBA_IMR, 0x00);
 		goto out;
-        }
+	}
 
 	while (status) {
 		bba_out8(BBA_IR, status);
@@ -820,15 +821,12 @@ static void inline bba_interrupt(struct net_device *dev)
 			bba_tx_err(ltps, dev);
 		}
 
-		if (status & BBA_IR_FIFOEI) {
+		if (status & BBA_IR_FIFOEI)
 			DBG("FIFOEI\n");
-		}
-		if (status & BBA_IR_BUSEI) {
+		if (status & BBA_IR_BUSEI)
 			DBG("BUSEI\n");
-		}
-		if (status & BBA_IR_FRAGI) {
+		if (status & BBA_IR_FRAGI)
 			DBG("FRAGI\n");
-		}
 
 		ir = bba_in8(BBA_IR);
 		imr = bba_in8(BBA_IMR);
@@ -841,9 +839,8 @@ static void inline bba_interrupt(struct net_device *dev)
 		DBG("a lot of interrupt work (%d loops)\n", loops);
 
 	/* wake up xmit queue in case transmitter is idle */
-	if ((bba_in8(BBA_NCRA) & (BBA_NCRA_ST0 | BBA_NCRA_ST1)) == 0) {
+	if ((bba_in8(BBA_NCRA) & (BBA_NCRA_ST0 | BBA_NCRA_ST1)) == 0)
 		netif_wake_queue(dev);
-	}
 
 out:
 	return;
@@ -856,9 +853,8 @@ out:
 static void bba_retrieve_ether_addr(struct net_device *dev)
 {
 	bba_ins(BBA_NAFR_PAR0, dev->dev_addr, ETH_ALEN);
-	if (!is_valid_ether_addr(dev->dev_addr)) {
+	if (!is_valid_ether_addr(dev->dev_addr))
 		random_ether_addr(dev->dev_addr);
-	}
 }
 
 /*
@@ -942,7 +938,7 @@ static int bba_setup_hardware(struct net_device *dev)
 	bba_out8(BBA_IR, 0xFF);
 
 	/* enable all interrupts */
-	bba_out8(BBA_IMR, 0xFF & ~(BBA_IMR_FIFOEIM /*| BBA_IMR_REIM*/ ));
+	bba_out8(BBA_IMR, 0xFF & ~(BBA_IMR_FIFOEIM /*| BBA_IMR_REIM*/));
 
 	/* unknown, short command registers 0x02 */
 	/* XXX enable interrupts on the EXI glue logic */
@@ -977,7 +973,7 @@ static unsigned long bba_calc_response(unsigned long val,
 	c2 = (i2 + 0xc8) ^ (c0 + ((revid_eth_0 + revid_0 * 0x23) ^ 0x19));
 	c3 = (i0 + 0xc1) ^ (i3 + ((revid_eth_1 + 0xc8) ^ 0x90));
 
-	return ((c0 << 24) | (c1 << 16) | (c2 << 8) | c3);
+	return (c0 << 24) | (c1 << 16) | (c2 << 8) | c3;
 }
 
 /*
@@ -1021,9 +1017,8 @@ static int bba_event_handler(struct exi_channel *exi_channel,
 
 	/* command error interrupt, haven't seen one yet */
 	mask >>= 1;
-	if (status & mask) {
+	if (status & mask)
 		goto out;
-	}
 
 	/* challenge/response interrupt */
 	mask >>= 1;
@@ -1065,7 +1060,7 @@ out:
 	return 1;
 }
 
-static struct net_device *bba_dev = NULL;
+static struct net_device *bba_dev;
 
 static inline void bba_select(void)
 {
@@ -1199,9 +1194,8 @@ static int __devinit bba_probe(struct exi_device *exi_device)
 {
 	int ret = -ENODEV;
 
-	if (exi_device_get(exi_device)) {
+	if (exi_device_get(exi_device))
 		ret = bba_init_device(exi_device);
-	}
 
 	return ret;
 }
@@ -1221,7 +1215,7 @@ static struct exi_driver bba_driver = {
 	.eid_table = bba_eid_table,
 	.frequency = BBA_EXI_FREQ,
 	.probe = bba_probe,
-	.remove = bba_remove 
+	.remove = bba_remove,
 };
 
 /**

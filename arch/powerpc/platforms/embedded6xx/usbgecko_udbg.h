@@ -2,8 +2,8 @@
  * arch/powerpc/platforms/embedded6xx/usbgecko_udbg.h
  *
  * udbg serial input/output routines for the USB Gecko adapter.
- * Copyright (C) 2008 The GameCube Linux Team
- * Copyright (C) 2008 Albert Herranz
+ * Copyright (C) 2008-2009 The GameCube Linux Team
+ * Copyright (C) 2008,2009 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -27,13 +27,10 @@ static inline void __init ug_udbg_init(void)
 
 #endif /* CONFIG_USBGECKO_UDBG */
 
-
 #ifdef CONFIG_PPC_EARLY_DEBUG_USBGECKO
 
-void __init udbg_init_debug_usbgecko(void);
+void __init udbg_init_usbgecko(void);
 
 #endif /* CONFIG_PPC_EARLY_DEBUG_USBGECKO */
 
-
 #endif /* __USBGECKO_UDBG_H */
-

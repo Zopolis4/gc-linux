@@ -2,8 +2,8 @@
  * sound/ppc/gcn-ai.c
  *
  * Nintendo GameCube/Wii Audio Interface (AI) driver
- * Copyright (C) 2004-2008 The GameCube Linux Team
- * Copyright (C) 2007,2008 Albert Herranz
+ * Copyright (C) 2004-2009 The GameCube Linux Team
+ * Copyright (C) 2007,2008,2009 Albert Herranz
  *
  * Based on work from mist, kirin, groepaz, Steve_-, isobel and others.
  *
@@ -20,7 +20,7 @@
 #include <linux/of_platform.h>
 #include <linux/interrupt.h>
 #include <linux/dma-mapping.h>
-#include <asm/io.h>
+#include <linux/io.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
 #define SNDRV_GET_ID
@@ -38,7 +38,7 @@
 static char ai_driver_version[] = "1.0i";
 
 #define drv_printk(level, format, arg...) \
-        printk(level DRV_MODULE_NAME ": " format , ## arg)
+	 printk(level DRV_MODULE_NAME ": " format , ## arg)
 
 
 /*
@@ -87,13 +87,13 @@ struct snd_gcn {
 	struct snd_pcm_substream	*playback_substream;
 	struct snd_pcm_substream	*capture_substream;
 
-	volatile int	start_play;
-	volatile int	stop_play;
+	int		start_play;
+	int		stop_play;
 
 	dma_addr_t	dma_addr;
 	size_t		period_size;
 	int		nperiods;
-	volatile int	cur_period;
+	int		cur_period;
 
 	void __iomem	*dsp_base;
 	void __iomem	*ai_base;
@@ -175,7 +175,7 @@ static void ai_set_rate(void __iomem *ai_base, int fortyeight)
 static int index = SNDRV_DEFAULT_IDX1;	/* index 0-MAX */
 static char *id = SNDRV_DEFAULT_STR1;	/* ID for this card */
 
-static struct snd_gcn *gcn_audio = NULL;
+static struct snd_gcn *gcn_audio;
 
 static struct snd_pcm_hardware snd_gcn_playback = {
 	.info = (SNDRV_PCM_INFO_MMAP | SNDRV_PCM_INFO_INTERLEAVED |
@@ -219,7 +219,7 @@ static int snd_gcn_close(struct snd_pcm_substream *substream)
 }
 
 static int snd_gcn_hw_params(struct snd_pcm_substream *substream,
-				  struct snd_pcm_hw_params * hw_params)
+				  struct snd_pcm_hw_params *hw_params)
 {
 	return snd_pcm_lib_malloc_pages(substream,
 					params_buffer_bytes(hw_params));
@@ -322,9 +322,9 @@ static irqreturn_t snd_gcn_interrupt(int irq, void *dev)
 
 		/* load next sample if we are not stopping */
 		if (!chip->stop_play) {
-			if (chip->cur_period < (chip->nperiods - 1)) {
+			if (chip->cur_period < (chip->nperiods - 1))
 				chip->cur_period++;
-			} else
+			else
 				chip->cur_period = 0;
 
 			addr = chip->playback_substream->runtime->dma_area
@@ -349,7 +349,7 @@ static irqreturn_t snd_gcn_interrupt(int irq, void *dev)
 	csr &= ~(AI_CSR_PIINT | AI_CSR_ARINT | AI_CSR_DSPINT);
 	out_be16(chip->dsp_base + AI_DSP_CSR, csr);
 	local_irq_restore(flags);
-		
+
 	return IRQ_HANDLED;
 }
 
@@ -365,7 +365,7 @@ static struct snd_pcm_ops snd_gcn_playback_ops = {
 	.pointer = snd_gcn_pointer,
 };
 
-static int __devinit snd_gcn_new_pcm(struct snd_gcn * chip)
+static int __devinit snd_gcn_new_pcm(struct snd_gcn *chip)
 {
 	struct snd_pcm *pcm;
 	int retval;
@@ -586,7 +586,7 @@ static int __init ai_init_module(void)
 
 static void __exit ai_exit_module(void)
 {
-        of_unregister_platform_driver(&ai_of_driver);
+	of_unregister_platform_driver(&ai_of_driver);
 }
 
 module_init(ai_init_module);

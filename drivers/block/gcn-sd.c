@@ -2,10 +2,10 @@
  * drivers/block/gcn-sd.c
  *
  * MMC/SD card block driver for the Nintendo GameCube/Wii
- * Copyright (C) 2004-2008 The GameCube Linux Team
+ * Copyright (C) 2004-2009 The GameCube Linux Team
  * Copyright (C) 2004,2005 Rob Reylink
  * Copyright (C) 2005 Todd Jeffreys
- * Copyright (C) 2005,2006,2007,2008 Albert Herranz
+ * Copyright (C) 2005,2006,2007,2008,2009 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -74,9 +74,9 @@
 
 #define DRV_MODULE_NAME "gcn-sd"
 #define DRV_DESCRIPTION "MMC/SD card block driver for the Nintendo GameCube/Wii"
-#define DRV_AUTHOR      "Rob Reylink, " \
+#define DRV_AUTHOR	"Rob Reylink, " \
 			"Todd Jeffreys, " \
-                        "Albert Herranz"
+			"Albert Herranz"
 
 static char sd_driver_version[] = "4.1i";
 
@@ -85,7 +85,7 @@ static char sd_driver_version[] = "4.1i";
 
 #ifdef SD_DEBUG
 #  define DBG(fmt, args...) \
-          printk(KERN_ERR "%s: " fmt, __FUNCTION__ , ## args)
+	   printk(KERN_ERR "%s: " fmt, __func__ , ## args)
 #else
 #  define DBG(fmt, args...)
 #endif
@@ -272,7 +272,7 @@ static u16 crc_xmodem_update(u16 crc, u8 data)
 	return crc;
 }
 
-#define UNSTUFF_BITS(resp,start,size)				\
+#define UNSTUFF_BITS(resp, start, size)				\
 	({							\
 	const int __size = size;				\
 	const u32 __mask = (__size < 32 ? 1 << __size : 0) - 1;	\
@@ -427,7 +427,7 @@ static void sd_print_cid(struct mmc_cid *cid)
 /* */
 static inline unsigned int ms_to_cycles(unsigned int ms, unsigned int clock)
 {
-	return (ms * (clock / 1000));
+	return ms * (clock / 1000);
 }
 
 /* */
@@ -577,17 +577,19 @@ out:
 /*
  *
  */
-static int sd_write_data(struct sd_host *host, void *data, size_t len, int token)
+static int sd_write_data(struct sd_host *host, void *data, size_t len,
+			  int token)
 {
 	u16 crc;
-	u8 t;
+	u8 t, *d;
+	size_t l;
 	int retval = 0;
 
 	/* FIXME, rewrite this a bit */
 	{
 		crc = 0;
-		u8 *d = data;
-		int l = len;
+		d = data;
+		l = len;
 
 		while (l-- > 0)
 			crc = crc_xmodem_update(crc, *d++);
@@ -714,6 +716,8 @@ static int sd_generic_read(struct sd_host *host,
 {
 	struct sd_command *cmd = &host->cmd;
 	u16 crc, calc_crc = 0xffff;
+	u8 *d;
+	size_t l;
 	int retval;
 
 	/* build raw command */
@@ -741,8 +745,8 @@ static int sd_generic_read(struct sd_host *host,
 	/* FIXME, rewrite this a bit */
 	{
 		calc_crc = 0;
-		u8 *d = data;
-		int l = len;
+		d = data;
+		l = len;
 
 		while (l-- > 0)
 			calc_crc = crc_xmodem_update(calc_crc, *d++);
@@ -797,9 +801,8 @@ out:
 	/* burn extra cycles and deselect card */
 	sd_end_command(host);
 
-	if (retval < 0) {
+	if (retval < 0)
 		DBG("write, offset=%d, len=%d\n", arg, len);
-	}
 
 	return retval;
 }
@@ -885,8 +888,8 @@ static inline int sd_read_single_block(struct sd_host *host,
  *
  */
 static inline int sd_write_single_block(struct sd_host *host,
-				        unsigned long start,
-				        void *data, size_t len)
+					 unsigned long start,
+					 void *data, size_t len)
 {
 	int retval;
 
@@ -1006,7 +1009,7 @@ out:
 }
 
 /*
- * 
+ *
  */
 static int sd_welcome_card(struct sd_host *host)
 {
@@ -1052,7 +1055,7 @@ static int sd_welcome_card(struct sd_host *host)
 		  host->card.cid.prod_name,
 		  (unsigned long)((host->card.csd.capacity *
 			  (1 << host->card.csd.read_blkbits)) / 1024),
-	          1 << host->card.csd.read_blkbits,
+		  1 << host->card.csd.read_blkbits,
 		  host->card.cid.serial);
 
 	retval = 0;
@@ -1152,7 +1155,7 @@ static int sd_write_request(struct sd_host *host, struct request *req)
 
 /*
  * Verifies if a request should be dispatched or not.
- * 
+ *
  * Returns:
  *  <0 in case of error.
  *  0  if request passes the checks
@@ -1195,7 +1198,7 @@ static int sd_do_request(struct sd_host *host, struct request *req)
 	if (retval)
 		return 0;
 
-	switch(rq_data_dir(req)) {
+	switch (rq_data_dir(req)) {
 	case WRITE:
 		retval = sd_write_request(host, req);
 		break;
@@ -1212,11 +1215,11 @@ static int sd_do_request(struct sd_host *host, struct request *req)
  */
 static int sd_io_thread(void *param)
 {
-        struct sd_host *host = param;
+	struct sd_host *host = param;
 	struct request *req;
-	int uptodate;
 	unsigned long flags;
-	int retval;
+	int nr_sectors;
+	int error;
 
 #if 0
 	/*
@@ -1224,13 +1227,13 @@ static int sd_io_thread(void *param)
 	 * above. At least, be nice with other processes trying to use the
 	 * cpu.
 	 */
-        set_user_nice(current, 0);
+	set_user_nice(current, 0);
 #endif
 
-        current->flags |= PF_NOFREEZE|PF_MEMALLOC;
+	current->flags |= PF_NOFREEZE|PF_MEMALLOC;
 
 	mutex_lock(&host->io_mutex);
-	for(;;) {
+	for (;;) {
 		req = NULL;
 		set_current_state(TASK_INTERRUPTIBLE);
 
@@ -1250,11 +1253,11 @@ static int sd_io_thread(void *param)
 			continue;
 		}
 		set_current_state(TASK_INTERRUPTIBLE);
-		retval = sd_do_request(host, req);
+		nr_sectors = sd_do_request(host, req);
+		error = (nr_sectors < 0) ? nr_sectors : 0;
 
-		uptodate = (retval > 0)?1:0;
 		spin_lock_irqsave(&host->queue_lock, flags);
-		end_queued_request(req, uptodate);
+		__blk_end_request(req, error, nr_sectors << 9);
 		spin_unlock_irqrestore(&host->queue_lock, flags);
 	}
 	mutex_unlock(&host->io_mutex);
@@ -1282,9 +1285,9 @@ static DECLARE_MUTEX(open_lock);
 /*
  * Opens the drive device.
  */
-static int sd_open(struct inode *inode, struct file *filp)
+static int sd_open(struct block_device *bdev, fmode_t mode)
 {
-	struct sd_host *host = inode->i_bdev->bd_disk->private_data;
+	struct sd_host *host = bdev->bd_disk->private_data;
 	int retval = 0;
 
 	if (!host || !host->exi_device)
@@ -1292,13 +1295,13 @@ static int sd_open(struct inode *inode, struct file *filp)
 
 	/* honor exclusive open mode */
 	if (host->refcnt == -1 ||
-	    (host->refcnt && (filp->f_flags & O_EXCL))) {
+	    (host->refcnt && (mode & FMODE_EXCL))) {
 		retval = -EBUSY;
 		goto out;
 	}
 
 	/* this takes care of revalidating the media if needed */
-	check_disk_change(inode->i_bdev);
+	check_disk_change(bdev);
 	if (!host->card.csd.capacity) {
 		retval = -ENOMEDIUM;
 		goto out;
@@ -1306,7 +1309,7 @@ static int sd_open(struct inode *inode, struct file *filp)
 
 	down(&open_lock);
 
-	if ((filp->f_flags & O_EXCL))
+	if ((mode & FMODE_EXCL))
 		host->refcnt = -1;
 	else
 		host->refcnt++;
@@ -1321,9 +1324,9 @@ out:
 /*
  * Releases the drive device.
  */
-static int sd_release(struct inode *inode, struct file *filp)
+static int sd_release(struct gendisk *disk, fmode_t mode)
 {
-	struct sd_host *host = inode->i_bdev->bd_disk->private_data;
+	struct sd_host *host = disk->private_data;
 
 	if (!host)
 		return -ENXIO;
@@ -1332,15 +1335,14 @@ static int sd_release(struct inode *inode, struct file *filp)
 
 	if (host->refcnt > 0)
 		host->refcnt--;
-	else {
+	else
 		host->refcnt = 0;
-	}
 
 	up(&open_lock);
 
-        /* lazy removal of unreferenced zombies */
-        if (!host->refcnt && !host->exi_device)
-                kfree(host);
+	/* lazy removal of unreferenced zombies */
+	if (!host->refcnt && !host->exi_device)
+		kfree(host);
 
 	return 0;
 }
@@ -1365,11 +1367,10 @@ static int sd_media_changed(struct gendisk *disk)
 	/* check if the serial number of the card changed */
 	last_serial = host->card.cid.serial;
 	retval = sd_read_cid(host);
-	if (!retval && last_serial == host->card.cid.serial && last_serial) {
+	if (!retval && last_serial == host->card.cid.serial && last_serial)
 		clear_bit(__SD_MEDIA_CHANGED, &host->flags);
-	} else {
+	else
 		set_bit(__SD_MEDIA_CHANGED, &host->flags);
-	}
 
 	return (host->flags & SD_MEDIA_CHANGED) ? 1 : 0;
 }
@@ -1410,43 +1411,14 @@ out:
 	return retval;
 }
 
-/*
- * Ioctl.
- */
-static int sd_ioctl(struct inode *inode, struct file *filp,
-		    unsigned int cmd, unsigned long arg)
+static int sd_getgeo(struct block_device *bdev, struct hd_geometry *geo)
 {
-	struct block_device *bdev = inode->i_bdev;
-	struct hd_geometry geo;
-
-	switch (cmd) {
-#if 0
-	case BLKRAGET:
-	case BLKFRAGET:
-	case BLKROGET:
-	case BLKBSZGET:
-	case BLKSSZGET:
-	case BLKSECTGET:
-	case BLKGETSIZE:
-	case BLKGETSIZE64:
-	case BLKFLSBUF:
-		return ioctl_by_bdev(bdev, cmd, arg);
-#endif
-	case HDIO_GETGEO:
-		/* fake the entries */
-		geo.cylinders = get_capacity(bdev->bd_disk) / (4 * 16);
-		geo.heads = 4;
-		geo.sectors = 16;
-		geo.start = get_start_sect(bdev);
-
-		if (copy_to_user((void __user *)arg, &geo, sizeof(geo)))
-			return -EFAULT;
-		return 0;
-	default:
-		return -ENOTTY;
-	}
-	return -EINVAL;
+	geo->cylinders = get_capacity(bdev->bd_disk) / (4 * 16);
+	geo->heads = 4;
+	geo->sectors = 16;
+	return 0;
 }
+
 
 static struct block_device_operations sd_fops = {
 	.owner = THIS_MODULE,
@@ -1454,7 +1426,7 @@ static struct block_device_operations sd_fops = {
 	.release = sd_release,
 	.revalidate_disk = sd_revalidate_disk,
 	.media_changed = sd_media_changed,
-	.ioctl = sd_ioctl,
+	.getgeo = sd_getgeo,
 };
 
 /*
@@ -1576,7 +1548,7 @@ static int sd_init(struct sd_host *host)
 		}
 
 		retval = sd_init_io_thread(host);
-		if (retval) 
+		if (retval)
 			goto err_blk_dev;
 
 		add_disk(host->disk);

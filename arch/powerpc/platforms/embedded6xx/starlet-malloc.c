@@ -2,8 +2,8 @@
  * arch/powerpc/platforms/embedded6xx/starlet-malloc.c
  *
  * Nintendo Wii starlet memory allocation library
- * Copyright (C) 2008 The GameCube Linux Team
- * Copyright (C) 2008 Albert Herranz
+ * Copyright (C) 2008-2009 The GameCube Linux Team
+ * Copyright (C) 2008,2009 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -44,7 +44,7 @@
 static char starlet_malloc_lib_version[] = "0.1i";
 
 #define drv_printk(level, format, arg...) \
-        printk(level LIB_MODULE_NAME ": " format , ## arg)
+	 printk(level LIB_MODULE_NAME ": " format , ## arg)
 
 
 #define STARLET_IOH_ALIGN	31
@@ -196,7 +196,7 @@ static int starlet_ioh_init(struct starlet_ioh *ioh, struct resource *mem)
 	return 0;
 
 err_rh_create:
-	iounmap(ioh->base);	
+	iounmap(ioh->base);
 err_rh_attach_region:
 	rh_destroy(ioh->rheap);
 err:
@@ -210,7 +210,7 @@ static struct starlet_ioh *starlet_ioh;
  */
 static struct starlet_ioh *starlet_ioh_get(void)
 {
-	if (unlikely(!starlet_ioh)) 
+	if (unlikely(!starlet_ioh))
 		drv_printk(KERN_ERR, "uninitialized ioh instance!\n");
 	return starlet_ioh;
 }
@@ -274,7 +274,7 @@ void starlet_ioh_kfree(void *ptr)
 		return;
 
 	offset = ptr - ioh->base;
-	
+
 	spin_lock_irqsave(&ioh->lock, flags);
 	rh_free(ioh->rheap, offset);
 	spin_unlock_irqrestore(&ioh->lock, flags);

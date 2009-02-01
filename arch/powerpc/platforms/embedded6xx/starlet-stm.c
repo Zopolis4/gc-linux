@@ -2,8 +2,8 @@
  * arch/powerpc/platforms/embedded6xx/starlet-stm.c
  *
  * Nintendo Wii starlet STM routines
- * Copyright (C) 2008 The GameCube Linux Team
- * Copyright (C) 2008 Albert Herranz
+ * Copyright (C) 2008-2009 The GameCube Linux Team
+ * Copyright (C) 2008,2009 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -30,14 +30,14 @@
 #define STARLET_DEV_STM_IMMEDIATE	"/dev/stm/immediate"
 
 #define drv_printk(level, format, arg...) \
-        printk(level "starlet-stm: " format , ## arg)
+	 printk(level "starlet-stm: " format , ## arg)
 
 
 static const char dev_stm_immediate[] = STARLET_DEV_STM_IMMEDIATE;
 
 /* private aligned buffer for restart/power_off operations */
 static u32 starlet_stm_buf[(STARLET_IPC_DMA_ALIGN+1)/sizeof(u32)]
-		 __attribute__ ((aligned (STARLET_IPC_DMA_ALIGN+1)));
+		 __attribute__ ((aligned(STARLET_IPC_DMA_ALIGN+1)));
 
 /*
  *
@@ -68,8 +68,8 @@ static void starlet_stm_common_restart(int request, u32 value)
 	starlet_close(fd);
 
 done:
-        if (error < 0)
-                DBG("%s: error=%d (%x)\n", __func__, error, error);
+	if (error < 0)
+		DBG("%s: error=%d (%x)\n", __func__, error, error);
 }
 
 /*
@@ -79,7 +79,7 @@ void starlet_stm_restart(void)
 {
 	starlet_stm_common_restart(STARLET_STM_HOTRESET, 0);
 }
-//EXPORT_SYMBOL_GPL(starlet_stm_restart);
+/*EXPORT_SYMBOL_GPL(starlet_stm_restart);*/
 
 /*
  *
@@ -88,6 +88,6 @@ void starlet_stm_power_off(void)
 {
 	starlet_stm_common_restart(STARLET_STM_SHUTDOWN, 0);
 }
-//EXPORT_SYMBOL_GPL(starlet_stm_power_off);
+/*EXPORT_SYMBOL_GPL(starlet_stm_power_off);*/
 
 

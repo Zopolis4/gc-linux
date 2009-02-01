@@ -2,8 +2,8 @@
  * arch/powerpc/boot/ugecon.h
  *
  * USB Gecko early bootwrapper console.
- * Copyright (C) 2008 The GameCube Linux Team
- * Copyright (C) 2008 Albert Herranz
+ * Copyright (C) 2008-2009 The GameCube Linux Team
+ * Copyright (C) 2008,2009 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -19,6 +19,7 @@ extern int ug_grab_io_base(void);
 extern int ug_is_adapter_present(void);
 
 extern void ug_putc(char ch);
+extern void ug_console_write(const char *buf, int len);
 
 #endif /* __UGECON_H */
 

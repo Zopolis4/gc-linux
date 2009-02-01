@@ -2,8 +2,8 @@
  * drivers/misc/gcn-mi.c
  *
  * Nintendo GameCube Memory Interface (MI) driver.
- * Copyright (C) 2004-2008 The GameCube Linux Team
- * Copyright (C) 2004,2005,2007,2008 Albert Herranz
+ * Copyright (C) 2004-2009 The GameCube Linux Team
+ * Copyright (C) 2004,2005,2007,2008,2009 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -21,14 +21,9 @@
 #include <linux/interrupt.h>
 #include <linux/spinlock.h>
 #include <linux/proc_fs.h>
-#include <asm/io.h>
+#include <linux/io.h>
 
 #include "gcn-mi.h"
-#ifdef CONFIG_PPC_MERGE
-#include <platforms/embedded6xx/gamecube.h>
-#else
-#include <platforms/gamecube.h>
-#endif
 
 
 #define MI_IRQ	7
@@ -63,7 +58,7 @@ struct mi_private {
 	unsigned long faults[MI_MAX_REGIONS+1];
 	unsigned long last_address;
 	unsigned long last_address_faults;
-        spinlock_t lock;
+	spinlock_t lock;
 #ifdef CONFIG_PROC_FS
 	struct proc_dir_entry *proc_file;
 #endif
@@ -74,35 +69,12 @@ static struct mi_private *mi_private;
 #define DRV_MODULE_NAME      "gcn-mi"
 #define DRV_DESCRIPTION      "Nintendo GameCube Memory Interface driver"
 #define DRV_AUTHOR           "Albert Herranz"
-                                                                                
+
 #define PFX DRV_MODULE_NAME ": "
 #define mi_printk(level, format, arg...) \
 	printk(level PFX format , ## arg)
-                                                                                
-/**
- *
- */
-static int mi_setup_default_regions(void)
-{
-	int retval = 0;
 
-#ifndef MODULE
-
-#ifdef CONFIG_KEXEC
-	retval = gcn_mi_region_protect(GCN_PRESERVE_TO, GCN_PRESERVE_TO +
-				    PAGE_ALIGN(GCN_PRESERVE_SIZE), MI_PROT_RO);
-	if (retval < 0) {
-		mi_printk(KERN_ERR, "unable to protect"
-				    " kexec reserved memory\n");
-	}
-#endif /* CONFIG_KEXEC */
-
-#endif /* MODULE */
-
-	return retval;
-}
-
-/**
+/*
  *
  */
 static irqreturn_t mi_handler(int this_irq, void *data)
@@ -120,9 +92,9 @@ static irqreturn_t mi_handler(int this_irq, void *data)
 	cause = in_be16(MI_ICR);
 
 	/* a fault was detected in some of the registered regions */
-	if ( (cause & 0xf) != 0) {
+	if ((cause & 0xf) != 0) {
 		for (region = 0; region < MI_MAX_REGIONS; region++) {
-			if ( (cause & (1 << region)) != 0 ) {
+			if ((cause & (1 << region)) != 0) {
 				priv->faults[region]++;
 				mi_printk(KERN_INFO, "bad access on region #%d"
 					  " at 0x%lx\n", region, address);
@@ -131,7 +103,7 @@ static irqreturn_t mi_handler(int this_irq, void *data)
 	}
 
 	/* a fault was detected out of any registered region */
-	if ( (cause & (1 << 4)) != 0 ) {
+	if ((cause & (1 << 4)) != 0) {
 		priv->faults[MI_MAX_REGIONS]++;
 		if (address == priv->last_address) {
 			priv->last_address_faults++;
@@ -158,7 +130,7 @@ static irqreturn_t mi_handler(int this_irq, void *data)
 }
 
 #ifdef CONFIG_PROC_FS
-/**
+/*
  *
  */
 static int mi_proc_read(char *page, char **start,
@@ -171,7 +143,7 @@ static int mi_proc_read(char *page, char **start,
 
 	len = sprintf(page, "# <region> <faults>\n");
 	for (region = 0; region < MI_MAX_REGIONS; region++) {
-		if ( (priv->regions_bitmap & (1<<region)) != 0 ) {
+		if ((priv->regions_bitmap & (1<<region)) != 0) {
 			len += sprintf(page+len, "%d\t%lu\n",
 				       region, priv->faults[region]);
 		}
@@ -184,7 +156,7 @@ static int mi_proc_read(char *page, char **start,
 
 #endif /* CONFIG_PROC_FS */
 
-/**
+/*
  *
  */
 static int mi_setup_irq(struct mi_private *priv)
@@ -192,16 +164,15 @@ static int mi_setup_irq(struct mi_private *priv)
 	int retval;
 
 	retval = request_irq(priv->irq, mi_handler, 0, DRV_MODULE_NAME, priv);
-	if (retval) {
+	if (retval)
 		mi_printk(KERN_ERR, "request of irq%d failed\n", priv->irq);
-	} else {
+	else
 		out_be16(MI_IMR, (1<<4)); /* do not mask all MI interrupts */
-	}
 
 	return retval;
 }
 
-/**
+/*
  *
  */
 static int mi_probe(struct device *device, struct resource *mem, int irq)
@@ -243,7 +214,6 @@ static int mi_probe(struct device *device, struct resource *mem, int irq)
 #endif /* CONFIG_PROC_FS */
 
 	mi_private = priv;
-	mi_setup_default_regions();
 
 	return 0;
 
@@ -254,7 +224,7 @@ err:
 	return retval;
 }
 
-/**
+/*
  *
  */
 static void mi_shutdown(struct mi_private *priv)
@@ -262,7 +232,7 @@ static void mi_shutdown(struct mi_private *priv)
 	gcn_mi_region_unprotect_all();
 }
 
-/**
+/*
  *
  */
 static void mi_remove(struct mi_private *priv)
@@ -281,7 +251,7 @@ static void mi_remove(struct mi_private *priv)
 	mi_private = NULL;
 }
 
-/**
+/*
  *
  */
 static int __init mi_drv_probe(struct device *device)
@@ -294,13 +264,13 @@ static int __init mi_drv_probe(struct device *device)
 	mem = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (!mem)
 		return -ENODEV;
-	
-        mi_printk(KERN_INFO, "%s\n", DRV_DESCRIPTION);
+
+	mi_printk(KERN_INFO, "%s\n", DRV_DESCRIPTION);
 
 	return mi_probe(device, mem, irq);
 }
 
-/**
+/*
  *
  */
 static int mi_drv_remove(struct device *device)
@@ -315,7 +285,7 @@ static int mi_drv_remove(struct device *device)
 	return 0;
 }
 
-/**
+/*
  *
  */
 static void mi_drv_shutdown(struct device *device)
@@ -337,7 +307,7 @@ static struct device_driver mi_device_driver = {
 static struct resource mi_resources[] = {
 	[0] = {
 		.start = MI_BASE,
-		.end = MI_BASE + MI_SIZE -1,
+		.end = MI_BASE + MI_SIZE - 1,
 		.flags = IORESOURCE_MEM,
 	},
 	[1] = {
@@ -354,7 +324,7 @@ static struct platform_device mi_device = {
 	.resource = mi_resources,
 };
 
-/**
+/*
  *
  */
 static int __init mi_init(void)
@@ -362,14 +332,13 @@ static int __init mi_init(void)
 	int retval = 0;
 
 	retval = driver_register(&mi_device_driver);
-	if (!retval) {
+	if (!retval)
 		retval = platform_device_register(&mi_device);
-	}
 
 	return retval;
 }
 
-/**
+/*
  *
  */
 static void __exit mi_exit(void)
@@ -382,9 +351,9 @@ module_init(mi_init);
 module_exit(mi_exit);
 
 
-/* Exported symbols */
+/* public interface */
 
-/**
+/*
  *
  */
 int gcn_mi_region_protect(unsigned long physlo, unsigned long physhi, int type)
@@ -399,16 +368,14 @@ int gcn_mi_region_protect(unsigned long physlo, unsigned long physhi, int type)
 	if (type < MI_PROT_NONE || type > MI_PROT_RW)
 		return -EINVAL;
 
-	if ( (physlo & ~MI_PAGE_MASK) != 0 || (physhi & ~MI_PAGE_MASK) != 0 ) {
+	if ((physlo & ~MI_PAGE_MASK) != 0 || (physhi & ~MI_PAGE_MASK) != 0)
 		return -EINVAL;
-	}
 
 	free_regions = MI_MAX_REGIONS - priv->nr_regions;
-	if (free_regions <= 0) {
+	if (free_regions <= 0)
 		return -ENOMEM;
-	}
 	for (region = 0; region < MI_MAX_REGIONS; region++) {
-		if ( (priv->regions_bitmap & (1<<region)) == 0 )
+		if ((priv->regions_bitmap & (1<<region)) == 0)
 			break;
 	}
 	if (region >= MI_MAX_REGIONS)
@@ -432,7 +399,7 @@ int gcn_mi_region_protect(unsigned long physlo, unsigned long physhi, int type)
 	return region;
 }
 
-/**
+/*
  *
  */
 int gcn_mi_region_unprotect(int region)
@@ -444,12 +411,13 @@ int gcn_mi_region_unprotect(int region)
 
 	if (region < 0 || region > MI_MAX_REGIONS)
 		return -EINVAL;
-	
+
 	out_be16(MI_IMR, in_be16(MI_IMR) & ~(1 << region));
 	out_be32(MI_PROT_REGION0 + 4*region, 0);
-	out_be16(MI_PROT_TYPE, in_be16(MI_PROT_TYPE) | (MI_PROT_RW << 2*region));
+	out_be16(MI_PROT_TYPE,
+		 in_be16(MI_PROT_TYPE) | (MI_PROT_RW << 2*region));
 
-	if ( (priv->regions_bitmap & (1<<region)) != 0 )
+	if ((priv->regions_bitmap & (1<<region)) != 0)
 		mi_printk(KERN_INFO, "region #%d unprotected\n", region);
 
 	priv->regions_bitmap &= ~(1 << region);
@@ -458,7 +426,7 @@ int gcn_mi_region_unprotect(int region)
 	return 0;
 }
 
-/**
+/*
  *
  */
 void gcn_mi_region_unprotect_all(void)
@@ -466,12 +434,10 @@ void gcn_mi_region_unprotect_all(void)
 	int region;
 
 	out_be16(MI_IMR, 0);
-	for (region = 0; region < MI_MAX_REGIONS; region++) {
+	for (region = 0; region < MI_MAX_REGIONS; region++)
 		gcn_mi_region_unprotect(region);
-	}
 }
 
 MODULE_DESCRIPTION(DRV_DESCRIPTION);
 MODULE_AUTHOR(DRV_AUTHOR);
 MODULE_LICENSE("GPL");
-

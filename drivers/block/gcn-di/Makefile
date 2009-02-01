@@ -21,9 +21,9 @@ cmd_build_difw = \
 		-o $(obj)/$(@F).elf -e 0x40d000 $(obj)/$(@F).o; \
 	$(OCMN102) -I elf32-mn10200 -O binary $(obj)/$(@F).elf \
 		$(obj)/$(@F).bin; \
-	(echo "static "; cat $(obj)/$(@F).bin | scripts/bin2c "$(subst .h,,$(@F))_firmware") > $@; \
+	(echo -n "static "; cat $(obj)/$(@F).bin | scripts/bin2c "$(subst .h,,$(@F))_firmware") > $@; \
 	rm -f $(obj)/$(@F).o $(obj)/$(@F).elf $(obj)/$(@F).bin $(obj)/$(@F).s
-	
+
 
 targets += drive_20010608.h
 $(obj)/drive_20010608.h: DRIVE_MODEL := 0x20010608

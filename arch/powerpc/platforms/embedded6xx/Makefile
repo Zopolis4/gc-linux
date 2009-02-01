@@ -11,9 +11,8 @@ obj-$(CONFIG_GAMECUBE)		+= gamecube.o gamecube_dev.o
 obj-$(CONFIG_WII)		+= wii.o wii_dev.o \
 					starlet-ipc.o starlet-malloc.o \
 					starlet-stm.o starlet-es.o
-obj-$(CONFIG_WII_GPIO)		+= starlet-gpio.o
 obj-$(CONFIG_FLIPPER_PIC)	+= flipper-pic.o
-obj-$(CONFIG_GAMECUBE_RSW)	+= gcn-rsw.o
 obj-$(CONFIG_USBGECKO_UDBG)	+= usbgecko_udbg.o
 obj-$(CONFIG_GAMECUBE_VIDEO_UDBG)	+= gcnvi_udbg.o
-
+obj-$(CONFIG_GAMECUBE_RSW)	+= gcn-rsw.o
+obj-$(CONFIG_WII_GPIO)		+= starlet-gpio.o

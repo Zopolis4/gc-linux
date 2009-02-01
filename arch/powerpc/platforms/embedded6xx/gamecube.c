@@ -2,8 +2,8 @@
  * arch/powerpc/platforms/embedded6xx/gamecube.c
  *
  * Nintendo GameCube board-specific support
- * Copyright (C) 2004-2008 The GameCube Linux Team
- * Copyright (C) 2007,2008 Albert Herranz
+ * Copyright (C) 2004-2009 The GameCube Linux Team
+ * Copyright (C) 2007,2008,2009 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -67,13 +67,13 @@ static void __init gamecube_init_early(void)
 
 static int __init gamecube_probe(void)
 {
-        unsigned long dt_root;
+	unsigned long dt_root;
 
-        dt_root = of_get_flat_dt_root();
-        if (!of_flat_dt_is_compatible(dt_root, "nintendo,gamecube"))
-                return 0;
+	dt_root = of_get_flat_dt_root();
+	if (!of_flat_dt_is_compatible(dt_root, "nintendo,gamecube"))
+		return 0;
 
-        return 1;
+	return 1;
 }
 
 static void gamecube_shutdown(void)

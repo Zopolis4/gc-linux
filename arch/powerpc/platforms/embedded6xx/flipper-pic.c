@@ -2,8 +2,8 @@
  * arch/powerpc/platforms/embedded6xx/flipper-pic.c
  *
  * Nintendo GameCube/Wii interrupt controller support.
- * Copyright (C) 2004-2008 The GameCube Linux Team
- * Copyright (C) 2007,2008 Albert Herranz
+ * Copyright (C) 2004-2009 The GameCube Linux Team
+ * Copyright (C) 2007,2008,2009 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -24,7 +24,7 @@
 #define DRV_MODULE_NAME "flipper-pic"
 
 #define drv_printk(level, format, arg...) \
-        printk(level DRV_MODULE_NAME ": " format , ## arg)
+	 printk(level DRV_MODULE_NAME ": " format , ## arg)
 
 
 /*
@@ -156,7 +156,7 @@ unsigned int flipper_pic_get_irq(void)
 	if (irq_status == 0)
 		return -1;	/* no more IRQs pending */
 
-        __asm __volatile ("cntlzw %0,%1": "=r"(irq) : "r"(irq_status));
+	__asm__ __volatile__("cntlzw %0,%1" : "=r"(irq) : "r"(irq_status));
 	return irq_linear_revmap(flipper_irq_host, 31 - irq);
 }
 

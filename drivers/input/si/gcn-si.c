@@ -2,9 +2,9 @@
  * drivers/input/gcn-si.c
  *
  * Nintendo GameCube/Wii Serial Interface (SI) driver.
- * Copyright (C) 2004-2008 The GameCube Linux Team
+ * Copyright (C) 2004-2009 The GameCube Linux Team
  * Copyright (C) 2004 Steven Looman
- * Copyright (C) 2005,2008 Albert Herranz
+ * Copyright (C) 2005,2008,2009 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -45,10 +45,10 @@
 static char si_driver_version[] = "1.0i";
 
 #define drv_printk(level, format, arg...) \
-        printk(level DRV_MODULE_NAME ": " format , ## arg)
+	 printk(level DRV_MODULE_NAME ": " format , ## arg)
 
-#define SI_MAX_PORTS	4	/* the four controller ports */
-#define SI_REFRESH_TIME HZ/100	/* polling interval */
+#define SI_MAX_PORTS		4		/* the four controller ports */
+#define SI_REFRESH_TIME	(HZ/100)	/* polling interval */
 
 /*
  * Hardware registers
@@ -106,11 +106,11 @@ struct si_port {
 	struct input_dev *idev;
 	struct timer_list timer;
 	char name[32];
-	
+
 	union {
 		struct si_keyboard_status keyboard;
 	};
-	
+
 };
 
 struct si_drvdata {
@@ -133,10 +133,9 @@ MODULE_PARM_DESC(force_keyboard_port, "port n becomes a keyboard port if"
 #else
 static int __init si_force_keyboard_port_setup(char *line)
 {
-        if (sscanf(line, "%d", &si_force_keyboard_port) != 1) {
+	if (sscanf(line, "%d", &si_force_keyboard_port) != 1)
 		si_force_keyboard_port = -1;
-	}
-        return 1;
+	return 1;
 }
 __setup("force_keyboard_port=", si_force_keyboard_port_setup);
 #endif /* MODULE */
@@ -183,7 +182,7 @@ static void si_reset(void __iomem *io_base)
 static void si_set_rumbling(void __iomem *io_base, unsigned int index,
 			    int rumble)
 {
-	out_be32(io_base + SICOUTBUF(index), 0x00400000 | (rumble)?1:0);
+	out_be32(io_base + SICOUTBUF(index), 0x00400000 | (rumble) ? 1 : 0);
 	out_be32(io_base + SISR, 0x80000000);
 }
 
@@ -192,7 +191,7 @@ static void si_wait_transfer_done(void __iomem *io_base)
 	unsigned long deadline = jiffies + 2*HZ;
 	int borked = 0;
 
-	while(!(in_be32(io_base + SICOMCSR) & (1 << 31)) && !borked) {
+	while (!(in_be32(io_base + SICOMCSR) & (1 << 31)) && !borked) {
 		cpu_relax();
 		borked = time_after(jiffies, deadline);
 	}
@@ -312,7 +311,7 @@ static void si_timer(unsigned long data)
 				 raw[1] >> 0 & 0xFF);
 
 		break;
-		
+
 	case CTL_KEYBOARD:
 		/*
 		raw nibbles:
@@ -320,7 +319,7 @@ static void si_timer(unsigned long data)
 		where:
 		  [n] = fixed to n
 		  <nH> <nL> = high / low nibble of n-th key pressed
-		              (0 if not pressed)
+			(0 if not pressed)
 		  <X> = <1H> xor <2H> xor <3H>
 		  <C> = counter: 0, 0, 1, 1, 2, 2, ..., F, F, 0, 0, ...
 		*/
@@ -388,9 +387,8 @@ static int si_event(struct input_dev *idev, unsigned int type,
 	void __iomem *io_base = port->drvdata->io_base;
 
 	if (type == EV_FF) {
-		if (code == FF_RUMBLE) {
+		if (code == FF_RUMBLE)
 			si_set_rumbling(io_base, index, value);
-		}
 	}
 
 	return value;
@@ -501,7 +499,7 @@ static int si_port_probe(struct si_port *port)
 	} else if (port->id & ID_WIRELESS_BIT) {
 		/* wireless pad */
 		port->type = CTL_PAD;
-		strcpy(port->name,(port->id & ID_WAVEBIRD_BIT) ?
+		strcpy(port->name, (port->id & ID_WAVEBIRD_BIT) ?
 		       "Nintendo Wavebird" : "wireless pad");
 	} else if (port->id == ID_KEYBOARD) {
 		port->type = CTL_KEYBOARD;
@@ -509,7 +507,7 @@ static int si_port_probe(struct si_port *port)
 	} else {
 		port->type = CTL_UNKNOWN;
 		if (port->id) {
-			sprintf(port->name, "unknown (%x)", 
+			sprintf(port->name, "unknown (%x)",
 				port->id);
 #ifdef HACK_FORCE_KEYBOARD_PORT
 			if (index+1 == si_force_keyboard_port) {
@@ -531,7 +529,7 @@ static int si_port_probe(struct si_port *port)
 		goto done;
 	}
 
-	idev = input_allocate_device();		
+	idev = input_allocate_device();
 	if (!idev) {
 		drv_printk(KERN_ERR, "failed to allocate input_dev\n");
 		retval = -ENOMEM;
@@ -541,7 +539,7 @@ static int si_port_probe(struct si_port *port)
 	idev->open = si_open;
 	idev->close = si_close;
 	idev->name = port->name;
-		
+
 	switch (port->type) {
 	case CTL_PAD:
 		retval = si_setup_pad(idev);
@@ -575,21 +573,29 @@ static int si_init(struct si_drvdata *drvdata, struct resource *mem)
 	struct si_port *port;
 	int index;
 	int retval;
+	int error;
 
 	drvdata->io_base = ioremap(mem->start, mem->end - mem->start + 1);
 
 	for (index = 0; index < SI_MAX_PORTS; ++index) {
 		port = &drvdata->ports[index];
 
-		memset(port, 0, sizeof(*port));	
+		memset(port, 0, sizeof(*port));
 		port->index = index;
 		port->drvdata = drvdata;
 
 		retval = si_port_probe(port);
-		if (!retval)
-			input_register_device(port->idev);
-
-		drv_printk(KERN_INFO, "port %d: %s\n", index+1, port->name);
+		if (!retval) {
+			error = input_register_device(port->idev);
+			if (error) {
+				drv_printk(KERN_ERR,
+					   "input device registration failed"
+					   " (%d) for port %d", error, index+1);
+				port->idev = NULL;
+			} else
+				drv_printk(KERN_INFO, "port %d: %s\n",
+					   index+1, port->name);
+		}
 	}
 
 	si_setup_polling(drvdata);
@@ -608,10 +614,10 @@ static void si_exit(struct si_drvdata *drvdata)
 			input_unregister_device(port->idev);
 	}
 
-        if (drvdata->io_base) {
-                iounmap(drvdata->io_base);
-                drvdata->io_base = NULL;
-        }
+	if (drvdata->io_base) {
+		iounmap(drvdata->io_base);
+		drvdata->io_base = NULL;
+	}
 }
 
 /*
@@ -621,36 +627,36 @@ static void si_exit(struct si_drvdata *drvdata)
 
 static int si_do_probe(struct device *dev, struct resource *mem)
 {
-        struct si_drvdata *drvdata;
-        int retval;
+	struct si_drvdata *drvdata;
+	int retval;
 
-        drvdata = kzalloc(sizeof(*drvdata), GFP_KERNEL);
-        if (!drvdata) {
-                drv_printk(KERN_ERR, "failed to allocate si_drvdata\n");
-                return -ENOMEM;
-        }
-        dev_set_drvdata(dev, drvdata);
-        drvdata->dev = dev;
+	drvdata = kzalloc(sizeof(*drvdata), GFP_KERNEL);
+	if (!drvdata) {
+		drv_printk(KERN_ERR, "failed to allocate si_drvdata\n");
+		return -ENOMEM;
+	}
+	dev_set_drvdata(dev, drvdata);
+	drvdata->dev = dev;
 
-        retval = si_init(drvdata, mem);
-        if (retval) {
-                dev_set_drvdata(dev, NULL);
-                kfree(drvdata);
-        }
-        return retval;
+	retval = si_init(drvdata, mem);
+	if (retval) {
+		dev_set_drvdata(dev, NULL);
+		kfree(drvdata);
+	}
+	return retval;
 }
 
 static int si_do_remove(struct device *dev)
 {
-        struct si_drvdata *drvdata = dev_get_drvdata(dev);
+	struct si_drvdata *drvdata = dev_get_drvdata(dev);
 
-        if (drvdata) {
-                si_exit(drvdata);
-                dev_set_drvdata(dev, NULL);
-                kfree(drvdata);
-                return 0;
-        }
-        return -ENODEV;
+	if (drvdata) {
+		si_exit(drvdata);
+		dev_set_drvdata(dev, NULL);
+		kfree(drvdata);
+		return 0;
+	}
+	return -ENODEV;
 }
 
 
@@ -660,40 +666,40 @@ static int si_do_remove(struct device *dev)
  */
 
 static int __init si_of_probe(struct of_device *odev,
-        		      const struct of_device_id *match)
+			       const struct of_device_id *match)
 {
-        struct resource mem;
-        int retval;
+	struct resource mem;
+	int retval;
 
-        retval = of_address_to_resource(odev->node, 0, &mem);
-        if (retval) {
-                drv_printk(KERN_ERR, "no io memory range found\n");
-                return -ENODEV;
-        }
+	retval = of_address_to_resource(odev->node, 0, &mem);
+	if (retval) {
+		drv_printk(KERN_ERR, "no io memory range found\n");
+		return -ENODEV;
+	}
 
-        return si_do_probe(&odev->dev, &mem);
+	return si_do_probe(&odev->dev, &mem);
 }
 
 static int __exit si_of_remove(struct of_device *odev)
 {
-        return si_do_remove(&odev->dev);
+	return si_do_remove(&odev->dev);
 }
 
 static struct of_device_id si_of_match[] = {
-        { .compatible = "nintendo,flipper-serial" },
-        { .compatible = "nintendo,hollywood-serial" },
-        { },
+	{ .compatible = "nintendo,flipper-serial" },
+	{ .compatible = "nintendo,hollywood-serial" },
+	{ },
 };
 
 
 MODULE_DEVICE_TABLE(of, si_of_match);
 
 static struct of_platform_driver si_of_driver = {
-        .owner = THIS_MODULE,
-        .name = DRV_MODULE_NAME,
-        .match_table = si_of_match,
-        .probe = si_of_probe,
-        .remove = si_of_remove,
+	.owner = THIS_MODULE,
+	.name = DRV_MODULE_NAME,
+	.match_table = si_of_match,
+	.probe = si_of_probe,
+	.remove = si_of_remove,
 };
 
 
@@ -704,15 +710,15 @@ static struct of_platform_driver si_of_driver = {
 
 static int __init si_init_module(void)
 {
-        drv_printk(KERN_INFO, "%s - version %s\n", DRV_DESCRIPTION,
-                   si_driver_version);
+	drv_printk(KERN_INFO, "%s - version %s\n", DRV_DESCRIPTION,
+		   si_driver_version);
 
-        return of_register_platform_driver(&si_of_driver);
+	return of_register_platform_driver(&si_of_driver);
 }
 
 static void __exit si_exit_module(void)
 {
-        of_unregister_platform_driver(&si_of_driver);
+	of_unregister_platform_driver(&si_of_driver);
 }
 
 module_init(si_init_module);

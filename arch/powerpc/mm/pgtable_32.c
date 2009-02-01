@@ -73,7 +73,7 @@ extern unsigned long p_mapped_by_tlbcam(unsigned long pa);
 #endif /* HAVE_TLBCAM */
 
 #ifdef CONFIG_PTE_64BIT
-/* 44x uses an 8kB pgdir because it has 8-byte Linux PTEs. */
+/* Some processors use an 8kB pgdir because they have 8-byte Linux PTEs. */
 #define PGDIR_ORDER	1
 #else
 #define PGDIR_ORDER	0
@@ -206,7 +206,8 @@ __ioremap(phys_addr_t addr, unsigned long size, unsigned long flags)
 		 *
 		 */
 		if (!__map_without_bats) {
-			printk("__ioremap(): phys addr 0x%llx is RAM lr %p\n",
+			printk(KERN_WARNING
+			       "__ioremap(): phys addr 0x%llx is RAM lr %p\n",
 			       (unsigned long long)p,
 				 __builtin_return_address(0));
 			return NULL;
@@ -297,7 +298,7 @@ int map_page(unsigned long va, phys_addr_t pa, int flags)
 }
 
 /*
- * Map in all of physical memory starting at KERNELBASE.
+ * Map in a big chunk of physical memory starting at KERNELBASE.
  */
 void __init mapin_ram(void)
 {

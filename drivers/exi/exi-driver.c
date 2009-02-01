@@ -2,10 +2,10 @@
  * drivers/exi/exi-driver.c
  *
  * Nintendo GameCube EXternal Interface (EXI) driver model routines.
- * Copyright (C) 2004-2008 The GameCube Linux Team
+ * Copyright (C) 2004-2009 The GameCube Linux Team
  * Copyright (C) 2004 Arthur Othieno <a.othieno@bluewin.ch>
  * Copyright (C) 2004,2005 Todd Jeffreys <todd@voidpointer.org>
- * Copyright (C) 2005,2006,2007,2008 Albert Herranz
+ * Copyright (C) 2005,2006,2007,2008,2009 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -97,7 +97,7 @@ static const char *exi_name_id(unsigned int id)
 {
 	struct exi_map_id_to_name *map = exi_map_id_to_name;
 
-	while(map->id) {
+	while (map->id) {
 		if (map->id == id)
 			return map->name;
 		map++;
@@ -212,9 +212,9 @@ static void exi_device_release(struct device *dev)
  */
 struct exi_device *exi_device_get(struct exi_device *exi_device)
 {
-        if (exi_device)
-                get_device(&exi_device->dev);
-        return exi_device;
+	if (exi_device)
+		get_device(&exi_device->dev);
+	return exi_device;
 }
 EXPORT_SYMBOL(exi_device_get);
 
@@ -226,8 +226,8 @@ EXPORT_SYMBOL(exi_device_get);
  */
 void exi_device_put(struct exi_device *exi_device)
 {
-        if (exi_device)
-                put_device(&exi_device->dev);
+	if (exi_device)
+		put_device(&exi_device->dev);
 }
 EXPORT_SYMBOL(exi_device_put);
 
@@ -239,7 +239,7 @@ EXPORT_SYMBOL(exi_device_put);
 struct exi_device *exi_get_exi_device(struct exi_channel *exi_channel,
 				      int device)
 {
-	// FIXME, maybe exi_device_get it too
+	/* REVISIT, take a ref here? */
 	return &exi_devices[to_channel(exi_channel)][device];
 }
 EXPORT_SYMBOL(exi_get_exi_device);
@@ -263,9 +263,8 @@ static int exi_device_probe(struct device *dev)
 		if (exi_driver->probe)
 			retval = exi_driver->probe(exi_device);
 	}
-	if (retval >= 0) {
+	if (retval >= 0)
 		retval = 0;
-	}
 
 out:
 	return retval;
@@ -324,6 +323,7 @@ EXPORT_SYMBOL(exi_driver_unregister);
 static void exi_device_rescan(struct exi_device *exi_device)
 {
 	unsigned int id;
+	int error;
 
 	/* now ID the device */
 	id = exi_get_id(exi_device);
@@ -345,8 +345,12 @@ static void exi_device_rescan(struct exi_device *exi_device)
 			   exi_device->dev.bus_id,
 			   id, exi_name_id(id));
 		exi_device->eid.id = id;
-		device_register(&exi_device->dev);
-		drv_printk(KERN_INFO, "add completed\n");
+		error = device_register(&exi_device->dev);
+		if (error) {
+			drv_printk(KERN_INFO, "add failed (%d)\n", error);
+			exi_device->eid.id = EXI_ID_INVALID;
+		} else
+			drv_printk(KERN_INFO, "add completed\n");
 	}
 
 	exi_update_ext_status(exi_get_exi_channel(exi_device));
@@ -397,13 +401,13 @@ static int exi_bus_thread(void *__unused)
 	unsigned int channel;
 	int is_loaded, was_loaded;
 
-	while(!kthread_should_stop()) {
+	while (!kthread_should_stop()) {
 		/* scan the memcard slot channels for device changes */
 		for (channel = 0; channel <= 1; ++channel) {
 			exi_channel = to_exi_channel(channel);
 
 			is_loaded = exi_get_ext_line(exi_channel);
-			was_loaded = (exi_channel->flags & EXI_EXT)?1:0;
+			was_loaded = (exi_channel->flags & EXI_EXT) ? 1 : 0;
 
 			if (is_loaded ^ was_loaded) {
 				exi_device = &exi_devices[channel][0];
@@ -417,10 +421,6 @@ static int exi_bus_thread(void *__unused)
 	return 0;
 }
 
-
-extern void exi_channel_init(struct exi_channel *exi_channel,
-			     unsigned int channel);
-
 /*
  *
  */
@@ -431,12 +431,9 @@ static int exi_init(struct resource *mem, unsigned int irq)
 	unsigned int channel, device;
 	int retval;
 
-	extern unsigned long exi_running;
-	if (!test_and_set_bit(1, &exi_running)) {
-		retval = exi_hw_init(DRV_MODULE_NAME, mem, irq);
-		if (retval)
-			goto err_hw_init;
-	}
+	retval = exi_hw_init(DRV_MODULE_NAME, mem, irq);
+	if (retval)
+		goto err_hw_init;
 
 	/* initialize devices */
 	for (channel = 0; channel < EXI_MAX_CHANNELS; ++channel) {
@@ -465,17 +462,15 @@ static int exi_init(struct resource *mem, unsigned int irq)
 	/* setup a thread to manage plugable devices */
 	init_waitqueue_head(&exi_bus_waitq);
 	exi_bus_task = kthread_run(exi_bus_thread, NULL, "kexid");
-	if (IS_ERR(exi_bus_task)) {
+	if (IS_ERR(exi_bus_task))
 		drv_printk(KERN_WARNING, "failed to start exi kernel thread\n");
-	}
 
 	return 0;
 
 err_bus_register:
 err_device_register:
-	while(--channel > 0) {
+	while (--channel > 0)
 		device_unregister(&exi_bus_devices[channel]);
-	}
 	exi_hw_exit(mem, irq);
 err_hw_init:
 	return retval;
@@ -490,7 +485,7 @@ static int __init exi_layer_init(void)
 	struct resource res;
 	int retval;
 
-        drv_printk(KERN_INFO, "%s - version %s\n", DRV_DESCRIPTION,
+	drv_printk(KERN_INFO, "%s - version %s\n", DRV_DESCRIPTION,
 		   exi_driver_version);
 
 	np = of_find_compatible_node(NULL, NULL, "nintendo,flipper-exi");

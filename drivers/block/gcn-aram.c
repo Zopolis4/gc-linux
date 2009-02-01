@@ -2,9 +2,9 @@
  * drivers/block/gcn-aram.c
  *
  * Nintendo GameCube Auxiliary RAM (ARAM) block driver
- * Copyright (C) 2004-2008 The GameCube Linux Team
+ * Copyright (C) 2004-2009 The GameCube Linux Team
  * Copyright (C) 2005 Todd Jeffreys <todd@voidpointer.org>
- * Copyright (C) 2005,2007,2008 Albert Herranz
+ * Copyright (C) 2005,2007,2008,2009 Albert Herranz
  *
  * Based on previous work by Franz Lehner.
  *
@@ -23,7 +23,7 @@
 #include <linux/major.h>
 #include <linux/module.h>
 #include <linux/of_platform.h>
-#include <asm/io.h>
+#include <linux/io.h>
 
 
 #define DRV_MODULE_NAME "gcn-aram"
@@ -110,20 +110,18 @@ struct aram_drvdata {
 
 static inline enum dma_data_direction rq_dir_to_dma_dir(struct request *req)
 {
-	if (rq_data_dir(req) == READ) {
+	if (rq_data_dir(req) == READ)
 		return DMA_FROM_DEVICE;
-	} else {
+	else
 		return DMA_TO_DEVICE;
-	}
 }
 
 static inline int rq_dir_to_aram_dir(struct request *req)
 {
-	if (rq_data_dir(req) == READ) {
+	if (rq_data_dir(req) == READ)
 		return AR_READ;
-	} else {
+	else
 		return AR_WRITE;
-	}
 }
 
 static void aram_start_dma_transfer(struct aram_drvdata *drvdata,
@@ -175,7 +173,7 @@ static irqreturn_t aram_irq_handler(int irq, void *dev0)
 	drvdata->req = NULL;
 
 	spin_unlock_irqrestore(&drvdata->io_lock, flags);
-		
+
 	if (req) {
 		__blk_end_request(req, 0, req->current_nr_sectors << 9);
 		dma_unmap_single(drvdata->dev,
@@ -200,7 +198,7 @@ static void aram_do_request(struct request_queue *q)
 	unsigned long flags;
 
 	req = elv_next_request(q);
-	while(req) {
+	while (req) {
 		spin_lock_irqsave(&drvdata->io_lock, flags);
 
 		/* we schedule a single request each time */
@@ -257,28 +255,28 @@ static void aram_do_request(struct request_queue *q)
  *
  */
 
-static int aram_open(struct inode *inode, struct file *filp)
+static int aram_open(struct block_device *bdev, fmode_t mode)
 {
-	struct aram_drvdata *drvdata = inode->i_bdev->bd_disk->private_data;
+	struct aram_drvdata *drvdata = bdev->bd_disk->private_data;
 	unsigned long flags;
 	int retval = 0;
 
 	spin_lock_irqsave(&drvdata->lock, flags);
 
 	/* only allow a minor of 0 to be opened */
-	if (iminor(inode)) {
+	if (MINOR(bdev->bd_dev)) {
 		retval =  -ENODEV;
 		goto out;
 	}
 
 	/* honor exclusive open mode */
 	if (drvdata->ref_count == -1 ||
-	    (drvdata->ref_count && (filp->f_flags & O_EXCL))) {
+	    (drvdata->ref_count && (mode & FMODE_EXCL))) {
 		retval = -EBUSY;
 		goto out;
 	}
 
-	if ((filp->f_flags & O_EXCL))
+	if ((mode & FMODE_EXCL))
 		drvdata->ref_count = -1;
 	else
 		drvdata->ref_count++;
@@ -288,9 +286,9 @@ out:
 	return retval;
 }
 
-static int aram_release(struct inode *inode, struct file *filp)
+static int aram_release(struct gendisk *disk, fmode_t mode)
 {
-	struct aram_drvdata *drvdata = inode->i_bdev->bd_disk->private_data;
+	struct aram_drvdata *drvdata = disk->private_data;
 	unsigned long flags;
 
 	spin_lock_irqsave(&drvdata->lock, flags);
@@ -299,46 +297,23 @@ static int aram_release(struct inode *inode, struct file *filp)
 	else
 		drvdata->ref_count = 0;
 	spin_unlock_irqrestore(&drvdata->lock, flags);
-	
+
 	return 0;
 }
 
-static int aram_ioctl(struct inode *inode, struct file *file,
-		      unsigned int cmd, unsigned long arg)
+static int aram_getgeo(struct block_device *bdev, struct hd_geometry *geo)
 {
-	struct hd_geometry geo;
-	
-	switch (cmd) {
-	case BLKRAGET:
-	case BLKFRAGET:
-	case BLKROGET:
-	case BLKBSZGET:
-	case BLKSSZGET:
-	case BLKSECTGET:
-	case BLKGETSIZE:
-	case BLKGETSIZE64:
-	case BLKFLSBUF:
-		return ioctl_by_bdev(inode->i_bdev,cmd,arg);
-	case HDIO_GETGEO:
-		/* fake the entries */
-		geo.heads = 16;
-		geo.sectors = 32;
-		geo.start = 0;
-		geo.cylinders = ARAM_BUFFERSIZE / (geo.heads * geo.sectors);
-		if (copy_to_user((void __user*)arg,&geo,sizeof(geo)))
-			return -EFAULT;
-		return 0;
-	default:
-		return -ENOTTY;
-	}
+	geo->cylinders = get_capacity(bdev->bd_disk) / (4 * 16);
+	geo->heads = 4;
+	geo->sectors = 16;
+	return 0;
 }
-
 
 static struct block_device_operations aram_fops = {
 	.owner = THIS_MODULE,
 	.open = aram_open,
 	.release = aram_release,
-	.ioctl = aram_ioctl,
+	.getgeo = aram_getgeo,
 };
 
 
@@ -358,7 +333,7 @@ static int aram_init_blk_dev(struct aram_drvdata *drvdata)
 	retval = register_blkdev(ARAM_MAJOR, ARAM_NAME);
 	if (retval)
 		goto err_register_blkdev;
-	
+
 	retval = -ENOMEM;
 	spin_lock_init(&drvdata->lock);
 	spin_lock_init(&drvdata->io_lock);
@@ -427,7 +402,7 @@ static void aram_quiesce(struct aram_drvdata *drvdata)
 	spin_unlock_irqrestore(&drvdata->io_lock, flags);
 
 	/* wait until pending transfers are finished */
-	while(in_be16(csr_reg) & DSP_CSR_DSPDMA)
+	while (in_be16(csr_reg) & DSP_CSR_DSPDMA)
 		cpu_relax();
 }
 
@@ -474,15 +449,14 @@ static int aram_init(struct aram_drvdata *drvdata,
 {
 	int retval;
 
-        drvdata->io_base = ioremap(mem->start, mem->end - mem->start + 1);
+	drvdata->io_base = ioremap(mem->start, mem->end - mem->start + 1);
 	drvdata->irq = irq;
 
 	retval = aram_init_blk_dev(drvdata);
 	if (!retval) {
 		retval = aram_init_irq(drvdata);
-		if (retval) {
+		if (retval)
 			aram_exit_blk_dev(drvdata);
-		}
 	}
 	return retval;
 }
@@ -558,11 +532,11 @@ static int __init aram_of_probe(struct of_device *odev,
 	struct resource res;
 	int retval;
 
-        retval = of_address_to_resource(odev->node, 0, &res);
-        if (retval) {
+	retval = of_address_to_resource(odev->node, 0, &res);
+	if (retval) {
 		drv_printk(KERN_ERR, "no io memory range found\n");
-                return -ENODEV;
-        }
+		return -ENODEV;
+	}
 
 	return aram_do_probe(&odev->dev,
 			     &res, irq_of_parse_and_map(odev->node, 0));
@@ -583,7 +557,7 @@ static struct of_device_id aram_of_match[] = {
 	{ .compatible = "nintendo,flipper-auxram" },
 	{ },
 };
-	
+
 
 MODULE_DEVICE_TABLE(of, aram_of_match);
 

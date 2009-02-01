@@ -2,8 +2,8 @@
  * arch/powerpc/include/asm/starlet.h
  *
  * Nintendo Wii starlet processor definitions
- * Copyright (C) 2008 The GameCube Linux Team
- * Copyright (C) 2008 Albert Herranz
+ * Copyright (C) 2008-2009 The GameCube Linux Team
+ * Copyright (C) 2008,2009 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -187,10 +187,10 @@ extern int starlet_open(const char *pathname, int flags);
 extern int starlet_close(int fd);
 
 extern int starlet_ioctl(int fd, int request,
-			     void *ibuf, size_t ilen, 
+			     void *ibuf, size_t ilen,
 			     void *obuf, size_t olen);
 extern int starlet_ioctl_nowait(int fd, int request,
-				    void *ibuf, size_t ilen, 
+				    void *ibuf, size_t ilen,
 				    void *obuf, size_t olen,
 				    starlet_ipc_callback_t callback,
 				    void *arg);

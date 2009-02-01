@@ -2,8 +2,8 @@
  * drivers/serial/usbgecko.c
  *
  * Console and TTY driver for the USB Gecko adapter.
- * Copyright (C) 2008 The GameCube Linux Team
- * Copyright (C) 2008 Albert Herranz
+ * Copyright (C) 2008-2009 The GameCube Linux Team
+ * Copyright (C) 2008,2009 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -86,7 +86,7 @@ static void ug_io_transaction(struct ug_adapter *adapter, u16 i, u16 *o)
 {
 	struct exi_device *exi_device = adapter->exi_device;
 
-	if (exi_device) 
+	if (exi_device)
 		ug_exi_io_transaction(exi_device, i, o);
 }
 #endif
@@ -102,12 +102,12 @@ static int ug_check_adapter(struct exi_device *exi_device)
 	ug_exi_io_transaction(exi_device, 0x9000, &data);
 	exi_dev_give(exi_device);
 
-	return (data == 0x0470);
+	return data == 0x0470;
 }
 
 #if 0
 /*
- * 
+ *
  */
 static int ug_is_txfifo_empty(struct ug_adapter *adapter)
 {
@@ -120,13 +120,13 @@ static int ug_is_txfifo_empty(struct ug_adapter *adapter)
 	if (!exi_dev_try_take(exi_device)) {
 		ug_exi_io_transaction(exi_device, 0xC000, &data);
 		exi_dev_give(exi_device);
-		return (data & 0x0400);
+		return data & 0x0400;
 	}
 	return 0;
 }
 
 /*
- * 
+ *
  */
 static int ug_is_rxfifo_empty(struct ug_adapter *adapter)
 {
@@ -139,13 +139,13 @@ static int ug_is_rxfifo_empty(struct ug_adapter *adapter)
 	if (!exi_dev_try_take(exi_device)) {
 		ug_exi_io_transaction(exi_device, 0xD000, &data);
 		exi_dev_give(exi_device);
-		return (data & 0x0400);
+		return data & 0x0400;
 	}
 	return 0;
 }
 
 /*
- * 
+ *
  */
 static int ug_putc(struct ug_adapter *adapter, char c)
 {
@@ -158,13 +158,13 @@ static int ug_putc(struct ug_adapter *adapter, char c)
 	if (!exi_dev_try_take(exi_device)) {
 		ug_exi_io_transaction(exi_device, 0xB000|(c<<4), &data);
 		exi_dev_give(exi_device);
-		return (data & 0x0400);
+		return data & 0x0400;
 	}
 	return 0;
 }
 
 /*
- * 
+ *
  */
 static int ug_getc(struct ug_adapter *adapter, char *c)
 {
@@ -187,7 +187,7 @@ static int ug_getc(struct ug_adapter *adapter, char *c)
 #endif
 
 /*
- * 
+ *
  */
 static int ug_safe_putc(struct ug_adapter *adapter, char c)
 {
@@ -199,16 +199,16 @@ static int ug_safe_putc(struct ug_adapter *adapter, char c)
 
 	if (!exi_dev_try_take(exi_device)) {
 		ug_exi_io_transaction(exi_device, 0xC000, &data);
-		if ((data & 0x0400)) 
+		if ((data & 0x0400))
 			ug_exi_io_transaction(exi_device, 0xB000|(c<<4), &data);
 		exi_dev_give(exi_device);
-		return (data & 0x0400);
+		return data & 0x0400;
 	}
 	return 0;
 }
 
 /*
- * 
+ *
  */
 static int ug_safe_getc(struct ug_adapter *adapter, char *c)
 {
@@ -244,12 +244,12 @@ static int ug_safe_getc(struct ug_adapter *adapter, char *c)
  *
  */
 static void ug_console_write(struct console *co, const char *buf,
-                             unsigned int count)
+			      unsigned int count)
 {
 	struct ug_adapter *adapter = co->data;
 	char *b = (char *)buf;
 
-	while(count--) {
+	while (count--) {
 		if (*b == '\n')
 			ug_safe_putc(adapter, '\r');
 		ug_safe_putc(adapter, *b++);
@@ -260,21 +260,21 @@ static void ug_console_write(struct console *co, const char *buf,
  *
  */
 static int ug_console_read(struct console *co, char *buf,
-                            unsigned int count)
+			    unsigned int count)
 {
 	struct ug_adapter *adapter = co->data;
 	int i;
 	char c;
 
 	i = count;
-	while(i--) {
+	while (i--) {
 		ug_safe_getc(adapter, &c);
 		*buf++ = c;
 	}
 	return count;
 }
 
-static struct tty_driver *ug_tty_driver = NULL;
+static struct tty_driver *ug_tty_driver;
 
 static struct tty_driver *ug_console_device(struct console *co, int *index)
 {
@@ -283,24 +283,24 @@ static struct tty_driver *ug_console_device(struct console *co, int *index)
 }
 
 
-static struct console ug_consoles[]= {
-	 {
-        .name   = DRV_MODULE_NAME "0",
-        .write  = ug_console_write,
-        .read   = ug_console_read,
-	.device = ug_console_device,
-        .flags  = CON_PRINTBUFFER | CON_ENABLED,
-        .index  = 0,
-	.data	= &ug_adapters[0],
+static struct console ug_consoles[] = {
+	{
+		.name   = DRV_MODULE_NAME "0",
+		.write  = ug_console_write,
+		.read   = ug_console_read,
+		.device = ug_console_device,
+		.flags  = CON_PRINTBUFFER | CON_ENABLED,
+		.index  = 0,
+		.data	= &ug_adapters[0],
 	},
 	{
-        .name   = DRV_MODULE_NAME "1",
-        .write  = ug_console_write,
-        .read   = ug_console_read,
-	.device = ug_console_device,
-        .flags  = CON_PRINTBUFFER | CON_ENABLED,
-        .index  = 1,
-	.data	= &ug_adapters[1],
+		.name   = DRV_MODULE_NAME "1",
+		.write  = ug_console_write,
+		.read   = ug_console_read,
+		.device = ug_console_device,
+		.flags  = CON_PRINTBUFFER | CON_ENABLED,
+		.index  = 1,
+		.data	= &ug_adapters[1],
 	},
 };
 
@@ -323,7 +323,7 @@ static int ug_tty_poller(void *tty_)
 	set_task_state(current, TASK_RUNNING);
 
 	chunk = 0;
-	while(!kthread_should_stop()) {
+	while (!kthread_should_stop()) {
 		count = 0;
 		adapter = tty->driver_data;
 		if (adapter)
@@ -415,7 +415,7 @@ static int ug_tty_write(struct tty_struct *tty,
 
 	index = tty->index;
 	adapter = &ug_adapters[index];
-	for(i = 0; i < count; i++)
+	for (i = 0; i < count; i++)
 		ug_safe_putc(adapter, *b++);
 	return count;
 }
@@ -482,7 +482,7 @@ static void ug_tty_exit(void)
  */
 
 /*
- * 
+ *
  */
 static int ug_probe(struct exi_device *exi_device)
 {
@@ -494,7 +494,7 @@ static int ug_probe(struct exi_device *exi_device)
 	if (exi_device->eid.id != EXI_ID_NONE)
 		return -ENODEV;
 
-	if (!ug_check_adapter(exi_device)) 
+	if (!ug_check_adapter(exi_device))
 		return -ENODEV;
 
 	slot = to_channel(exi_get_exi_channel(exi_device));
@@ -531,9 +531,8 @@ static void ug_remove(struct exi_device *exi_device)
 	console = &ug_consoles[slot];
 	adapter = console->data;
 
-	if (adapter->refcnt) {
+	if (adapter->refcnt)
 		drv_printk(KERN_ERR, "adapter removed while in use!\n");
-	}
 
 	ug_tty_exit();
 

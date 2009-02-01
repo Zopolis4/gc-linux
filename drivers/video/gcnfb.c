@@ -2,10 +2,10 @@
  * drivers/video/gcn-vifb.c
  *
  * Nintendo GameCube/Wii Video Interface (VI) frame buffer driver
- * Copyright (C) 2004-2008 The GameCube Linux Team
+ * Copyright (C) 2004-2009 The GameCube Linux Team
  * Copyright (C) 2004 Michael Steil <mist@c64.org>
  * Copyright (C) 2004,2005 Todd Jeffreys <todd@voidpointer.org>
- * Copyright (C) 2006,2007,2008 Albert Herranz
+ * Copyright (C) 2006,2007,2008,2009 Albert Herranz
  *
  * Based on vesafb (c) 1998 Gerd Knorr <kraxel@goldbach.in-berlin.de>
  *
@@ -25,24 +25,21 @@
 #include <linux/mm.h>
 #include <linux/module.h>
 #include <linux/of_platform.h>
-//#include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/tty.h>
 #include <linux/wait.h>
-#include <asm/io.h>
-
-#include "gcngx.h"
+#include <linux/io.h>
 
 #define DRV_MODULE_NAME   "gcn-vifb"
 #define DRV_DESCRIPTION   "Nintendo GameCube/Wii Video Interface (VI) driver"
 #define DRV_AUTHOR        "Michael Steil <mist@c64.org>, " \
-                          "Todd Jeffreys <todd@voidpointer.org>, " \
+			  "Todd Jeffreys <todd@voidpointer.org>, " \
 			  "Albert Herranz"
 
 static char vifb_driver_version[] = "1.0i";
 
 #define drv_printk(level, format, arg...) \
-        printk(level DRV_MODULE_NAME ": " format , ## arg)
+	 printk(level DRV_MODULE_NAME ": " format , ## arg)
 
 
 /*
@@ -206,7 +203,7 @@ static struct fb_var_screeninfo vifb_var = {
 /*
  * setup parameters
  */
-static struct vi_video_mode *vi_current_video_mode = NULL;
+static struct vi_video_mode *vi_current_video_mode;
 static int ypan = 1;		/* 0..nothing, 1..ypan */
 
 /* FIXME: is this really needed? */
@@ -241,17 +238,17 @@ static inline void gcngx_dispatch_vtrace(struct vi_ctl *ctl)
 #define RGB2YUV_LUMA    16
 #define RGB2YUV_CHROMA 128
 
-#define Yr ((int)( 0.299*(1<<RGB2YUV_SHIFT)))
-#define Yg ((int)( 0.587*(1<<RGB2YUV_SHIFT)))
-#define Yb ((int)( 0.114*(1<<RGB2YUV_SHIFT)))
+#define Yr ((int)(0.299 * (1<<RGB2YUV_SHIFT)))
+#define Yg ((int)(0.587 * (1<<RGB2YUV_SHIFT)))
+#define Yb ((int)(0.114 * (1<<RGB2YUV_SHIFT)))
 
-#define Ur ((int)(-0.169*(1<<RGB2YUV_SHIFT)))
-#define Ug ((int)(-0.331*(1<<RGB2YUV_SHIFT)))
-#define Ub ((int)( 0.500*(1<<RGB2YUV_SHIFT)))
+#define Ur ((int)(-0.169 * (1<<RGB2YUV_SHIFT)))
+#define Ug ((int)(-0.331 * (1<<RGB2YUV_SHIFT)))
+#define Ub ((int)(0.500 * (1<<RGB2YUV_SHIFT)))
 
-#define Vr ((int)( 0.500*(1<<RGB2YUV_SHIFT)))	/* same as Ub */
-#define Vg ((int)(-0.419*(1<<RGB2YUV_SHIFT)))
-#define Vb ((int)(-0.081*(1<<RGB2YUV_SHIFT)))
+#define Vr ((int)(0.500 * (1<<RGB2YUV_SHIFT)))	/* same as Ub */
+#define Vg ((int)(-0.419 * (1<<RGB2YUV_SHIFT)))
+#define Vb ((int)(-0.081 * (1<<RGB2YUV_SHIFT)))
 
 /*
  * Converts two 16bpp rgb pixels into a dual yuy2 pixel.
@@ -264,9 +261,8 @@ static inline uint32_t rgbrgb16toycbycr(uint16_t rgb1, uint16_t rgb2)
 	register int r, g, b;
 
 	/* fast path, thanks to bohdy */
-	if (!(rgb1 | rgb2)) {
+	if (!(rgb1 | rgb2))
 		return 0x00800080;	/* black, black */
-	}
 
 	/* RGB565 */
 	r1 = ((rgb1 >> 11) & 0x1f);
@@ -394,9 +390,8 @@ void vi_set_framebuffer(struct vi_ctl *ctl, u32 addr)
 	out_be32(io_base + VI_TFBL, 0x10000000 | (addr >> 5));
 
 	/* set bottom field */
-	if (!vi_is_mode_progressive(info->var.vmode)) {
+	if (!vi_is_mode_progressive(info->var.vmode))
 		addr += info->fix.line_length;
-	}
 	out_be32(io_base + VI_BFBL, 0x10000000 | (addr >> 5));
 }
 
@@ -514,7 +509,7 @@ static irqreturn_t vi_irq_handler(int irq, void *dev)
  */
 unsigned int vifb_writel(unsigned int rgbrgb, void *address)
 {
-	uint16_t *rgb = (uint16_t *) & rgbrgb;
+	uint16_t *rgb = (uint16_t *)&rgbrgb;
 	return fb_writel_real(rgbrgb16toycbycr(rgb[0], rgb[1]), address);
 }
 
@@ -628,7 +623,7 @@ static int vifb_ioctl(struct fb_info *info,
 	switch (cmd) {
 	case FBIOWAITRETRACE:
 		interruptible_sleep_on(&ctl->vtrace_waitq);
-		return (signal_pending(current) ? -EINTR : 0);
+		return signal_pending(current) ? -EINTR : 0;
 	case FBIOFLIPHACK:
 		/*
 		 * If arg == NULL then
@@ -667,8 +662,8 @@ static int vifb_ioctl(struct fb_info *info,
 				ctl->flip_pending = 1;
 				spin_unlock_irqrestore(&ctl->lock, flags);
 				interruptible_sleep_on(&ctl->vtrace_waitq);
-				return (signal_pending(current) ? 
-					-EINTR : ctl->visible_page);
+				return signal_pending(current) ?
+					-EINTR : ctl->visible_page;
 			}
 		}
 		spin_unlock_irqrestore(&ctl->lock, flags);
@@ -707,7 +702,8 @@ static int vifb_check_var(struct fb_var_screeninfo *var, struct fb_info *info)
 	    /* XXX isobel, do not break old sdl */
 	    var->yres_virtual > 2 * vi_current_video_mode->height ||
 	    var->yres > vi_current_video_mode->height ||
-	    (vi_is_mode_progressive(var->vmode) && !vi_can_do_progressive(ctl))) {	/* trying to set progressive? */
+	    (vi_is_mode_progressive(var->vmode) &&
+	     !vi_can_do_progressive(ctl))) {	/* trying to set progressive? */
 		return -EINVAL;
 	}
 	return 0;
@@ -715,32 +711,32 @@ static int vifb_check_var(struct fb_var_screeninfo *var, struct fb_info *info)
 
 static int vifb_mmap(struct fb_info *info, struct vm_area_struct *vma)
 {
-        unsigned long off;
-        unsigned long start;
-        u32 len;
+	unsigned long off;
+	unsigned long start;
+	u32 len;
 
 	off = vma->vm_pgoff << PAGE_SHIFT;
 
-        /* frame buffer memory */
-        start = info->fix.smem_start;
-        len = PAGE_ALIGN((start & ~PAGE_MASK) + info->fix.smem_len);
-        start &= PAGE_MASK;
-        if ((vma->vm_end - vma->vm_start + off) > len)
-                return -EINVAL;
-        off += start;
-        vma->vm_pgoff = off >> PAGE_SHIFT;
+	/* frame buffer memory */
+	start = info->fix.smem_start;
+	len = PAGE_ALIGN((start & ~PAGE_MASK) + info->fix.smem_len);
+	start &= PAGE_MASK;
+	if ((vma->vm_end - vma->vm_start + off) > len)
+		return -EINVAL;
+	off += start;
+	vma->vm_pgoff = off >> PAGE_SHIFT;
 
-        /* this is an IO map, tell maydump to skip this VMA */
-        vma->vm_flags |= VM_IO | VM_RESERVED;
+	/* this is an IO map, tell maydump to skip this VMA */
+	vma->vm_flags |= VM_IO | VM_RESERVED;
 
 	/* we share RAM between the cpu and the video hardware */
 	vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
 
-        if (io_remap_pfn_range(vma, vma->vm_start, off >> PAGE_SHIFT,
-                               vma->vm_end - vma->vm_start,
-			       vma->vm_page_prot))
-                return -EAGAIN;
-        return 0;
+	if (io_remap_pfn_range(vma, vma->vm_start, off >> PAGE_SHIFT,
+				vma->vm_end - vma->vm_start,
+				vma->vm_page_prot))
+		return -EAGAIN;
+	return 0;
 }
 
 
@@ -1046,11 +1042,11 @@ static struct of_device_id vifb_of_match[] = {
 MODULE_DEVICE_TABLE(of, vifb_of_match);
 
 static struct of_platform_driver vifb_of_driver = {
-        .owner = THIS_MODULE,
-        .name = DRV_MODULE_NAME,
-        .match_table = vifb_of_match,
-        .probe = vifb_of_probe,
-        .remove = vifb_of_remove,
+	.owner = THIS_MODULE,
+	.name = DRV_MODULE_NAME,
+	.match_table = vifb_of_match,
+	.probe = vifb_of_probe,
+	.remove = vifb_of_remove,
 };
 
 /*
@@ -1061,14 +1057,14 @@ static struct of_platform_driver vifb_of_driver = {
 static int __init vifb_init_module(void)
 {
 #ifndef MODULE
-        char *option = NULL;
+	char *option = NULL;
 
-        if (fb_get_options(DRV_MODULE_NAME, &option)) {
-                /* for backwards compatibility */
-                if (fb_get_options("gcnfb", &option))
-                        return -ENODEV;
-        }
-        vifb_setup(option);
+	if (fb_get_options(DRV_MODULE_NAME, &option)) {
+		/* for backwards compatibility */
+		if (fb_get_options("gcnfb", &option))
+			return -ENODEV;
+	}
+	vifb_setup(option);
 #endif
 
 	drv_printk(KERN_INFO, "%s - version %s\n", DRV_DESCRIPTION,

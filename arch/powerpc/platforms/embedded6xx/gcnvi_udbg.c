@@ -2,8 +2,8 @@
  * arch/powerpc/platforms/embedded6xx/gcnvi_udbg.c
  *
  * Nintendo GameCube/Wii framebuffer udbg output support.
- * Copyright (C) 2008 The GameCube Linux Team
- * Copyright (C) 2008 Albert Herranz
+ * Copyright (C) 2008-2009 The GameCube Linux Team
+ * Copyright (C) 2008,2009 Albert Herranz
  *
  * Based on arch/ppc/platforms/gcn-con.c
  *
@@ -60,7 +60,7 @@ struct console_data {
 	int scrolled_lines;
 };
 
-static struct console_data *default_console = NULL;
+static struct console_data *default_console;
 
 #if 0
 static int console_set_color(int background, int foreground)
@@ -90,9 +90,9 @@ static void console_drawc(struct console_data *con, int x, int y,
 			else
 				color = con->background;
 #if FONT_YFACTOR == 2
-			// pixel doubling: we write u32
+			/* pixel doubling: we write u32 */
 			ptr[ay * 2 * con->stride / 4 + ax] = color;
-			// line doubling
+			/* line doubling */
 			ptr[(ay * 2 + 1) * con->stride / 4 + ax] = color;
 #else
 			ptr[ay * con->stride / 4 + ax] = color;
@@ -110,7 +110,8 @@ static void console_drawc(struct console_data *con, int x, int y,
 			else
 				color2x[1] = con->background;
 			ptr[ay * con->stride / 4 + ax] =
-			    (color2x[0] & 0xFFFF00FF) | (color2x[1] & 0x0000FF00);
+			    (color2x[0] & 0xFFFF00FF) |
+			    (color2x[1] & 0x0000FF00);
 		}
 #endif
 	}
@@ -140,7 +141,7 @@ static void console_putc(struct console_data *con, char c)
 		       con->framebuffer +
 		       con->stride * (FONT_YSIZE * FONT_YFACTOR + FONT_YGAP),
 		       con->stride * con->yres - FONT_YSIZE);
-		cnt = (con->stride * (FONT_YSIZE * FONT_YFACTOR + FONT_YGAP)) / 4;
+		cnt = (con->stride * (FONT_YSIZE*FONT_YFACTOR + FONT_YGAP)) / 4;
 		ptr = (unsigned long *)(con->framebuffer +
 				      con->stride * (con->yres - FONT_YSIZE));
 		while (cnt--)
@@ -205,21 +206,20 @@ static const u32 vi_Mode640X480NtscYUV16[32] = {
 	0x02800000, 0x000000FF, 0x00FF00FF, 0x00FF00FF
 };
 
-static void vi_setup_video(void __iomem * io_base, unsigned long xfb_start)
+static void vi_setup_video(void __iomem *io_base, unsigned long xfb_start)
 {
 	const u32 *regs = vi_Mode640X480NtscYUV16;
 	int i;
 
 	/* initialize video registers */
-	for (i = 0; i < 7; i++) {
+	for (i = 0; i < 7; i++)
 		out_be32(io_base + i * sizeof(__u32), regs[i]);
-	}
+
 	out_be32(io_base + VI_TFBR, regs[VI_TFBR / sizeof(__u32)]);
 	out_be32(io_base + VI_BFBR, regs[VI_BFBR / sizeof(__u32)]);
 	out_be32(io_base + VI_DPV, regs[VI_DPV / sizeof(__u32)]);
-	for (i = 16; i < 32; i++) {
+	for (i = 16; i < 32; i++)
 		out_be32(io_base + i * sizeof(__u32), regs[i]);
-	}
 
 	/* set framebuffer address, interlaced mode */
 	out_be32(io_base + VI_TFBL, 0x10000000 | (xfb_start >> 5));
@@ -310,6 +310,6 @@ void __init gcnvi_udbg_init(void)
 	console_init(&gcnvi_udbg_console, screen_base,
 		     SCREEN_WIDTH, SCREEN_HEIGHT, 2 * SCREEN_WIDTH);
 
-	//udbg_putc = gcnvi_udbg_putc;
+	udbg_putc = gcnvi_udbg_putc;
 	printk(KERN_INFO "gcnvi_udbg: ready\n");
 }

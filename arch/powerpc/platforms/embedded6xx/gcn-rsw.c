@@ -2,9 +2,9 @@
  * arch/powerpc/platforms/embedded6xx/gcn-rsw.c
  *
  * Nintendo GameCube/Wii reset switch (RSW) driver.
- * Copyright (C) 2004-2008 The GameCube Linux Team
+ * Copyright (C) 2004-2009 The GameCube Linux Team
  * Copyright (C) 2004 Stefan Esser
- * Copyright (C) 2004,2005,2008 Albert Herranz
+ * Copyright (C) 2004,2005,2008,2009 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -41,14 +41,14 @@ static char rsw_driver_version[] = "1.0i";
 #define RSW_NORMAL_TIMEOUT      3	/* seconds */
 #define RSW_EMERGENCY_PUSHES   10
 
-typedef enum {
+enum rsw_state {
 	IDLE = 0,		/* nothing to do */
 	NORMAL_RESET,		/* reboot requested */
 	EMERGENCY_RESET,	/* try emergency reboot */
-} rsw_state_t;
+};
 
 struct rsw_drvdata {
-	rsw_state_t state;
+	enum rsw_state state;
 	struct timer_list timer;
 	unsigned long jiffies;
 	int pushes;
@@ -65,16 +65,13 @@ struct rsw_drvdata {
 /*
  * Tells if the reset button is pressed.
  */
-static int rsw_is_button_pressed(void __iomem * io_base)
+static int rsw_is_button_pressed(void __iomem *io_base)
 {
 	u32 icr = in_be32(io_base + FLIPPER_ICR);
 
 	drv_printk(KERN_INFO, "%x\n", icr);
 	return !(icr & FLIPPER_ICR_RSS);
 }
-
-/* from kernel/sys.c */
-extern void ctrl_alt_del(void);
 
 /*
  * Invokes a normal system restart.
@@ -309,4 +306,3 @@ module_exit(rsw_exit_module);
 MODULE_DESCRIPTION(DRV_DESCRIPTION);
 MODULE_AUTHOR(DRV_AUTHOR);
 MODULE_LICENSE("GPL");
-

@@ -2,8 +2,8 @@
  * sound/ppc/gcn-mic.c
  *
  * Nintendo Microphone (DOL-022) driver
- * Copyright (C) 2006-2008 The GameCube Linux Team
- * Copyright (C) 2006,2007,2008 Albert Herranz
+ * Copyright (C) 2006-2009 The GameCube Linux Team
+ * Copyright (C) 2006,2007,2008,2009 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -43,7 +43,7 @@ static char mic_driver_version[] = "0.1i";
 
 #ifdef MIC_DEBUG
 #  define DBG(fmt, args...) \
-          printk(KERN_ERR "%s: " fmt, __FUNCTION__ , ## args)
+	   printk(KERN_ERR "%s: " fmt, __func__ , ## args)
 #else
 #  define DBG(fmt, args...)
 #endif
@@ -61,8 +61,8 @@ static char mic_driver_version[] = "0.1i";
 
 
 struct mic_device {
-        spinlock_t lock;
-        unsigned long flags;
+	spinlock_t lock;
+	unsigned long flags;
 
 	u16 status;
 	u16 control;
@@ -76,8 +76,8 @@ struct mic_device {
 #define MIC_CTL_PERIOD_128	(0x2<<13)
 #define MIC_CTL_START_SAMPLING	(1<<15)
 
-        struct task_struct      *io_thread;
-        wait_queue_head_t       io_waitq;
+	struct task_struct      *io_thread;
+	wait_queue_head_t       io_waitq;
 	atomic_t		io_pending;
 
 	struct snd_card *card;
@@ -90,11 +90,11 @@ struct mic_device {
 	int running;
 
 #ifdef CONFIG_PROC_FS
-        struct proc_dir_entry           *proc;
+	struct proc_dir_entry           *proc;
 #endif /* CONFIG_PROC_FS */
 
-        int refcnt;
-        struct exi_device *exi_device;
+	int refcnt;
+	struct exi_device *exi_device;
 };
 
 
@@ -106,9 +106,9 @@ static void mic_hey(struct mic_device *dev)
 	struct exi_device *exi_device = dev->exi_device;
 	u8 cmd = 0xff;
 
-        exi_dev_select(exi_device);
-        exi_dev_write(exi_device, &cmd, sizeof(cmd));
-        exi_dev_deselect(exi_device);
+	exi_dev_select(exi_device);
+	exi_dev_write(exi_device, &cmd, sizeof(cmd));
+	exi_dev_deselect(exi_device);
 }
 
 /*
@@ -119,10 +119,10 @@ static int mic_get_status(struct mic_device *dev)
 	struct exi_device *exi_device = dev->exi_device;
 	u8 cmd = 0x40;
 
-        exi_dev_select(exi_device);
-        exi_dev_write(exi_device, &cmd, sizeof(cmd));
-        exi_dev_read(exi_device, &dev->status, sizeof(dev->status));
-        exi_dev_deselect(exi_device);
+	exi_dev_select(exi_device);
+	exi_dev_write(exi_device, &cmd, sizeof(cmd));
+	exi_dev_read(exi_device, &dev->status, sizeof(dev->status));
+	exi_dev_deselect(exi_device);
 
 	return dev->status;
 }
@@ -141,9 +141,9 @@ static void mic_control(struct mic_device *dev)
 
 	DBG("control 0x80%02x%02x\n", cmd[1], cmd[2]);
 
-        exi_dev_select(exi_device);
-        exi_dev_write(exi_device, cmd, sizeof(cmd));
-        exi_dev_deselect(exi_device);
+	exi_dev_select(exi_device);
+	exi_dev_write(exi_device, cmd, sizeof(cmd));
+	exi_dev_deselect(exi_device);
 
 }
 
@@ -155,12 +155,12 @@ static void mic_read_period(struct mic_device *dev, void *buf, size_t len)
 	struct exi_device *exi_device = dev->exi_device;
 	u8 cmd = 0x20;
 
-        exi_dev_select(exi_device);
-        exi_dev_write(exi_device, &cmd, sizeof(cmd));
-        exi_dev_read(exi_device, buf, len);
-        exi_dev_deselect(exi_device);
+	exi_dev_select(exi_device);
+	exi_dev_write(exi_device, &cmd, sizeof(cmd));
+	exi_dev_read(exi_device, buf, len);
+	exi_dev_deselect(exi_device);
 
-//	DBG("mic cmd 0x20\n");
+/*	DBG("mic cmd 0x20\n"); */
 }
 
 /*
@@ -181,19 +181,19 @@ static int mic_set_sample_rate(struct mic_device *dev, int rate)
 {
 	u16 control;
 
-	switch(rate) {
-		case 11025:
-			control = MIC_CTL_RATE_11025;
-			break;
-		case 22050:
-			control = MIC_CTL_RATE_22050;
-			break;
-		case 44100:
-			control = MIC_CTL_RATE_44100;
-			break;
-		default:
-			mic_printk(KERN_ERR, "unsupported rate: %d\n", rate);
-			return -EINVAL;
+	switch (rate) {
+	case 11025:
+		control = MIC_CTL_RATE_11025;
+		break;
+	case 22050:
+		control = MIC_CTL_RATE_22050;
+		break;
+	case 44100:
+		control = MIC_CTL_RATE_44100;
+		break;
+	default:
+		mic_printk(KERN_ERR, "unsupported rate: %d\n", rate);
+		return -EINVAL;
 	}
 	dev->control &= ~MIC_CTL_RATE_MASK;
 	dev->control |= control;
@@ -207,20 +207,20 @@ static int mic_set_period(struct mic_device *dev, int period_bytes)
 {
 	u16 control;
 
-	switch(period_bytes) {
-		case 32:
-			control = MIC_CTL_PERIOD_32;
-			break;
-		case 64:
-			control = MIC_CTL_PERIOD_64;
-			break;
-		case 128:
-			control = MIC_CTL_PERIOD_128;
-			break;
-		default:
-			mic_printk(KERN_ERR, "unsupported period: %d bytes\n",
-				   period_bytes);
-			return -EINVAL;
+	switch (period_bytes) {
+	case 32:
+		control = MIC_CTL_PERIOD_32;
+		break;
+	case 64:
+		control = MIC_CTL_PERIOD_64;
+		break;
+	case 128:
+		control = MIC_CTL_PERIOD_128;
+		break;
+	default:
+		mic_printk(KERN_ERR, "unsupported period: %d bytes\n",
+			   period_bytes);
+		return -EINVAL;
 	}
 	dev->control &= ~MIC_CTL_PERIOD_MASK;
 	dev->control |= control;
@@ -237,7 +237,7 @@ static int mic_set_period(struct mic_device *dev, int period_bytes)
  */
 static int mic_init_proc(struct mic_device *dev)
 {
-        return 0;
+	return 0;
 }
 
 /*
@@ -259,24 +259,24 @@ static char *id = SNDRV_DEFAULT_STR1;
 
 static struct snd_pcm_hardware mic_snd_capture = {
 #if 0
-         .info = (SNDRV_PCM_INFO_MMAP |
-                   SNDRV_PCM_INFO_INTERLEAVED | SNDRV_PCM_INFO_NONINTERLEAVED |
-                   SNDRV_PCM_INFO_BLOCK_TRANSFER |
-                   SNDRV_PCM_INFO_MMAP_VALID),
+	.info = (SNDRV_PCM_INFO_MMAP |
+		SNDRV_PCM_INFO_INTERLEAVED | SNDRV_PCM_INFO_NONINTERLEAVED |
+		SNDRV_PCM_INFO_BLOCK_TRANSFER |
+		SNDRV_PCM_INFO_MMAP_VALID),
 #endif
-         .info = (SNDRV_PCM_INFO_INTERLEAVED | SNDRV_PCM_INFO_NONINTERLEAVED),
-        .formats = SNDRV_PCM_FMTBIT_S16_BE,
-        .rates = SNDRV_PCM_RATE_11025 | SNDRV_PCM_RATE_22050 |
-		 SNDRV_PCM_RATE_44100,
-        .rate_min = 11025,
-        .rate_max = 44100,
-        .channels_min = 1,
-        .channels_max = 1,
-        .buffer_bytes_max = 32768,
-        .period_bytes_min = 32,
-        .period_bytes_max = 128,
-        .periods_min = 1,
-        .periods_max = 1024,
+	.info = (SNDRV_PCM_INFO_INTERLEAVED | SNDRV_PCM_INFO_NONINTERLEAVED),
+	.formats = SNDRV_PCM_FMTBIT_S16_BE,
+	.rates = SNDRV_PCM_RATE_11025 | SNDRV_PCM_RATE_22050 |
+		SNDRV_PCM_RATE_44100,
+	.rate_min = 11025,
+	.rate_max = 44100,
+	.channels_min = 1,
+	.channels_max = 1,
+	.buffer_bytes_max = 32768,
+	.period_bytes_min = 32,
+	.period_bytes_max = 128,
+	.periods_min = 1,
+	.periods_max = 1024,
 };
 
 #if 0
@@ -315,16 +315,16 @@ static void mic_stop_io_thread(struct mic_device *dev)
  */
 static int mic_io_thread(void *param)
 {
-        struct mic_device *dev = param;
+	struct mic_device *dev = param;
 	struct snd_pcm_substream *substream;
 	int period_bytes;
 	u16 status;
 
-        set_user_nice(current, -20);
-        set_current_state(TASK_RUNNING);
+	set_user_nice(current, -20);
+	set_current_state(TASK_RUNNING);
 
-	for(;;) {
-                wait_event(dev->io_waitq, atomic_read(&dev->io_pending) > 0);
+	for (;;) {
+		wait_event(dev->io_waitq, atomic_read(&dev->io_pending) > 0);
 		atomic_dec(&dev->io_pending);
 
 		if (kthread_should_stop())
@@ -340,7 +340,8 @@ static int mic_io_thread(void *param)
 
 			if (!dev->c_left) {
 				dev->c_cur = dev->c_orig;
-				dev->c_left = snd_pcm_lib_buffer_bytes(substream);
+				dev->c_left =
+					snd_pcm_lib_buffer_bytes(substream);
 			}
 
 			period_bytes = snd_pcm_lib_period_bytes(substream);
@@ -355,19 +356,19 @@ static int mic_io_thread(void *param)
 			exi_dev_take(dev->exi_device);
 
 			if (status & 0x0200) {
-DBG("0x0200\n");
+				DBG("0x0200\n");
 				mic_hey(dev);
 				mic_enable_sampling(dev, 1);
 				mic_control(dev);
 			}
 		} else {
-			//mic_enable_sampling(dev, 0);
+			/* mic_enable_sampling(dev, 0); */
 			dev->control = 0;
 			mic_control(dev);
 		}
 		exi_dev_give(dev->exi_device);
-        }
-        return 0;
+	}
+	return 0;
 }
 
 /*
@@ -387,55 +388,55 @@ static int mic_event_handler(struct exi_channel *exi_channel,
 static int hw_rule_period_bytes_by_rate(struct snd_pcm_hw_params *params,
 					struct snd_pcm_hw_rule *rule)
 {
-	struct snd_interval *period_bytes = 
+	struct snd_interval *period_bytes =
 		hw_param_interval(params, SNDRV_PCM_HW_PARAM_PERIOD_BYTES);
-	struct snd_interval *rate = 
+	struct snd_interval *rate =
 		hw_param_interval(params, SNDRV_PCM_HW_PARAM_RATE);
 
-DBG("rate: min %d, max %d\n", rate->min, rate->max);
+	DBG("rate: min %d, max %d\n", rate->min, rate->max);
 
 	if (rate->min == rate->max) {
-	if (rate->min >= 44100) {
-		struct snd_interval t = {
-			.min = 128,
-			.max = 128,
-			.integer = 1,
-		};
-		return snd_interval_refine(period_bytes, &t);
-	} else if (rate->min >= 22050) {
-		struct snd_interval t = {
-			.min = 32,
-			.max = 32,
-			.integer = 1,
-		};
-		return snd_interval_refine(period_bytes, &t);
-	} else {
-		struct snd_interval t = {
-			.min = 32,
-			.max = 32,
-			.integer = 1,
-		};
-		return snd_interval_refine(period_bytes, &t);
-	}
+		if (rate->min >= 44100) {
+			struct snd_interval t = {
+				.min = 128,
+				.max = 128,
+				.integer = 1,
+			};
+			return snd_interval_refine(period_bytes, &t);
+		} else if (rate->min >= 22050) {
+			struct snd_interval t = {
+				.min = 32,
+				.max = 32,
+				.integer = 1,
+			};
+			return snd_interval_refine(period_bytes, &t);
+		} else {
+			struct snd_interval t = {
+				.min = 32,
+				.max = 32,
+				.integer = 1,
+			};
+			return snd_interval_refine(period_bytes, &t);
+		}
 	}
 	return 0;
 }
 
 static int mic_snd_pcm_capture_open(struct snd_pcm_substream *substream)
 {
-        struct mic_device *dev = snd_pcm_substream_chip(substream);
-        struct snd_pcm_runtime *runtime = substream->runtime;
+	struct mic_device *dev = snd_pcm_substream_chip(substream);
+	struct snd_pcm_runtime *runtime = substream->runtime;
 	unsigned long flags;
 	int retval;
 
-DBG("enter\n");
+	DBG("enter\n");
 
 	spin_lock_irqsave(&dev->lock, flags);
 	dev->running = 0;
-        dev->c_substream = substream;
+	dev->c_substream = substream;
 	spin_unlock_irqrestore(&dev->lock, flags);
 
-        runtime->hw = mic_snd_capture;
+	runtime->hw = mic_snd_capture;
 
 #if 0
 	/* only 32, 64 and 128 */
@@ -450,24 +451,24 @@ DBG("enter\n");
 			    hw_rule_period_bytes_by_rate, 0,
 			    SNDRV_PCM_HW_PARAM_RATE, -1);
 
-        /* align to 32 bytes */
+	/* align to 32 bytes */
 	retval = snd_pcm_hw_constraint_step(runtime, 0,
 					    SNDRV_PCM_HW_PARAM_BUFFER_BYTES,
 					    32);
-        return retval;
+	return retval;
 
 }
 
 static int mic_snd_pcm_capture_close(struct snd_pcm_substream *substream)
 {
-        struct mic_device *dev = snd_pcm_substream_chip(substream);
+	struct mic_device *dev = snd_pcm_substream_chip(substream);
 	unsigned long flags;
 
 DBG("enter\n");
 
 	spin_lock_irqsave(&dev->lock, flags);
 	dev->running = 0;
-        dev->c_substream = NULL;
+	dev->c_substream = NULL;
 	spin_unlock_irqrestore(&dev->lock, flags);
 
 	mic_wakeup_io_thread(dev);
@@ -495,7 +496,7 @@ DBG("enter\n");
 static int mic_snd_pcm_prepare(struct snd_pcm_substream *substream)
 {
 	struct mic_device *dev = snd_pcm_substream_chip(substream);
-        struct snd_pcm_runtime *runtime = substream->runtime;
+	struct snd_pcm_runtime *runtime = substream->runtime;
 	unsigned long flags;
 	int retval;
 
@@ -528,27 +529,28 @@ static int mic_snd_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
 {
 	struct mic_device *dev = snd_pcm_substream_chip(substream);
 
-	switch(cmd) {
-		case SNDRV_PCM_TRIGGER_START:
-			if (!dev->running) {
-DBG("trigger start\n");
-				dev->running = 1;
-				exi_dev_take(dev->exi_device);
-				mic_hey(dev);
-				mic_enable_sampling(dev, 1);
-				mic_control(dev);
-				exi_dev_give(dev->exi_device);
-			}
-			break;
-		case SNDRV_PCM_TRIGGER_STOP:
-DBG("trigger stop\n");
-			dev->running = 0;
-			break;
+	switch (cmd) {
+	case SNDRV_PCM_TRIGGER_START:
+		if (!dev->running) {
+			DBG("trigger start\n");
+			dev->running = 1;
+			exi_dev_take(dev->exi_device);
+			mic_hey(dev);
+			mic_enable_sampling(dev, 1);
+			mic_control(dev);
+			exi_dev_give(dev->exi_device);
+		}
+		break;
+	case SNDRV_PCM_TRIGGER_STOP:
+		DBG("trigger stop\n");
+		dev->running = 0;
+		break;
 	}
 	return 0;
 }
 
-static snd_pcm_uframes_t mic_snd_pcm_pointer(struct snd_pcm_substream *substream)
+static snd_pcm_uframes_t
+mic_snd_pcm_pointer(struct snd_pcm_substream *substream)
 {
 	struct mic_device *dev = snd_pcm_substream_chip(substream);
 	size_t ptr;
@@ -594,8 +596,8 @@ DBG("enter\n");
 			&mic_snd_pcm_capture_ops);
 
 	snd_pcm_lib_preallocate_pages_for_all(pcm, SNDRV_DMA_TYPE_CONTINUOUS,
-                                              snd_dma_continuous_data
-					          (GFP_KERNEL),
+					      snd_dma_continuous_data
+					      (GFP_KERNEL),
 					      32*1024, 32*1024);
 	return 0;
 }
@@ -747,7 +749,7 @@ static int mic_probe(struct exi_device *exi_device)
 	if (exi_device->eid.id != MIC_EXI_ID)
 		return -ENODEV;
 
-	DBG("Microphone inserted\n");	
+	DBG("Microphone inserted\n");
 
 	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
 	if (!dev)
@@ -774,7 +776,7 @@ static void mic_remove(struct exi_device *exi_device)
 {
 	struct mic_device *dev = exi_get_drvdata(exi_device);
 
-	DBG("Microphone removed\n");	
+	DBG("Microphone removed\n");
 
 	if (dev) {
 		mic_exit(dev);

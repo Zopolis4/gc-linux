@@ -2,10 +2,10 @@
  * drivers/block/rvl-mem2.c
  *
  * Nintendo Wii MEM2 block driver
- * Copyright (C) 2008 The GameCube Linux Team
- * Copyright (C) 2008 Albert Herranz
+ * Copyright (C) 2008-2009 The GameCube Linux Team
+ * Copyright (C) 2008,2009 Albert Herranz
  *
- * Based on gcn-mem2.c.
+ * Based on gcn-aram.c.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -20,7 +20,7 @@
 #include <linux/blkdev.h>
 #include <linux/fcntl.h>	/* O_ACCMODE */
 #include <linux/hdreg.h>	/* HDIO_GETGEO */
-#include <asm/io.h>
+#include <linux/io.h>
 
 
 #define DRV_MODULE_NAME "rvl-mem2"
@@ -70,10 +70,10 @@ static void mem2_do_request(struct request_queue *q)
 	struct request *req;
 	unsigned long mem2_addr;
 	size_t len;
-	int uptodate;
+	int error;
 
 	req = elv_next_request(q);
-	while(req) {
+	while (req) {
 		if (blk_fs_request(req)) {
 			/* calculate the MEM2 address and length */
 			mem2_addr = req->sector << 9;
@@ -84,24 +84,25 @@ static void mem2_do_request(struct request_queue *q)
 				drv_printk(KERN_ERR, "bad access: block=%lu,"
 					    " size=%u\n",
 					    (unsigned long)req->sector, len);
-				uptodate = 0;
+				error = -EIO;
 			} else {
-				switch(rq_data_dir(req)) {
+				switch (rq_data_dir(req)) {
 				case READ:
 					memcpy(req->buffer,
-					       drvdata->io_base + mem2_addr, len);
+					       drvdata->io_base + mem2_addr,
+					       len);
 					break;
 				case WRITE:
 					memcpy(drvdata->io_base + mem2_addr,
 					       req->buffer, len);
 					break;
 				}
-				uptodate = 1;
+				error = 0;
 			}
+			blk_end_request(req, error, len);
 		} else {
-			uptodate = 0;
+			end_request(req, 0);
 		}
-		end_queued_request(req, uptodate);
 		req = elv_next_request(q);
 	}
 }
@@ -109,28 +110,28 @@ static void mem2_do_request(struct request_queue *q)
 /*
  * Opens the MEM2 device.
  */
-static int mem2_open(struct inode *inode, struct file *filp)
+static int mem2_open(struct block_device *bdev, fmode_t mode)
 {
-	struct mem2_drvdata *drvdata = inode->i_bdev->bd_disk->private_data;
+	struct mem2_drvdata *drvdata = bdev->bd_disk->private_data;
 	unsigned long flags;
 	int retval = 0;
 
 	spin_lock_irqsave(&drvdata->lock, flags);
 
 	/* only allow a minor of 0 to be opened */
-	if (iminor(inode)) {
+	if (MINOR(bdev->bd_dev)) {
 		retval =  -ENODEV;
 		goto out;
 	}
 
 	/* honor exclusive open mode */
 	if (drvdata->ref_count == -1 ||
-	    (drvdata->ref_count && (filp->f_flags & O_EXCL))) {
+	    (drvdata->ref_count && (mode & FMODE_EXCL))) {
 		retval = -EBUSY;
 		goto out;
 	}
 
-	if ((filp->f_flags & O_EXCL))
+	if ((mode & FMODE_EXCL))
 		drvdata->ref_count = -1;
 	else
 		drvdata->ref_count++;
@@ -143,9 +144,9 @@ out:
 /*
  * Closes the MEM2 device.
  */
-static int mem2_release(struct inode *inode, struct file *filp)
+static int mem2_release(struct gendisk *disk, fmode_t mode)
 {
-	struct mem2_drvdata *drvdata = inode->i_bdev->bd_disk->private_data;
+	struct mem2_drvdata *drvdata = disk->private_data;
 	unsigned long flags;
 
 	spin_lock_irqsave(&drvdata->lock, flags);
@@ -154,42 +155,16 @@ static int mem2_release(struct inode *inode, struct file *filp)
 	else
 		drvdata->ref_count = 0;
 	spin_unlock_irqrestore(&drvdata->lock, flags);
-	
+
 	return 0;
 }
 
-/*
- * Minimal ioctl for the MEM2 device.
- */
-static int mem2_ioctl(struct inode *inode, struct file *filp,
-		      unsigned int cmd, unsigned long arg)
+static int mem2_getgeo(struct block_device *bdev, struct hd_geometry *geo)
 {
-	struct mem2_drvdata *drvdata = inode->i_bdev->bd_disk->private_data;
-	struct hd_geometry geo;
-	
-	switch (cmd) {
-	case BLKRAGET:
-	case BLKFRAGET:
-	case BLKROGET:
-	case BLKBSZGET:
-	case BLKSSZGET:
-	case BLKSECTGET:
-	case BLKGETSIZE:
-	case BLKGETSIZE64:
-	case BLKFLSBUF:
-		return ioctl_by_bdev(inode->i_bdev,cmd,arg);
-	case HDIO_GETGEO:
-		/* fake the entries */
-		geo.heads = 16;
-		geo.sectors = 32;
-		geo.start = 0;
-		geo.cylinders = drvdata->size / (geo.heads * geo.sectors);
-		if (copy_to_user((void __user*)arg,&geo,sizeof(geo)))
-			return -EFAULT;
-		return 0;
-	default:
-		return -ENOTTY;
-	}
+	geo->cylinders = get_capacity(bdev->bd_disk) / (4 * 16);
+	geo->heads = 4;
+	geo->sectors = 16;
+	return 0;
 }
 
 
@@ -197,7 +172,7 @@ static struct block_device_operations mem2_fops = {
 	.owner = THIS_MODULE,
 	.open = mem2_open,
 	.release = mem2_release,
-	.ioctl = mem2_ioctl,
+	.getgeo = mem2_getgeo,
 };
 
 
@@ -215,7 +190,7 @@ static int mem2_init_blk_dev(struct mem2_drvdata *drvdata)
 	retval = register_blkdev(MEM2_MAJOR, MEM2_NAME);
 	if (retval)
 		goto err_register_blkdev;
-	
+
 	retval = -ENOMEM;
 	spin_lock_init(&drvdata->lock);
 	queue = blk_init_queue(mem2_do_request, &drvdata->lock);
@@ -286,9 +261,8 @@ static int mem2_init(struct mem2_drvdata *drvdata, struct resource *mem)
 	}
 
 	retval = mem2_init_blk_dev(drvdata);
-	if (retval) {
+	if (retval)
 		iounmap(drvdata->io_base);
-	}
 	return retval;
 }
 

@@ -2,8 +2,8 @@
  * arch/powerpc/platforms/embedded6xx/starlet-gpio.c
  *
  * Nintendo Wii starlet GPIO driver
- * Copyright (C) 2008 The GameCube Linux Team
- * Copyright (C) 2008 Albert Herranz
+ * Copyright (C) 2008-2009 The GameCube Linux Team
+ * Copyright (C) 2008,2009 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -90,7 +90,7 @@ static int stgpio_dir_out(struct gpio_chip *gc, unsigned int gpio, int val)
 	return 0;
 }
 
-int stgpio_add32(struct device_node *np)
+static int stgpio_add32(struct device_node *np)
 {
 	struct of_mm_gpio_chip *mm_gc;
 	struct of_gpio_chip *of_gc;

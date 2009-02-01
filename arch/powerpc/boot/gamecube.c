@@ -2,8 +2,8 @@
  * arch/powerpc/boot/gamecube.c
  *
  * Nintendo GameCube/Wii platforms
- * Copyright (C) 2004-2008 The GameCube Linux Team
- * Copyright (C) 2008 Albert Herranz
+ * Copyright (C) 2004-2009 The GameCube Linux Team
+ * Copyright (C) 2008,2009 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -19,7 +19,6 @@
 #include "ops.h"
 
 #include "ugecon.h"
-
 
 BSS_STACK(8192);
 
@@ -63,20 +62,6 @@ _zimage_start:\n\
 ");
 
 /*
- * 
- */
-static void gamecube_console_write(const char *buf, int len)
-{
-	char *b = (char *)buf;
-
-	while(len--) {
-		if (*b == '\n')
-			ug_putc('\r');
-		ug_putc(*b++);
-	}
-}
-
-/*
  *
  */
 void platform_init(unsigned long r3, unsigned long r4, unsigned long r5)
@@ -87,6 +72,6 @@ void platform_init(unsigned long r3, unsigned long r4, unsigned long r5)
 	fdt_init(_dtb_start);
 
 	if (!ug_grab_io_base() && ug_is_adapter_present())
-		console_ops.write = gamecube_console_write;
+		console_ops.write = ug_console_write;
 }
 

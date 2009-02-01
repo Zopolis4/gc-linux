@@ -2,8 +2,8 @@
  * arch/powerpc/platforms/embedded6xx/starlet-ipc.c
  *
  * Nintendo Wii starlet IPC driver
- * Copyright (C) 2008 The GameCube Linux Team
- * Copyright (C) 2008 Albert Herranz
+ * Copyright (C) 2008-2009 The GameCube Linux Team
+ * Copyright (C) 2008,2009 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -14,7 +14,7 @@
 
 #define DEBUG
 
-//#define DBG(fmt, arg...)	pr_debug(fmt, ##arg)
+/*#define DBG(fmt, arg...)	pr_debug(fmt, ##arg)*/
 #define DBG(fmt, arg...)	drv_printk(KERN_INFO, fmt, ##arg)
 
 #include <linux/kernel.h>
@@ -42,7 +42,7 @@
 static char starlet_ipc_driver_version[] = "0.2i";
 
 #define drv_printk(level, format, arg...) \
-        printk(level DRV_MODULE_NAME ": " format , ## arg)
+	 printk(level DRV_MODULE_NAME ": " format , ## arg)
 
 /*
  * Hardware registers
@@ -82,7 +82,7 @@ enum {
 /*
  * Update control and status register.
  */
-static inline void starlet_ipc_update_csr(void __iomem * io_base, u32 val)
+static inline void starlet_ipc_update_csr(void __iomem *io_base, u32 val)
 {
 	u32 csr;
 
@@ -96,7 +96,7 @@ static inline void starlet_ipc_update_csr(void __iomem * io_base, u32 val)
 /*
  * Put data for starlet in the transmit fifo.
  */
-static inline void starlet_ipc_sendto(void __iomem * io_base, u32 data)
+static inline void starlet_ipc_sendto(void __iomem *io_base, u32 data)
 {
 	out_be32(io_base + STARLET_IPC_TXBUF, data);
 }
@@ -104,7 +104,7 @@ static inline void starlet_ipc_sendto(void __iomem * io_base, u32 data)
 /*
  * Get data from starlet out the receive fifo.
  */
-static inline u32 starlet_ipc_recvfrom(void __iomem * io_base)
+static inline u32 starlet_ipc_recvfrom(void __iomem *io_base)
 {
 	return in_be32(io_base + STARLET_IPC_RXBUF);
 }
@@ -112,7 +112,7 @@ static inline u32 starlet_ipc_recvfrom(void __iomem * io_base)
 /*
  * Issue an end-of-interrupt sequence.
  */
-static void starlet_ipc_eoi(void __iomem * io_base)
+static void starlet_ipc_eoi(void __iomem *io_base)
 {
 	starlet_ipc_update_csr(io_base, STARLET_IPC_CSR_INT);
 }
@@ -141,13 +141,13 @@ static void starlet_ipc_quiesce(struct starlet_ipc_device *ipc_dev)
 #define __case_string(_s)	\
 case _s:			\
 	str = #_s;		\
-	break;			
+	break;
 
 static char *stipc_cmd_string(u32 cmd)
 {
 	char *str = "unknown";
 
-	switch(cmd) {
+	switch (cmd) {
 __case_string(STARLET_IOS_OPEN)
 __case_string(STARLET_IOS_CLOSE)
 __case_string(STARLET_IOS_IOCTL)
@@ -168,7 +168,7 @@ static void starlet_ipc_pretty_print_request(struct starlet_ipc_request *req)
 		   ,
 		   stipc_cmd_string(req->cmd), req->cmd,
 		   req->result, req->result,
-		   (req->result == 0xdeadbeef)?" /* pending */":"",
+		   (req->result == 0xdeadbeef) ? " /* pending */" : "",
 		   jiffies_to_msecs(jiffies - req->jiffies) / 1000,
 		   (void *)req->dma_addr
 		   );
@@ -617,11 +617,10 @@ int starlet_ioctl_dma_nowait(int fd, int request,
 					      fd, request,
 					      ibuf, ilen,
 					      obuf, olen);
-	if (!error) {
+	if (!error)
 		starlet_ipc_call_nowait(req, callback, arg);
-	} else {
+	else
 		starlet_ipc_free_request(req);
-	}
 
 	if (error)
 		DBG("%s: error=%d (%x)\n", __func__, error, error);
@@ -730,11 +729,10 @@ int starlet_ioctl_nowait(int fd, int request,
 
 	error = starlet_ioctl_prepare(req, fd, request,
 					  ibuf, ilen, obuf, olen);
-	if (!error) {
+	if (!error)
 		starlet_ipc_call_nowait(req, callback, arg);
-	} else {
+	else
 		starlet_ipc_free_request(req);
-	}
 
 	if (error)
 		DBG("%s: error=%d (%x)\n", __func__, error, error);
@@ -770,13 +768,13 @@ static int starlet_ioctlv_complete(struct starlet_ipc_request *req)
 		struct starlet_iovec *p;
 		p = iovec;
 		nents = req->sgl_nents_in;
-		while(nents--) {
+		while (nents--) {
 			DBG("%s: in: dma_addr=%p, dma_len=%u\n", __func__,
 				(void *)p->dma_addr, p->dma_len);
 			p++;
 		}
 		nents = req->sgl_nents_io;
-		while(nents--) {
+		while (nents--) {
 			DBG("%s: io: dma_addr=%p, dma_len=%u\n", __func__,
 				(void *)p->dma_addr, p->dma_len);
 			p++;
@@ -930,11 +928,10 @@ int starlet_ioctlv_nowait(int fd, int request,
 	error = starlet_ioctlv_prepare(req, fd, request,
 					   nents_in, sgl_in,
 					   nents_io, sgl_io);
-	if (!error) {
+	if (!error)
 		starlet_ipc_call_nowait(req, callback, arg);
-	} else {
+	else
 		starlet_ipc_free_request(req);
-	}
 
 	if (error < 0)
 		DBG("%s: error=%d (%x)\n", __func__, error, error);
@@ -1010,13 +1007,13 @@ static int starlet_ioh_ioctlv_complete(struct starlet_ipc_request *req)
 		struct starlet_iovec *p;
 		p = iovec;
 		nents = req->sgl_nents_in;
-		while(nents--) {
+		while (nents--) {
 			DBG("%s: in: dma_addr=%p, dma_len=%u\n", __func__,
 				(void *)p->dma_addr, p->dma_len);
 			p++;
 		}
 		nents = req->sgl_nents_io;
-		while(nents--) {
+		while (nents--) {
 			DBG("%s: io: dma_addr=%p, dma_len=%u\n", __func__,
 				(void *)p->dma_addr, p->dma_len);
 			p++;
@@ -1166,11 +1163,10 @@ int starlet_ioh_ioctlv_nowait(int fd, int request,
 	error = starlet_ioh_ioctlv_prepare(req, fd, request,
 					   nents_in, ioh_sgl_in,
 					   nents_io, ioh_sgl_io);
-	if (!error) {
+	if (!error)
 		starlet_ipc_call_nowait(req, callback, arg);
-	} else {
+	else
 		starlet_ipc_free_request(req);
-	}
 
 	if (error < 0)
 		DBG("%s: error=%d (%x)\n", __func__, error, error);
@@ -1210,7 +1206,7 @@ static void starlet_ipc_watchdog(unsigned long arg)
 	}
 	spin_unlock_irqrestore(&ipc_dev->list_lock, flags);
 
-	mod_timer(&ipc_dev->timer, jiffies + STARLET_IPC_WATCHDOG_TIME);	
+	mod_timer(&ipc_dev->timer, jiffies + STARLET_IPC_WATCHDOG_TIME);
 #endif
 }
 
@@ -1231,7 +1227,7 @@ static void starlet_fixups(void)
 	void *gpio;
 
 	/* close any open file descriptors, just in case */
-	for(fd = 0; fd < 24; fd++)
+	for (fd = 0; fd < 24; fd++)
 		starlet_close(fd);
 
 	/*

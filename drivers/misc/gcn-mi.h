@@ -2,8 +2,8 @@
  * drivers/misc/gcn-mi.h
  *
  * Nintendo GameCube Memory Interface driver
- * Copyright (C) 2004-2008 The GameCube Linux Team
- * Copyright (C) 2004,2005,2008 Albert Herranz
+ * Copyright (C) 2004-2009 The GameCube Linux Team
+ * Copyright (C) 2004,2005,2008,2009 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License

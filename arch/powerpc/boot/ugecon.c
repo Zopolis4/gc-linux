@@ -1,9 +1,9 @@
 /*
  * arch/powerpc/boot/ugecon.c
  *
- * USB Gecko early bootwrapper console.
- * Copyright (C) 2008 The GameCube Linux Team
- * Copyright (C) 2008 Albert Herranz
+ * USB Gecko bootwrapper console.
+ * Copyright (C) 2008-2009 The GameCube Linux Team
+ * Copyright (C) 2008,2009 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -57,7 +57,7 @@ static u32 ug_io_transaction(u32 in)
 	cr = EXI_CR_TLEN(2) | EXI_CR_READ_WRITE | EXI_CR_TSTART;
 	out_be32(cr_reg, cr);
 
-	while(in_be32(cr_reg) & EXI_CR_TSTART)
+	while (in_be32(cr_reg) & EXI_CR_TSTART)
 		barrier();
 
 	/* deselect */
@@ -69,7 +69,7 @@ static u32 ug_io_transaction(u32 in)
 
 static int ug_is_txfifo_ready(void)
 {
-	return (ug_io_transaction(0xc0000000) & 0x04000000);
+	return ug_io_transaction(0xc0000000) & 0x04000000;
 }
 
 static void ug_raw_putc(char ch)
@@ -77,17 +77,28 @@ static void ug_raw_putc(char ch)
 	ug_io_transaction(0xb0000000 | (ch << 20));
 }
 
-void ug_putc(char ch)
+static void ug_putc(char ch)
 {
 	int count = 16;
 
 	if (!ug_io_base)
 		return;
 
-        while(!ug_is_txfifo_ready() && count--) 
-                barrier();
+	while (!ug_is_txfifo_ready() && count--)
+		barrier();
 	if (count)
-	        ug_raw_putc(ch);
+		ug_raw_putc(ch);
+}
+
+void ug_console_write(const char *buf, int len)
+{
+	char *b = (char *)buf;
+
+	while (len--) {
+		if (*b == '\n')
+			ug_putc('\r');
+		ug_putc(*b++);
+	}
 }
 
 int ug_is_adapter_present(void)
@@ -95,25 +106,23 @@ int ug_is_adapter_present(void)
 	if (!ug_io_base)
 		return 0;
 
-	return (ug_io_transaction(0x90000000) == 0x04700000);
+	return ug_io_transaction(0x90000000) == 0x04700000;
 }
 
 int ug_grab_io_base(void)
 {
-        u32 v;
-        void *devp;
+	u32 v;
+	void *devp;
 
-        devp = finddevice("/exi/usbgecko");
-        if (devp == NULL)
-                goto err_out;
-        if (getprop(devp, "virtual-reg", &v, sizeof(v)) != sizeof(v))
-                goto err_out;
+	devp = finddevice("/exi/usbgecko");
+	if (devp == NULL)
+		goto err_out;
+	if (getprop(devp, "virtual-reg", &v, sizeof(v)) != sizeof(v))
+		goto err_out;
 
-        ug_io_base = (u8 *)v;
-        return 0;
+	ug_io_base = (u8 *)v;
+	return 0;
 
 err_out:
-        return -1;
+	return -1;
 }
-
-

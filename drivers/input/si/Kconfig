@@ -1,5 +1,5 @@
 #
-# Nintendo GameCube Serial Interface (SI) support
+# Nintendo GameCube/Wii Serial Interface (SI) configuration
 #
 
 config GAMECUBE_SI

@@ -2,9 +2,9 @@
  * drivers/misc/gcn-gqr.c
  *
  * Nintendo GameCube GQR driver
- * Copyright (C) 2004-2008 The GameCube Linux Team
+ * Copyright (C) 2004-2009 The GameCube Linux Team
  * Copyright (C) 2004 Todd Jeffreys <todd@voidpointer.org>
- * Copyright (C) 2007,2008 Albert Herranz
+ * Copyright (C) 2007,2008,2009 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -20,10 +20,10 @@
 #include <linux/ctype.h>
 #include <linux/sysctl.h>
 #include <linux/types.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 
 static u32 gqr_values[8];
-static struct ctl_table_header *gqr_table_header = NULL;
+static struct ctl_table_header *gqr_table_header;
 
 #define SPR_GQR0 912
 #define SPR_GQR1 913
@@ -34,14 +34,14 @@ static struct ctl_table_header *gqr_table_header = NULL;
 #define SPR_GQR6 918
 #define SPR_GQR7 919
 
-#define MFSPR_CASE(i) case (i): *((u32*)table->data) = mfspr(SPR_GQR##i)
-#define MTSPR_CASE(i) case (i): mtspr(SPR_GQR##i,*((u32*)table->data))
+#define MFSPR_CASE(i) case (i): (*((u32 *)table->data) = mfspr(SPR_GQR##i))
+#define MTSPR_CASE(i) case (i): mtspr(SPR_GQR##i, *((u32 *)table->data))
 
-static int proc_dogqr(ctl_table *table,int write,struct file *file,
-		      void __user *buffer,size_t *lenp,loff_t *ppos)
+static int proc_dogqr(ctl_table *table, int write, struct file *file,
+		      void __user *buffer, size_t *lenp, loff_t *ppos)
 {
 	int r;
-	
+
 	if (!write) {		/* if they are reading, update the variable */
 		switch (table->data - (void *)gqr_values) {
 			MFSPR_CASE(0); break;
@@ -56,9 +56,9 @@ static int proc_dogqr(ctl_table *table,int write,struct file *file,
 			return -EFAULT;	/* shouldn't happen */
 		}
 	}
-	
-	r = proc_dointvec(table,write,file,buffer,lenp,ppos);
-	
+
+	r = proc_dointvec(table, write, file, buffer, lenp, ppos);
+
 	if ((r == 0) && write) {  /* if they are writing, update the reg */
 		switch (table->data - (void *)gqr_values) {
 			MTSPR_CASE(0); break;
@@ -73,7 +73,7 @@ static int proc_dogqr(ctl_table *table,int write,struct file *file,
 			return -EFAULT;	/* shouldn't happen */
 		}
 	}
-	
+
 	return r;
 }
 
@@ -103,14 +103,15 @@ static ctl_table gqr_table[] = {
 		.ctl_name = CTL_UNNUMBERED,
 		.procname = "gqr",
 		.mode     = 0555,
-		.child    = gqr_members		
+		.child    = gqr_members,
 	},
 	{ .ctl_name = 0 }
 };
 
 int __init gcngqr_init(void)
 {
-	if (!(gqr_table_header = register_sysctl_table(gqr_table))) {
+	gqr_table_header = register_sysctl_table(gqr_table);
+	if (!gqr_table_header) {
 		printk(KERN_ERR "Unable to register GQR sysctl table\n");
 		return -ENOMEM;
 	}

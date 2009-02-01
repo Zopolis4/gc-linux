@@ -2,9 +2,9 @@
  * drivers/exi/exi-hw.h
  *
  * Nintendo GameCube EXpansion Interface support. Hardware routines.
- * Copyright (C) 2004-2008 The GameCube Linux Team
+ * Copyright (C) 2004-2009 The GameCube Linux Team
  * Copyright (C) 2004,2005 Todd Jeffreys <todd@voidpointer.org>
- * Copyright (C) 2005,2006,2007,2008 Albert Herranz
+ * Copyright (C) 2005,2006,2007,2008,2009 Albert Herranz
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -140,9 +140,9 @@ extern void exi_hw_exit(struct resource *mem, unsigned int irq);
  * Declare simple transfer functions for single bytes, words and dwords,
  * and build a general transfer function based on that.
  */
-#define __declare__exi_transfer_raw(_type,_val,_data,_on_write,_on_read) \
+#define __declare__exi_transfer_raw(_type, _val, _data, _on_write, _on_read) \
 static inline void __exi_transfer_raw_##_type(struct exi_channel *exi_channel,\
-					      _type *_data, int mode)	\
+					      _type * _data, int mode)	\
 {									\
 	u32 __iomem *csr_reg = exi_channel->io_base + EXI_CSR;		\
 	u32 __iomem *data_reg = exi_channel->io_base + EXI_DATA;	\
@@ -164,7 +164,7 @@ static inline void __exi_transfer_raw_##_type(struct exi_channel *exi_channel,\
 	out_be32(cr_reg, _val);						\
 									\
 	/* wait for transfer completion */				\
-	while(in_be32(cr_reg) & EXI_CR_TSTART)				\
+	while (in_be32(cr_reg) & EXI_CR_TSTART)				\
 		cpu_relax();						\
 									\
 	/* XXX check if we need that on immediate mode */		\
@@ -189,5 +189,7 @@ __declare__exi_transfer_raw(						\
 __declare__exi_transfer_raw_simple(u8)
 __declare__exi_transfer_raw_simple(u16)
 __declare__exi_transfer_raw_simple(u32)
+
+extern wait_queue_head_t exi_bus_waitq;
 
 #endif /* __EXI_HW_H */
