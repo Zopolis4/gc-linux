@@ -94,28 +94,6 @@ config GAMECUBE_DI
 	  To compile this driver as a module, choose M here: the
 	  module will be called gcn-di.
 
-config GAMECUBE_DVD
-	tristate "Nintendo Gamecube DVD"
-	depends on GAMECUBE && !GAMECUBE_DI && BROKEN
-	help
-	  This enables support for using the mini-DVD drive on the 
-	  Nintendo Gamecube.
-	  Say Y if you want to include this driver in the kernel.
-
-	  To compile this driver as a module, choose M here: the 
-	  module will be called gcn-dvd
-
-config GAMECUBE_MEMCARD
-	tristate "Nintendo GameCube/Wii memory card (EXPERIMENTAL)"
-	depends on GAMECUBE_EXI && EXPERIMENTAL && BROKEN
-	help
-	  This enables support for using memory cards compatible with the
-	  Nintendo GameCube.
-	  Say Y if you want to include this driver in the kernel.
-
-	  To compile this driver as a module, choose M here: the
-	  module will be called gcn-memcard.
-
 config WII_MEM2
 	tristate "Nintendo Wii MEM2"
 	depends on WII
