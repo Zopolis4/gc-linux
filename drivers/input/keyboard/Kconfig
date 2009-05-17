@@ -325,7 +325,7 @@ config KEYBOARD_BFIN
 
 config KEYBOARD_WII
 	tristate "Nintendo Wii USB keyboard IOS glue"
-	depends on (WII && !USB)
+	depends on (STARLET_IOS && !USB)
 	help
 	  Say Y here if you have a Nintendo Wii console running Linux and have
 	  a keyboard attached to one of its USB ports.
