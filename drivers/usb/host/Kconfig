@@ -93,6 +93,14 @@ config USB_EHCI_HCD_PPC_OF
 	  Enables support for the USB controller present on the PowerPC
 	  OpenFirmware platform bus.
 
+config USB_EHCI_HCD_MIPC
+	bool "Nintendo Wii EHCI USB controller support via 'mini'"
+	depends on USB_EHCI_HCD && STARLET_MINI
+	default y
+	---help---
+	  Say Y here to support the EHCI USB controller found in the
+	  Nintendo Wii video game console.
+
 config USB_OXU210HP_HCD
 	tristate "OXU210HP HCD support"
 	depends on USB
