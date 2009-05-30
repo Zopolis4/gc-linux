@@ -424,6 +424,7 @@ struct ohci_hcd {
 #define	OHCI_QUIRK_FRAME_NO	0x80			/* no big endian frame_no shift */
 #define	OHCI_QUIRK_HUB_POWER	0x100			/* distrust firmware power/oc setup */
 #define	OHCI_QUIRK_AMD_ISO	0x200			/* ISO transfers*/
+#define	OHCI_QUIRK_WII		0x400			/* Hollywood chipset */
 	// there are also chip quirks/bugs in init logic
 
 	struct work_struct	nec_work;	/* Worker for NEC quirk */
@@ -574,7 +575,14 @@ static inline void _ohci_writel(const struct ohci_hcd *ohci,
 	mipc_out_be32(regs, val);
 }
 
+extern void ohci_mipc_control_quirk(struct ohci_hcd *ohci);
+
 #else
+
+static inline void ohci_mipc_control_quirk(struct ohci_hcd *ohci)
+{
+	return;
+}
 
 /*
  * Big-endian read/write functions are arch-specific.
