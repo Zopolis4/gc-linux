@@ -614,8 +614,10 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
 	if (unlikely(status.rate_idx == -1)) {
 		/* PLCP seems to be corrupted.
 		 * Drop the frame, if we are not interested in corrupted frames. */
-		if (!(dev->wl->filter_flags & FIF_PLCPFAIL))
+		if (!(dev->wl->filter_flags & FIF_PLCPFAIL)) {
+			b43dbg(dev->wl, "RX: PLCP corrupted\n");
 			goto drop;
+		}
 	}
 	status.antenna = !!(phystat0 & B43_RX_PHYST0_ANT);
 
@@ -670,7 +672,7 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
 		goto drop;
 	}
 
-	ieee80211_rx_irqsafe(dev->wl->hw, skb, &status);
+	ieee80211_rx(dev->wl->hw, skb, &status);
 
 	return;
 drop:
