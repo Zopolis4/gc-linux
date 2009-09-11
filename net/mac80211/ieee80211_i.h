@@ -1053,6 +1053,14 @@ void ieee80211_tx_pending(unsigned long data);
 int ieee80211_monitor_start_xmit(struct sk_buff *skb, struct net_device *dev);
 int ieee80211_subif_start_xmit(struct sk_buff *skb, struct net_device *dev);
 
+/* rx handling */
+static inline int ieee80211_netif_rx(struct sk_buff *skb)
+{
+	if (in_interrupt())
+		return netif_rx(skb);
+	return netif_rx_ni(skb);
+}
+
 /* HT */
 void ieee80211_ht_cap_ie_to_sta_ht_cap(struct ieee80211_supported_band *sband,
 				       struct ieee80211_ht_cap *ht_cap_ie,

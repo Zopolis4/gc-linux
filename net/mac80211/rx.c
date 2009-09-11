@@ -309,7 +309,7 @@ ieee80211_rx_monitor(struct ieee80211_local *local, struct sk_buff *origskb,
 			skb2 = skb_clone(skb, GFP_ATOMIC);
 			if (skb2) {
 				skb2->dev = prev_dev;
-				netif_rx(skb2);
+				ieee80211_netif_rx(skb2);
 			}
 		}
 
@@ -320,7 +320,7 @@ ieee80211_rx_monitor(struct ieee80211_local *local, struct sk_buff *origskb,
 
 	if (prev_dev) {
 		skb->dev = prev_dev;
-		netif_rx(skb);
+		ieee80211_netif_rx(skb);
 	} else
 		dev_kfree_skb(skb);
 
@@ -1349,7 +1349,7 @@ ieee80211_deliver_skb(struct ieee80211_rx_data *rx)
 			/* deliver to local stack */
 			skb->protocol = eth_type_trans(skb, dev);
 			memset(skb->cb, 0, sizeof(skb->cb));
-			netif_rx(skb);
+			ieee80211_netif_rx(skb);
 		}
 	}
 
@@ -1943,7 +1943,7 @@ static void ieee80211_rx_cooked_monitor(struct ieee80211_rx_data *rx)
 			skb2 = skb_clone(skb, GFP_ATOMIC);
 			if (skb2) {
 				skb2->dev = prev_dev;
-				netif_rx(skb2);
+				ieee80211_netif_rx(skb2);
 			}
 		}
 
@@ -1954,7 +1954,7 @@ static void ieee80211_rx_cooked_monitor(struct ieee80211_rx_data *rx)
 
 	if (prev_dev) {
 		skb->dev = prev_dev;
-		netif_rx(skb);
+		ieee80211_netif_rx(skb);
 		skb = NULL;
 	} else
 		goto out_free_skb;

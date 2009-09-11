@@ -591,7 +591,7 @@ void ieee80211_tx_status(struct ieee80211_hw *hw, struct sk_buff *skb)
 				skb2 = skb_clone(skb, GFP_ATOMIC);
 				if (skb2) {
 					skb2->dev = prev_dev;
-					netif_rx(skb2);
+					ieee80211_netif_rx(skb2);
 				}
 			}
 
@@ -600,7 +600,7 @@ void ieee80211_tx_status(struct ieee80211_hw *hw, struct sk_buff *skb)
 	}
 	if (prev_dev) {
 		skb->dev = prev_dev;
-		netif_rx(skb);
+		ieee80211_netif_rx(skb);
 		skb = NULL;
 	}
 	rcu_read_unlock();
