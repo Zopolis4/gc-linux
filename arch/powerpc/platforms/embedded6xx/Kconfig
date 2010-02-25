@@ -121,6 +121,7 @@ config WII
 	select GAMECUBE_COMMON
 	select HAVE_GENERIC_DMA_COHERENT
 	select SWIOTLB
+	select USB_ARCH_HAS_EHCI
 	help
 	  Select WII if configuring for the Nintendo Wii.
 	  More information at: <http://gc-linux.sourceforge.net/>
