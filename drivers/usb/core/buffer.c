@@ -36,6 +36,26 @@ static const size_t	pool_max [HCD_BUFFER_POOLS] = {
 
 /* SETUP primitives */
 
+static inline int hcd_uses_pio(struct usb_hcd *hcd)
+{
+	if ((!hcd->self.controller->dma_mask &&
+	    !(hcd->driver->flags & HCD_LOCAL_MEM)))
+		return 1;
+	return 0;
+}
+
+static inline int hcd_needs_non_dma_mem(struct usb_hcd *hcd)
+{
+	/*
+	 * PIO-based and HCD_NO_COHERENT_MEM-based controllers use
+	 * normal kernel memory.
+	 * The rest want DMA memory.
+	 */
+	if (hcd_uses_pio(hcd) || (hcd->driver->flags & HCD_NO_COHERENT_MEM))
+		return 1;
+	return 0;
+}
+
 /**
  * hcd_buffer_create - initialize buffer pools
  * @hcd: the bus whose buffer pools are to be initialized
@@ -53,8 +73,7 @@ int hcd_buffer_create(struct usb_hcd *hcd)
 	char		name[16];
 	int 		i, size;
 
-	if (!hcd->self.controller->dma_mask &&
-	    !(hcd->driver->flags & HCD_LOCAL_MEM))
+	if (hcd_needs_non_dma_mem(hcd))
 		return 0;
 
 	for (i = 0; i < HCD_BUFFER_POOLS; i++) {
@@ -109,8 +128,7 @@ void *hcd_buffer_alloc(
 	int 			i;
 
 	/* some USB hosts just use PIO */
-	if (!bus->controller->dma_mask &&
-	    !(hcd->driver->flags & HCD_LOCAL_MEM)) {
+	if (hcd_needs_non_dma_mem(hcd)) {
 		*dma = ~(dma_addr_t) 0;
 		return kmalloc(size, mem_flags);
 	}
@@ -135,8 +153,7 @@ void hcd_buffer_free(
 	if (!addr)
 		return;
 
-	if (!bus->controller->dma_mask &&
-	    !(hcd->driver->flags & HCD_LOCAL_MEM)) {
+	if (hcd_needs_non_dma_mem(hcd)) {
 		kfree(addr);
 		return;
 	}

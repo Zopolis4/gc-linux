@@ -1317,9 +1317,19 @@ static int urb_needs_setup_map(struct usb_hcd *hcd, struct urb *urb)
 	/* setup mappings are required only for control requests */
 	if (!usb_endpoint_xfer_control(&urb->ep->desc))
 		return 0;
-
-	/* If the caller set URB_NO_SETUP_DMA_MAP then no mapping is needed */
-	if ((urb->transfer_flags & URB_NO_SETUP_DMA_MAP))
+	/*
+	 * Setup packets are 8 bytes long and don't use scatter/gather.
+	 *
+	 * If the caller sets URB_NO_SETUP_DMA_MAP and urb->setup_dma
+	 * contains a valid DMA handle then it is already mapped, except
+	 * if the controller can't use coherent memory (HCD_NO_COHERENT_MEM).
+	 *
+	 * urb->setup_dma is set to ~0 when allocating USB buffers for
+	 * PIO-based or HCD_NO_COHERENT_MEM-based controllers.
+	 */
+	if ((urb->transfer_flags & URB_NO_SETUP_DMA_MAP) &&
+	    urb->setup_dma != ~(dma_addr_t)0 &&
+	    !(hcd->driver->flags & HCD_NO_COHERENT_MEM))
 		return 0;
 
 	return 1;
@@ -1331,8 +1341,20 @@ static int urb_needs_transfer_map(struct usb_hcd *hcd, struct urb *urb)
 	if (urb->transfer_buffer_length == 0)
 		return 0;
 
-	/* If the caller set URB_NO_SETUP_DMA_MAP then no mapping is needed */
-	if ((urb->transfer_flags & URB_NO_TRANSFER_DMA_MAP))
+	/* if this is a scatter/gather request, it should be already mapped */
+	if (urb->num_sgs > 0)
+		return 0;
+	/*
+	 * If the caller sets URB_NO_TRANSFER_DMA_MAP and urb->transfer_dma
+	 * contains a valid DMA handle then it is already mapped, except
+	 * if the controller can't use coherent memory (HCD_NO_COHERENT_MEM).
+	 *
+	 * urb->transfer_dma is set to ~0 when allocating USB buffers for
+	 * PIO-based or HCD_NO_COHERENT_MEM-based controllers.
+	 */
+	if ((urb->transfer_flags & URB_NO_TRANSFER_DMA_MAP) &&
+	    urb->transfer_dma != ~(dma_addr_t)0 &&
+	    !(hcd->driver->flags & HCD_NO_COHERENT_MEM))
 		return 0;
 
 	return 1;
