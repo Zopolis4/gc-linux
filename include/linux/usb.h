@@ -969,6 +969,11 @@ extern int usb_disabled(void);
 #define URB_DIR_OUT		0
 #define URB_DIR_MASK		URB_DIR_IN
 
+#define URB_SETUP_DMA_MAPPED		0x1000 /* via dma_map_single */
+#define URB_SETUP_BOUNCE_MAPPED		0x2000 /* via hcd_alloc_coherent */
+#define URB_TRANSFER_DMA_MAPPED		0x4000 /* via dma_map_single */
+#define URB_TRANSFER_BOUNCE_MAPPED	0x8000 /* via hcd_alloc_coherent */
+
 struct usb_iso_packet_descriptor {
 	unsigned int offset;
 	unsigned int length;		/* expected length */

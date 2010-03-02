@@ -1261,11 +1261,155 @@ static void hcd_free_coherent(struct usb_bus *bus, dma_addr_t *dma_handle,
 	*dma_handle = 0;
 }
 
+static void unmap_urb_setup_packet(struct usb_hcd *hcd, struct urb *urb)
+{
+	if (urb->transfer_flags & URB_SETUP_DMA_MAPPED) {
+		urb->transfer_flags &= ~URB_SETUP_DMA_MAPPED;
+		dma_unmap_single(hcd->self.controller, urb->setup_dma,
+				 sizeof(struct usb_ctrlrequest),
+				 DMA_TO_DEVICE);
+	} else if (urb->transfer_flags & URB_SETUP_BOUNCE_MAPPED) {
+		/* bounce from "local" memory */
+		urb->transfer_flags &= ~URB_SETUP_BOUNCE_MAPPED;
+		hcd_free_coherent(urb->dev->bus, &urb->setup_dma,
+				  (void **)&urb->setup_packet,
+				  sizeof(struct usb_ctrlrequest),
+				  DMA_TO_DEVICE);
+	} else {
+		/* nothing to do for PIO-based controller requests */
+	}
+}
+
+static void unmap_urb_transfer_buffer(struct usb_hcd *hcd, struct urb *urb)
+{
+	enum dma_data_direction dir;
+
+	dir = usb_urb_dir_in(urb) ? DMA_FROM_DEVICE : DMA_TO_DEVICE;
+	if (urb->transfer_flags & URB_TRANSFER_DMA_MAPPED) {
+		urb->transfer_flags &= ~URB_TRANSFER_DMA_MAPPED;
+		dma_unmap_single(hcd->self.controller,
+				 urb->transfer_dma,
+				 urb->transfer_buffer_length,
+				 dir);
+	} else if (urb->transfer_flags & URB_TRANSFER_BOUNCE_MAPPED) {
+		/* bounce from "local" memory */
+		urb->transfer_flags &= ~URB_TRANSFER_BOUNCE_MAPPED;
+		hcd_free_coherent(urb->dev->bus, &urb->transfer_dma,
+				  &urb->transfer_buffer,
+				  urb->transfer_buffer_length,
+				  dir);
+	} else {
+		/* nothing to do for PIO-based controller requests */
+	}
+}
+
+static void unmap_urb_for_dma(struct usb_hcd *hcd, struct urb *urb)
+{
+	if (is_root_hub(urb->dev))
+		return;
+
+	unmap_urb_setup_packet(hcd, urb);
+	unmap_urb_transfer_buffer(hcd, urb);
+}
+
+static int urb_needs_setup_map(struct usb_hcd *hcd, struct urb *urb)
+{
+	/* setup mappings are required only for control requests */
+	if (!usb_endpoint_xfer_control(&urb->ep->desc))
+		return 0;
+
+	/* If the caller set URB_NO_SETUP_DMA_MAP then no mapping is needed */
+	if ((urb->transfer_flags & URB_NO_SETUP_DMA_MAP))
+		return 0;
+
+	return 1;
+}
+
+static int urb_needs_transfer_map(struct usb_hcd *hcd, struct urb *urb)
+{
+	/* don't need to map anything if there's nothing to map */
+	if (urb->transfer_buffer_length == 0)
+		return 0;
+
+	/* If the caller set URB_NO_SETUP_DMA_MAP then no mapping is needed */
+	if ((urb->transfer_flags & URB_NO_TRANSFER_DMA_MAP))
+		return 0;
+
+	return 1;
+}
+
+static int map_urb_setup_packet(struct usb_hcd *hcd, struct urb *urb,
+				gfp_t mem_flags)
+{
+	int ret;
+
+	if (urb_needs_setup_map(hcd, urb)) {
+		if (hcd->self.uses_dma) {
+			urb->setup_dma = dma_map_single(
+						hcd->self.controller,
+						urb->setup_packet,
+						sizeof(struct usb_ctrlrequest),
+						DMA_TO_DEVICE);
+			if (dma_mapping_error(hcd->self.controller,
+					      urb->setup_dma))
+				return -EAGAIN;
+			urb->transfer_flags |= URB_SETUP_DMA_MAPPED;
+		} else if (hcd->driver->flags & HCD_LOCAL_MEM) {
+			/* bounce to "local" memory */
+			ret = hcd_alloc_coherent(urb->dev->bus, mem_flags,
+						 &urb->setup_dma,
+						 (void **)&urb->setup_packet,
+						 sizeof(struct usb_ctrlrequest),
+						 DMA_TO_DEVICE);
+			if (ret)
+				return ret;
+			urb->transfer_flags |= URB_SETUP_BOUNCE_MAPPED;
+		} else {
+			/* nothing to do for PIO-based controller requests */
+		}
+	}
+	return 0;
+}
+
+static int map_urb_transfer_buffer(struct usb_hcd *hcd, struct urb *urb,
+				   gfp_t mem_flags)
+{
+	enum dma_data_direction dir;
+	int ret;
+
+	dir = usb_urb_dir_in(urb) ? DMA_FROM_DEVICE : DMA_TO_DEVICE;
+	if (urb_needs_transfer_map(hcd, urb)) {
+		if (hcd->self.uses_dma) {
+			urb->transfer_dma = dma_map_single (
+						hcd->self.controller,
+						urb->transfer_buffer,
+						urb->transfer_buffer_length,
+						dir);
+			if (dma_mapping_error(hcd->self.controller,
+					      urb->transfer_dma))
+				return -EAGAIN;
+			urb->transfer_flags |= URB_TRANSFER_DMA_MAPPED;
+		} else if (hcd->driver->flags & HCD_LOCAL_MEM) {
+			/* bounce to "local" memory */
+			ret = hcd_alloc_coherent(urb->dev->bus, mem_flags,
+						 &urb->transfer_dma,
+						 &urb->transfer_buffer,
+						 urb->transfer_buffer_length,
+						 dir);
+			if (ret)
+				return ret;
+			urb->transfer_flags |= URB_TRANSFER_BOUNCE_MAPPED;
+		} else {
+			/* nothing to do for PIO-based controller requests */
+		}
+	}
+	return 0;
+}
+
 static int map_urb_for_dma(struct usb_hcd *hcd, struct urb *urb,
 			   gfp_t mem_flags)
 {
-	enum dma_data_direction dir;
-	int ret = 0;
+	int error;
 
 	/* Map the URB's buffers for DMA access.
 	 * Lower level HCD code should use *_dma exclusively,
@@ -1275,92 +1419,13 @@ static int map_urb_for_dma(struct usb_hcd *hcd, struct urb *urb,
 	if (is_root_hub(urb->dev))
 		return 0;
 
-	if (usb_endpoint_xfer_control(&urb->ep->desc)
-	    && !(urb->transfer_flags & URB_NO_SETUP_DMA_MAP)) {
-		if (hcd->self.uses_dma) {
-			urb->setup_dma = dma_map_single(
-					hcd->self.controller,
-					urb->setup_packet,
-					sizeof(struct usb_ctrlrequest),
-					DMA_TO_DEVICE);
-			if (dma_mapping_error(hcd->self.controller,
-						urb->setup_dma))
-				return -EAGAIN;
-		} else if (hcd->driver->flags & HCD_LOCAL_MEM)
-			ret = hcd_alloc_coherent(
-					urb->dev->bus, mem_flags,
-					&urb->setup_dma,
-					(void **)&urb->setup_packet,
-					sizeof(struct usb_ctrlrequest),
-					DMA_TO_DEVICE);
+	error = map_urb_setup_packet(hcd, urb, mem_flags);
+	if (!error) {
+		error = map_urb_transfer_buffer(hcd, urb, mem_flags);
+		if (error)
+			unmap_urb_setup_packet(hcd, urb);
 	}
-
-	dir = usb_urb_dir_in(urb) ? DMA_FROM_DEVICE : DMA_TO_DEVICE;
-	if (ret == 0 && urb->transfer_buffer_length != 0
-	    && !(urb->transfer_flags & URB_NO_TRANSFER_DMA_MAP)) {
-		if (hcd->self.uses_dma) {
-			urb->transfer_dma = dma_map_single (
-					hcd->self.controller,
-					urb->transfer_buffer,
-					urb->transfer_buffer_length,
-					dir);
-			if (dma_mapping_error(hcd->self.controller,
-						urb->transfer_dma))
-				return -EAGAIN;
-		} else if (hcd->driver->flags & HCD_LOCAL_MEM) {
-			ret = hcd_alloc_coherent(
-					urb->dev->bus, mem_flags,
-					&urb->transfer_dma,
-					&urb->transfer_buffer,
-					urb->transfer_buffer_length,
-					dir);
-
-			if (ret && usb_endpoint_xfer_control(&urb->ep->desc)
-			    && !(urb->transfer_flags & URB_NO_SETUP_DMA_MAP))
-				hcd_free_coherent(urb->dev->bus,
-					&urb->setup_dma,
-					(void **)&urb->setup_packet,
-					sizeof(struct usb_ctrlrequest),
-					DMA_TO_DEVICE);
-		}
-	}
-	return ret;
-}
-
-static void unmap_urb_for_dma(struct usb_hcd *hcd, struct urb *urb)
-{
-	enum dma_data_direction dir;
-
-	if (is_root_hub(urb->dev))
-		return;
-
-	if (usb_endpoint_xfer_control(&urb->ep->desc)
-	    && !(urb->transfer_flags & URB_NO_SETUP_DMA_MAP)) {
-		if (hcd->self.uses_dma)
-			dma_unmap_single(hcd->self.controller, urb->setup_dma,
-					sizeof(struct usb_ctrlrequest),
-					DMA_TO_DEVICE);
-		else if (hcd->driver->flags & HCD_LOCAL_MEM)
-			hcd_free_coherent(urb->dev->bus, &urb->setup_dma,
-					(void **)&urb->setup_packet,
-					sizeof(struct usb_ctrlrequest),
-					DMA_TO_DEVICE);
-	}
-
-	dir = usb_urb_dir_in(urb) ? DMA_FROM_DEVICE : DMA_TO_DEVICE;
-	if (urb->transfer_buffer_length != 0
-	    && !(urb->transfer_flags & URB_NO_TRANSFER_DMA_MAP)) {
-		if (hcd->self.uses_dma)
-			dma_unmap_single(hcd->self.controller,
-					urb->transfer_dma,
-					urb->transfer_buffer_length,
-					dir);
-		else if (hcd->driver->flags & HCD_LOCAL_MEM)
-			hcd_free_coherent(urb->dev->bus, &urb->transfer_dma,
-					&urb->transfer_buffer,
-					urb->transfer_buffer_length,
-					dir);
-	}
+	return error;
 }
 
 /*-------------------------------------------------------------------------*/
